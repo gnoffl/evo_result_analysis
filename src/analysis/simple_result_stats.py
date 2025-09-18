@@ -396,7 +396,7 @@ def calculate_loss_pareto_front(current_front: List[Tuple[str, float, int]], tar
         if curr[2] != target[2]:
             raise ValueError(f"Number of mutations must be aligned between both pareto fronts! Found {curr[2]} and {target[2]}.")
         loss += target[1] - curr[1]
-    return loss
+    return abs(loss)
 
 def calculate_loss_over_generations_single_gene(results_folder: str, gene: str, max_number_mutation: int, last_generation: int = 1999) -> Dict[int, float]:
     """Calculate the loss over generations for a single gene.
