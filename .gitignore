@@ -1,4 +1,5 @@
 # Byte-compiled / optimized / DLL files
+.vscode/*
 __pycache__/
 *.py[codz]
 *$py.class
@@ -22,6 +23,7 @@ var/
 wheels/
 share/python-wheels/
 *.egg-info/
+evo_result_analysis.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
