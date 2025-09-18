@@ -264,11 +264,32 @@ class TestSimpleResultStats(unittest.TestCase):
         mutation_numbers = [item[2] for item in expanded]
         self.assertEqual(mutation_numbers, [0, 1, 2, 3, 4, 5, 6, 7])
         
-        # Check that original points are preserved
+        # Check that expansion worked correctly
         self.assertEqual(expanded[0][1], 0.9)  # Original fitness at 0 mutations
+        self.assertEqual(expanded[1][1], 0.9)  # Original fitness at 0 mutations
         self.assertEqual(expanded[2][1], 0.7)  # Original fitness at 2 mutations
+        self.assertEqual(expanded[3][1], 0.7)  # Original fitness at 2 mutations
+        self.assertEqual(expanded[4][1], 0.7)  # Original fitness at 2 mutations
         self.assertEqual(expanded[5][1], 0.5)  # Original fitness at 5 mutations
-    
+        self.assertEqual(expanded[6][1], 0.5)  # Original fitness at 5 mutations
+        self.assertEqual(expanded[7][1], 0.5)  # Original fitness at 5 mutations
+
+        # maximization case
+        pareto_front_max = [("seq1", 0.1, 0), ("seq2", 0.5, 2), ("seq3", 0.9, 5)]
+        max_mutations_max = 7
+        expanded_max = expand_pareto_front(pareto_front_max, max_mutations_max)
+        self.assertEqual(len(expanded_max), 8)  # 0 to 7 mutations
+        mutation_numbers_max = [item[2] for item in expanded_max]
+        self.assertEqual(mutation_numbers_max, [0, 1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual(expanded_max[0][1], 0.1)  # Original fitness at 0 mutations
+        self.assertEqual(expanded_max[1][1], 0.1)  # Original fitness at 0 mutations
+        self.assertEqual(expanded_max[2][1], 0.5)  # Original fitness at 2 mutations
+        self.assertEqual(expanded_max[3][1], 0.5)  # Original fitness at 2 mutations
+        self.assertEqual(expanded_max[4][1], 0.5)  # Original fitness at 2 mutations
+        self.assertEqual(expanded_max[5][1], 0.9)  # Original fitness at 5 mutations
+        self.assertEqual(expanded_max[6][1], 0.9)  # Original fitness at 5 mutations
+        self.assertEqual(expanded_max[7][1], 0.9)  # Original fitness at 5 mutations
+
     def test_normalize_front_edge_cases(self):
         """Test normalize front with edge cases."""
         # Test with zero fitness range
@@ -283,28 +304,38 @@ class TestSimpleResultStats(unittest.TestCase):
     
     def test_calculate_loss_pareto_front(self):
         """Test calculating loss between pareto fronts."""
-        current_front = [("seq1", 0.8, 0), ("seq2", 0.6, 1), ("seq3", 0.4, 2)]
-        target_front = [("seq1", 0.9, 0), ("seq2", 0.7, 1), ("seq3", 0.5, 2)]
-        max_mutations = 2
+        # minimization case
+        current_front = [("seq1", 0.8, 0), ("seq2", 0.6, 1), ("seq3", 0.4, 2), ("seq4", 0.2, 4)]
+        target_front = [("seq1", 0.8, 0), ("seq2", 0.5, 1), ("seq3", 0.3, 2), ("seq4", 0.2, 3)]
+        max_mutations = 5
         
-        loss = calculate_loss_pareto_front(current_front, target_front, max_mutations)
+        minimization_loss = calculate_loss_pareto_front(current_front, target_front, max_mutations)
         
-        # Loss should be sum of differences: (0.9-0.8) + (0.7-0.6) + (0.5-0.4) = 0.3
-        self.assertAlmostEqual(loss, 0.3, places=5)
-    
+        # Loss should be sum of differences: (0.8-0.8) + (0.5-0.6) + (0.3-0.4) + (0.2-0.4) + (0.2-0.2) = 0.4
+        self.assertAlmostEqual(minimization_loss, 0.4, places=5)
+
+        # maximization case
+        current_front_max = [("seq1", 0.2, 0), ("seq2", 0.4, 1), ("seq3", 0.6, 2), ("seq4", 0.8, 4)]
+        target_front_max = [("seq1", 0.2, 0), ("seq2", 0.5, 1), ("seq3", 0.7, 2), ("seq4", 0.8, 3)]
+        max_mutations = 5
+
+        maximization_loss = calculate_loss_pareto_front(current_front_max, target_front_max, max_mutations)
+        # Loss should be sum of differences: (0.2-0.2) + (0.5-0.4) + (0.7-0.6) + (0.8-0.6) + (0.8-0.8) = 0.4
+        self.assertAlmostEqual(maximization_loss, 0.4, places=5)
+
     def test_calculate_loss_over_generations_single_gene(self):
         """Test calculating loss over generations for a single gene."""
         gene_name = "1_gene1"
         
         # The test setup creates pareto_front_gen_100.json with partial data
         loss_dict = calculate_loss_over_generations_single_gene(
-            self.results_folder, gene_name, max_number_mutation=90, last_generation=1999
+            self.results_folder, gene_name, max_number_mutation=5, last_generation=1999
         )
         
         self.assertIn(100, loss_dict)
         self.assertIn(1999, loss_dict)
-        self.assertEqual(loss_dict[1999], 0)  # Final generation should have 0 loss
-        self.assertGreater(loss_dict[100], 0)  # Earlier generation should have some loss
+        self.assertAlmostEqual(loss_dict[1999], 0)  # Final generation should have 0 loss
+        self.assertAlmostEqual(loss_dict[100], .8)  # Earlier generation should have some loss
     
     def test_calculate_loss_over_generations(self):
         """Test calculating loss over generations for all genes."""
@@ -320,6 +351,8 @@ class TestSimpleResultStats(unittest.TestCase):
         for gene, gene_loss in loss_data.items():
             self.assertIn(1999, gene_loss)
             self.assertEqual(gene_loss[1999], 0)  # Final generation should have 0 loss
+            if gene_loss.get(100) is not None:
+                self.assertGreater(gene_loss[100], 0)  # Earlier generation should have some loss
     
     def test_visualize_start_vs_max_fitness(self):
         """Test start vs max fitness visualization."""
@@ -470,7 +503,7 @@ class TestSimpleResultStats(unittest.TestCase):
         num_mutations = [5, 3]
         half_max_fitness = 0.7  # Lower than all fitnesses
         
-        result = calculate_half_max_mutations(half_max_fitness, fitnesses, num_mutations, pareto_front)
+        result = calculate_half_max_mutations(fitnesses, num_mutations, pareto_front)
         self.assertEqual(result, 3)  # Should return last item
     
     def test_summary_stat_calculation_missing_half_max(self):
@@ -644,5 +677,5 @@ if __name__ == '__main__':
     # unittest.main()
     test_obj = TestSimpleResultStats()
     test_obj.setUp()
-    test_obj.test_summarize_stats()
+    test_obj.test_calculate_loss_over_generations()
     test_obj.tearDown()
