@@ -385,7 +385,7 @@ def calculate_loss_pareto_front(current_front: List[Tuple[str, float, int]], tar
     Returns:
         float: The loss value.
     """
-    target_length = 91
+    target_length = max_number_mutation + 1
     if len(current_front) > target_length or len(target_front) > target_length:
         raise ValueError(f"Both pareto fronts must at most have a length of {target_length}! Found {len(current_front)} and {len(target_front)}.")
     
@@ -453,6 +453,21 @@ def calculate_loss_over_generations(results_folder: str, max_number_mutation: in
     return loss_over_generations
 
 
+def join_losses_for_visualization(loss_data: Dict[str, Dict[int, float]]) -> Tuple[List[int], List[float], List[float]]:
+    full_losses = {}
+    for loss_dict in loss_data.values():
+        for gen, loss in loss_dict.items():
+            if gen not in full_losses:
+                full_losses[gen] = []
+            full_losses[gen].append(loss)
+
+    generations = sorted(full_losses.keys())
+    losses = [full_losses[gen] for gen in generations]
+    loss_averages = [np.mean(loss) for loss in losses]
+    loss_stds = [np.std(loss) for loss in losses]
+    return generations, loss_averages, [float(x) for x in loss_stds]
+
+
 def plot_loss_over_generations(results_folder: str, name: str, max_number_mutation: int, last_generation: int = 1999, output_folder: str = ".") -> None:
     """Plot the average loss over generations for all genes.
 
@@ -463,6 +478,8 @@ def plot_loss_over_generations(results_folder: str, name: str, max_number_mutati
         output_folder (str): Path to the output folder for saving results. Defaults to ".".
     """
     loss_data = calculate_loss_over_generations(results_folder=results_folder, last_generation=last_generation, max_number_mutation=max_number_mutation)
+    generations, loss_averages, loss_stds = join_losses_for_visualization(loss_data)
+    """
     random_gene = list(loss_data.keys())[0]
     generations = sorted(loss_data[random_gene].keys())
     losses =  []
@@ -477,6 +494,7 @@ def plot_loss_over_generations(results_folder: str, name: str, max_number_mutati
     loss_for_vis = [np.nan for _ in range(len(std_loss_per_gen))]
     for i in range(100, len(std_loss_per_gen), 20):
         loss_for_vis[i] = std_loss_per_gen[i]
+    """
     # print(loss_for_vis)
     # print(std_loss_per_gen)
     plt.clf()
@@ -484,8 +502,8 @@ def plot_loss_over_generations(results_folder: str, name: str, max_number_mutati
     # plot average loss
     # plot error bars every 100 generations
     # plt.plot(generations, avg_loss_per_gen, label='Average Loss', color='blue')
-    plt.errorbar(generations, avg_loss_per_gen,
-                 yerr=loss_for_vis, capsize=3, label='Average Loss', ecolor='black')
+    plt.errorbar(generations, loss_averages,
+                 yerr=loss_stds, capsize=3, label='Average Loss', ecolor='black')
     plt.xlabel("Generation")
     plt.ylabel("Loss")
     plt.title("Average Loss Over Generations")

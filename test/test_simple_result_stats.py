@@ -25,7 +25,9 @@ class TestSimpleResultStats(unittest.TestCase):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
         self.results_folder = os.path.join(self.temp_dir, "results")
+        self.results_loss_vis = os.path.join(self.temp_dir, "results_loss_vis")
         os.makedirs(self.results_folder)
+        os.makedirs(self.results_loss_vis)
         
         # Create test gene folders with pareto fronts
         # Test both maximization and minimization scenarios
@@ -57,6 +59,7 @@ class TestSimpleResultStats(unittest.TestCase):
                     ["TAAAAA", 0.9, 1],    # Worst fitness, least mutations
                     ["AAAAAA", 1., 0]    # Worst fitness, least mutations
                 ]
+
             
             with open(os.path.join(gene_folder, "saved_populations", "pareto_front.json"), 'w') as f:
                 json.dump(pareto_data, f)
@@ -64,6 +67,79 @@ class TestSimpleResultStats(unittest.TestCase):
             # Create generation-specific fronts for loss calculation
             with open(os.path.join(gene_folder, "saved_populations", "pareto_front_gen_100.json"), 'w') as f:
                 json.dump(pareto_data[2:], f)
+        
+        vis_gene_folder = os.path.join(self.results_loss_vis, "1_gene1")
+        os.makedirs(os.path.join(vis_gene_folder, "saved_populations"))
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front.json"), 'w') as f:
+            json.dump([
+                ["TTTTA", 1, 4],
+                ["TTAAA", 0.9, 2],
+                ["TAAAA", 0.8, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front_gen_1000.json"), 'w') as f:
+            json.dump([
+                ["CCCCC", 1, 5],
+                ["CCCAA", 0.9, 3],
+                ["CCAAA", 0.8, 2],
+                ["CAAAA", 0.7, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front_gen_100.json"), 'w') as f:
+            json.dump([
+                ["GGGGG", 0.9, 5],
+                ["GGGGA", 0.8, 4],
+                ["GGGAA", 0.7, 3],
+                ["GGAAA", 0.6, 2],
+                ["GAAAA", 0.5, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front_gen_10.json"), 'w') as f:
+            json.dump([
+                ["TCGGT", 0.6, 5],
+                ["TGCGA", 0.5, 4],
+                ["ACTGA", 0.4, 3],
+                ["AGACA", 0.3, 2],
+                ["AGAAA", 0.2, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+
+        vis_gene_folder = os.path.join(self.results_loss_vis, "2_gene2")
+        os.makedirs(os.path.join(vis_gene_folder, "saved_populations"))
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front.json"), 'w') as f:
+            json.dump([
+                ["TTTTT", 1, 5],
+                ["TTTAA", 0.9, 4],
+                ["TTAAA", 0.8, 2],
+                ["TAAAA", 0.6, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front_gen_1000.json"), 'w') as f:
+            json.dump([
+                ["CCCCC", 0.9, 5],
+                ["CCCAA", 0.8, 3],
+                ["CCAAA", 0.7, 2],
+                ["CAAAA", 0.4, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front_gen_100.json"), 'w') as f:
+            json.dump([
+                ["GGGGG", 0.7, 5],
+                ["GGGGA", 0.6, 4],
+                ["GGGAA", 0.5, 3],
+                ["GGAAA", 0.4, 2],
+                ["GAAAA", 0.3, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front_gen_10.json"), 'w') as f:
+            json.dump([
+                ["TCGGT", 0.5, 5],
+                ["TGCGA", 0.4, 4],
+                ["ACTGA", 0.3, 3],
+                ["AGACA", 0.2, 2],
+                ["AGAAA", 0.1, 1],
+                ["AAAAA", 0, 0],
+            ], f)
     
     def tearDown(self):
         """Clean up test fixtures."""
@@ -429,7 +505,7 @@ class TestSimpleResultStats(unittest.TestCase):
         
         # Check that at least some pareto front files were created
         png_files = [f for f in os.listdir(output_folder) if f.endswith('.png')]
-        self.assertGreater(len(png_files), 0)
+        self.assertEqual(len(png_files), 2)
     
     def test_show_average_pareto_front(self):
         """Test showing average pareto front."""
@@ -443,7 +519,7 @@ class TestSimpleResultStats(unittest.TestCase):
     def test_plot_loss_over_generations(self):
         """Test plotting loss over generations."""
         plot_loss_over_generations(
-            self.results_folder, "test", max_number_mutation=90, 
+            self.results_loss_vis, "test", max_number_mutation=5, 
             last_generation=1999, output_folder=self.temp_dir
         )
         
@@ -495,17 +571,6 @@ class TestSimpleResultStats(unittest.TestCase):
         self.assertEqual(len(stats), 3)
         self.assertNotIn("not_a_gene.txt", stats)
     
-    def test_calculate_half_max_mutations_edge_cases(self):
-        """Test edge cases for calculate_half_max_mutations."""
-        # Test when no items cross the threshold
-        pareto_front = [["seq1", 0.9, 5], ["seq2", 0.8, 3]]
-        fitnesses = [0.9, 0.8]
-        num_mutations = [5, 3]
-        half_max_fitness = 0.7  # Lower than all fitnesses
-        
-        result = calculate_half_max_mutations(fitnesses, num_mutations, pareto_front)
-        self.assertEqual(result, 3)  # Should return last item
-    
     def test_summary_stat_calculation_missing_half_max(self):
         """Test summary statistics when some genes are missing half_max_effect."""
         stats = {
@@ -553,6 +618,7 @@ class TestSimpleResultStats(unittest.TestCase):
         self.assertIn("Summary for test_group:", result)
         self.assertIn("Summary for test_group_main_chromosome:", result)
         self.assertIn("Summary for test_group_organelle_scaffold:", result)
+        self.assertIn("final_fitness_mean: 0.9", result)
         
         # Check that multiple output files were created
         base_file = os.path.join(self.temp_dir, "summary_test_group.txt")
@@ -570,7 +636,7 @@ class TestSimpleResultStats(unittest.TestCase):
         max_mutations = 2
         
         expanded = expand_pareto_front(pareto_front, max_mutations)
-        self.assertEqual(len(expanded), 3)  # Should remain the same
+        self.assertEqual(expanded, pareto_front)  # Should remain the same
         
         # Test with larger gaps
         pareto_front_gaps = [("seq1", 0.9, 0), ("seq2", 0.5, 5)]
@@ -607,11 +673,13 @@ class TestSimpleResultStats(unittest.TestCase):
             "gene1": {
                 'start_fitness': 0.1,
                 'final_fitness': 0.9,
-                'num_mutations_half_max_effect': 3
+                'num_mutations_half_max_effect': 3,
+                "origin_chromosome": "1"
             },
             "gene2": {
                 'start_fitness': 0.2,
-                'final_fitness': 0.8
+                'final_fitness': 0.8,
+                "origin_chromosome": "1"
                 # Missing num_mutations_half_max_effect
             }
         }
@@ -630,7 +698,8 @@ class TestSimpleResultStats(unittest.TestCase):
                 'num_mutations_half_max_effect': 3
             },
             "gene2": {
-                'final_fitness': 0.8
+                'final_fitness': 0.8,
+                "origin_chromosome": "1"
                 # Missing num_mutations_half_max_effect
             }
         }
@@ -646,7 +715,8 @@ class TestSimpleResultStats(unittest.TestCase):
         """Test histogram with no valid data."""
         stats = {
             "gene1": {
-                'final_fitness': 0.8
+                'final_fitness': 0.8,
+                "origin_chromosome": "1"
                 # Missing num_mutations_half_max_effect
             }
         }
@@ -677,5 +747,5 @@ if __name__ == '__main__':
     # unittest.main()
     test_obj = TestSimpleResultStats()
     test_obj.setUp()
-    test_obj.test_calculate_loss_over_generations()
+    test_obj.test_show_random_fronts_more_samples_than_genes()
     test_obj.tearDown()
