@@ -1,6 +1,8 @@
 import os
 import json
 import argparse
+import random
+import string
 from typing import Dict, Optional, Tuple
 from matplotlib import pyplot as plt
 import numpy as np
@@ -9,34 +11,51 @@ import scipy
 import tqdm
 
 
-def get_epm_tfbs_mapping(input_path: str) -> pd.DataFrame:
+def get_epm_tfbs_mapping_old(input_path: str) -> pd.DataFrame:
     data = pd.read_csv(input_path, header=0)
     rel_cols = data[["epm", "tf_name"]]
     rel_cols = rel_cols.drop_duplicates()
     return rel_cols
 
 
-def get_epm_count_table(input_path: str) -> pd.DataFrame:
-    out_path = os.path.splitext(input_path)[0] + "_epm_counts.csv"
-    if os.path.exists(out_path):
-        loaded_data = pd.read_csv(out_path, header=0)
-        return loaded_data
+def get_epm_tfbs_mapping_new(input_path: str) -> pd.DataFrame:
+    print("!!!!THIS IS NOT PROPERLY IMPLEMENTED!!!! IMPLEMENT get_epm_tfbs_mapping_new!!!!")
     data = pd.read_csv(input_path, header=0)
-    data_filtered = data[data["type"] == "gene"]
-    data_filtered = data_filtered[data_filtered["motif"].str.contains(r"p(\d)+m(\d)+F_(\d)+$", regex=True)]
-    epm_counts = data_filtered[["loc", "epm"]].groupby("loc").value_counts()
+    add_epm(data)
+    rel_cols = data[["epm"]]
+    rel_cols = rel_cols.drop_duplicates()
+    rel_cols["tf_name"] = ["not_implemented" for _ in range(len(rel_cols))]
+    return rel_cols
+
+
+def add_epm(data: pd.DataFrame) -> None:
+    if "epm" not in data.columns:
+        data["epm"] = data["motif"].str.split(r"[RF]_(\d+)$", regex=True, expand=True)[0]
+
+
+def get_epm_count_table(input_path: str, new: bool = True) -> pd.DataFrame:
+    out_path = os.path.splitext(input_path)[0] + "_epm_counts.csv"
+    # if os.path.exists(out_path):
+    #     loaded_data = pd.read_csv(out_path, header=0)
+    #     return loaded_data
+    data = pd.read_csv(input_path, header=0)
+    add_epm(data)
+    if not new:
+        data = data[data["type"] == "gene"]
+    data_filtered = data[data["motif"].str.contains(r"p(\d)+m(\d)+F_(\d)+$", regex=True)]
+    id_column = "sequence_id" if new else "loc"
+    epm_counts = data_filtered[[id_column, "epm"]].groupby(id_column).value_counts()
     # create table with loc as rows, epm as columns, and counts as values
     epm_counts = epm_counts.unstack(fill_value=0)
     epm_counts = epm_counts.reset_index()
     epm_counts.columns.name = None  # remove the name of the columns index
-    epm_counts = epm_counts.rename(columns={"loc": "sequence"})
+    epm_counts = epm_counts.rename(columns={id_column: "sequence"})
     epm_counts.to_csv(out_path, index=False)
     return epm_counts
 
 
 def get_min_max_dfs(input_df: pd.DataFrame, remembered_issues: bool = False) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    input_df["original_sequence"] = input_df["sequence"].str.split("_mutations_", expand=True)[0]
-    input_df["number_mutations"] = input_df["sequence"].str.split("_mutations_", expand=True)[1].str.split("_", expand=True)[0].astype(int)
+    add_original_sequence_and_number_mutations(input_df)
     max_mutations = input_df.groupby("original_sequence").agg({
         "number_mutations": "max"
     }).reset_index().set_index("original_sequence").rename(columns={"number_mutations": "max_number_mutations"})
@@ -50,10 +69,10 @@ def get_min_max_dfs(input_df: pd.DataFrame, remembered_issues: bool = False) -> 
     return min_mutation_rows, max_mutation_rows
 
 
-def get_difference_number_epm(input_path: str, output_folder: str = "."):
+def get_difference_number_epm(input_path: str, output_folder: str = ".", new: bool = True):
     os.makedirs(output_folder, exist_ok=True)
     output_path = os.path.join(output_folder, "initial_vs_final_per_original_sequence.csv")
-    epm_counts = get_epm_count_table(input_path)
+    epm_counts = get_epm_count_table(input_path, new=new)
     # get the number of EPMs for each sequence
     epm_counts["number_epm"] = epm_counts.drop(columns=["sequence"]).sum(axis=1)
     min_mutation_rows, max_mutation_rows = get_min_max_dfs(epm_counts, remembered_issues=True)
@@ -108,12 +127,13 @@ def add_tf_names(df: pd.DataFrame, mapping: pd.DataFrame) -> pd.DataFrame:
     df = df.reset_index()
     df = df.set_index("epm")
     return df
-    
 
-def compare_initial_and_final_distribution(input_path: str, mapping: pd.DataFrame, output_folder: str = "."):
-    os.makedirs(output_folder, exist_ok=True)
-    output_path = os.path.join(output_folder, "initial_vs_final_per_epm_counts.csv")
-    epm_counts = get_epm_count_table(input_path)
+
+def compare_initial_and_final_distribution(input_path: str, mapping: pd.DataFrame, output_folder: str = ".", new: bool = True):
+    """
+    Compare the initial and final distributions of EPMs.
+    """
+    epm_counts = get_epm_count_table(input_path, new=new)
     significance = statistics_epm_before_after(epm_counts.copy())
     firsts, lasts = [], []
     # sequences are named as "<gene>_mutations_<number>"
@@ -146,10 +166,12 @@ def compare_initial_and_final_distribution(input_path: str, mapping: pd.DataFram
     df.loc["sum"] = df.sum(numeric_only=True)
     # recalculate log ratio for sum row
     df.at["sum", "log_ratio"] = np.log2(df.at["sum", "final"] / df.at["sum", "initial"])
+    os.makedirs(output_folder, exist_ok=True)
+    output_path = os.path.join(output_folder, "initial_vs_final_per_epm_counts.csv")
     df.to_csv(output_path, index=True)
 
 
-def add_fitness(df: pd.DataFrame) -> None:
+def add_fitness(df: pd.DataFrame, data_path: str) -> None:
     """
     Add fitness scores to the EPM counts DataFrame.
     """
@@ -165,9 +187,26 @@ def add_fitness(df: pd.DataFrame) -> None:
         gene = gene.split("_mutations_")[0]
         if gene != current_gene:
             current_gene = gene
-            pareto_front_path = os.path.join("data", run, gene, "saved_populations", f"{gene}_pareto_front.json")
-            with open(pareto_front_path, "r") as f:
-                current_fitness_list = json.load(f)
+            pareto_front_path = os.path.join(data_path, run, gene, "saved_populations", f"{gene}_pareto_front.json")
+            try:
+                with open(pareto_front_path, "r") as f:
+                    current_fitness_list = json.load(f)
+            except FileNotFoundError:
+                alternative_pareto_front_path = os.path.join(data_path, run, gene, "saved_populations", f"pareto_front.json")
+                try:
+                    with open(alternative_pareto_front_path, "r") as f:
+                        current_fitness_list = json.load(f)
+                except FileNotFoundError:
+                    print(f"Could not find pareto front file for gene {gene} in run {run}. Setting fitness to NaN.")
+                    current_fitness_list = []
+            previous_fitness = 0.0
+            previous_mutations = 0
+        if not current_fitness_list:
+            df.loc[i, "fitness"] = np.nan
+            df.loc[i, "diff_fitness"] = np.nan
+            df.loc[i, "diff_fitness_normalized"] = np.nan
+            continue
+                
 
         fitness = [fitness for seq, fitness, n_mutations in current_fitness_list if n_mutations == row["number_mutations"]][0]
         diff_mutations = row["number_mutations"] - previous_mutations
@@ -212,17 +251,21 @@ def add_diff_tf(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def analyze_mutations_effect(input_path: str, output_folder: str, mapping: pd.DataFrame, epm_of_interest: str = "epm_ara_msr_max_corrected_p1m10") -> pd.DataFrame:
+def add_original_sequence_and_number_mutations(df: pd.DataFrame) -> None:
+    df["original_sequence"] = df["sequence"].str.split("_mutations_", expand=True)[0]
+    df["number_mutations"] = df["sequence"].str.split("_mutations_", expand=True)[1].str.split(":", expand=True)[0].str.split("_", expand=True)[0].astype(int)
+
+
+def analyze_mutations_effect(input_path: str, output_folder: str, mapping: pd.DataFrame, data_path: str, epm_of_interest: str = "epm_ara_msr_max_corrected_p1m10", new: bool = True) -> pd.DataFrame:
     """
     Analyze the effect of mutations on EPMs.
     """
     output_path = os.path.join(output_folder, f"effect_per_mutation_epm.csv")
-    epm_counts = get_epm_count_table(input_path)
-    epm_counts["original_sequence"] = epm_counts["sequence"].str.split("_mutations_", expand=True)[0]
-    epm_counts["number_mutations"] = epm_counts["sequence"].str.split("_mutations_", expand=True)[1].str.split("_", expand=True)[0].astype(int)
+    epm_counts = get_epm_count_table(input_path, new=new)
+    add_original_sequence_and_number_mutations(epm_counts)
     epm_counts = epm_counts.drop_duplicates(subset=["original_sequence", "number_mutations"])
     epm_counts = epm_counts.sort_values(by=["original_sequence", "number_mutations"])
-    add_fitness(epm_counts)
+    add_fitness(epm_counts, data_path=data_path)
     add_diff_tf(epm_counts)
     epm_counts = epm_counts.merge(mapping, left_on="diff_tf", right_on="epm", how="left")
     epm_counts = epm_counts.drop(columns=["diff_tf"])
@@ -273,19 +316,26 @@ def analyze_mutations_effect(input_path: str, output_folder: str, mapping: pd.Da
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Analyze EPM mapping data")
-    parser.add_argument("--input", "-i", type=str, required=True,
-                        help="Path to input CSV file with EPM mapping data")
+    parser.add_argument("--input_old", "-io", type=str, required=False,
+                        help="Path to input CSV file with EPM mapping data using the old moca blue pipeline", default="")
+    parser.add_argument("--input", "-i", type=str, required=False,
+                        help="Path to input CSV file with EPM mapping data using the new moca blue pipeline", default="")
     parser.add_argument("--output_folder", "-o", type=str, default=".", required=False,
                         help="Path to output folder for results")
-    parser.add_argument("--difference-epm", action="store_true",
+    parser.add_argument("--data_path", "-d", type=str, default="data", required=False,
+                        help="Path to data folder containing run directories")
+    parser.add_argument("--difference_epm", action="store_true",
                         help="Calculate difference in number of EPMs between min and max mutations")
-    parser.add_argument("--compare-distribution", action="store_true",
+    parser.add_argument("--compare_distribution", action="store_true",
                         help="Compare initial and final EPM distributions")
     parser.add_argument("--mutations_effect", "-m", action="store_true",
                         help="Analyze the effect of mutations on EPMs")
     parser.add_argument("--all", action="store_true",
                         help="Run all analyses")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.input_old and not args.input:
+        raise ValueError("At least one of --input_old or --input must be provided.")
+    return args
 
 
 def main():
@@ -296,18 +346,32 @@ def main():
         return
     
     if args.compare_distribution or args.all:
-        mapping = get_epm_tfbs_mapping(args.input)
-        print("Comparing initial and final distributions...")
-        compare_initial_and_final_distribution(args.input, mapping=mapping, output_folder=args.output_folder)
+        if args.input:
+            mapping = get_epm_tfbs_mapping_new(args.input)
+            print("Comparing initial and final distributions...")
+            compare_initial_and_final_distribution(args.input, mapping=mapping, output_folder=args.output_folder, new=True)
+        else:
+            mapping = get_epm_tfbs_mapping_old(args.input_old)
+            print("Comparing initial and final distributions...")
+            compare_initial_and_final_distribution(args.input_old, mapping=mapping, output_folder=args.output_folder, new=False)
     
     if args.difference_epm or args.all:
         print("Calculating difference in number of EPMs...")
-        get_difference_number_epm(args.input, output_folder=args.output_folder)
-    
+        if args.input:
+            get_difference_number_epm(args.input, output_folder=args.output_folder, new=True)
+        else:
+            get_difference_number_epm(args.input_old, output_folder=args.output_folder, new=False)
+        print("success")
+
     if args.mutations_effect or args.all:
-        mapping = get_epm_tfbs_mapping(args.input)
-        print("Analyzing the effect of mutations on EPMs...")
-        analyze_mutations_effect(args.input, output_folder=args.output_folder, mapping=mapping)
+        if args.input:
+            mapping = get_epm_tfbs_mapping_new(args.input)
+            print("Analyzing the effect of mutations on EPMs...")
+            analyze_mutations_effect(args.input, output_folder=args.output_folder, mapping=mapping, new=True, data_path=args.data_path)
+        else:
+            mapping = get_epm_tfbs_mapping_old(args.input_old)
+            print("Analyzing the effect of mutations on EPMs...")
+            analyze_mutations_effect(args.input_old, output_folder=args.output_folder, mapping=mapping, new=False, data_path=args.data_path)
 
 
 
