@@ -4,6 +4,72 @@ import unittest
 import os
 import tempfile
 from analysis.summarize_mutations import MutatedSequence, MutationsGene, summarize_mutations_all_folders
+import sys
+from unittest import mock
+# ...existing code...
+
+class TestCLI(unittest.TestCase):
+    """Test cases for CLI functions in summarize_mutations.py."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.results_folder = os.path.join(self.temp_dir, "results")
+        os.makedirs(self.results_folder)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    def test_parse_args_success(self):
+        """Test parse_args with valid arguments."""
+        test_args = [
+            "prog",
+            "--results_folder", self.results_folder,
+            "--name", "testname",
+            "--output_folder", self.temp_dir,
+            "--final_generation", "1234",
+            "--generation", "42"
+        ]
+        with mock.patch.object(sys, 'argv', test_args):
+            from analysis import summarize_mutations
+            args = summarize_mutations.parse_args()
+            self.assertEqual(args.results_folder, self.results_folder)
+            self.assertEqual(args.name, "testname")
+            self.assertEqual(args.output_folder, self.temp_dir)
+            self.assertEqual(args.final_generation, 1234)
+            self.assertEqual(args.generation, 42)
+
+    def test_parse_args_missing_results_folder(self):
+        """Test parse_args with missing results_folder argument."""
+        test_args = ["prog", "--name", "testname"]
+        with mock.patch.object(sys, 'argv', test_args):
+            from analysis import summarize_mutations
+            with self.assertRaises(Exception):
+                summarize_mutations.parse_args()
+
+    def test_parse_args_invalid_results_folder(self):
+        """Test parse_args with non-existent results_folder."""
+        test_args = [
+            "prog",
+            "--results_folder", "/nonexistent/path",
+            "--name", "testname"
+        ]
+        with mock.patch.object(sys, 'argv', test_args):
+            from analysis import summarize_mutations
+            with self.assertRaises(ValueError):
+                summarize_mutations.parse_args()
+
+    def test_parse_args_missing_name(self):
+        """Test parse_args with missing name argument."""
+        test_args = [
+            "prog",
+            "--results_folder", self.results_folder,
+            "--name", ""
+        ]
+        with mock.patch.object(sys, 'argv', test_args):
+            from analysis import summarize_mutations
+            with self.assertRaises(ValueError):
+                summarize_mutations.parse_args()
+
 
 class TestMutatedSequence(unittest.TestCase):
     """Test cases for the MutatedSequence class."""
@@ -182,7 +248,7 @@ class TestMutatedSequence(unittest.TestCase):
         self.assertEqual(mutated_seq1, mutated_seq2)
         self.assertNotEqual(mutated_seq1, MutatedSequence(self.ref_seq, "A" * len(self.ref_seq), 0.5))
         self.assertNotEqual(mutated_seq1, MutatedSequence("A" * len(self.ref_seq), self.mut_seq, 0.5))
-        self.assertNotEqual(mutated_seq1, MutatedSequence("A" * len(self.ref_seq), self.mut_seq, 0.4))
+        self.assertNotEqual(mutated_seq1, MutatedSequence(self.ref_seq, self.mut_seq, 0.4))
     
     def test_get_mutation_number(self):
         """Test get_mutation_number method."""
@@ -274,6 +340,25 @@ class TestMutationsGene(unittest.TestCase):
             self.assertEqual(len(sequences), len(reconstructed_gene.generation_dict[gen]))
             for seq in sequences:
                 self.assertIn(seq, reconstructed_gene.generation_dict[gen])
+    
+    def test_equality(self):
+        gene = MutationsGene(self.gene_folder_min, final_generation=1999)
+        gene_copy = MutationsGene.from_dict(gene.to_dict())
+        self.assertEqual(gene, gene_copy)
+
+        diff_gene_mutations = MutationsGene(self.gene_folder_min, final_generation=1999)
+        diff_gene_mutations.generation_dict[1999][0].mutations.append((0, 'A', 'G'))
+        diff_gene_sequences = MutationsGene(self.gene_folder_min, final_generation=1999)
+        diff_gene_sequences.generation_dict[1999].append(MutatedSequence(self.ref_seq, self.ref_seq, 0.9))
+        diff_gene_reference = MutationsGene(self.gene_folder_max, final_generation=1999)
+        diff_gene_reference.reference_sequence = "TTTTTTAAAAAAA"
+        diff_gene_generations = MutationsGene(self.gene_folder_min, final_generation=1999)
+        diff_gene_generations.generation_dict.pop(100)
+        self.assertNotEqual(gene, diff_gene_mutations)
+        self.assertNotEqual(gene, diff_gene_sequences)
+        self.assertNotEqual(gene, diff_gene_reference)
+        self.assertNotEqual(gene, diff_gene_generations)
+
     
     def test_get_init_and_optimal_fitness_generation_maximization(self):
         """Test fitness retrieval for maximization problem."""
@@ -422,3 +507,7 @@ class TestSummarizeMutations(unittest.TestCase):
             self.assertEqual(len(two_mut_seq), 1)
             self.assertEqual(two_mut_seq[1999][0].mutated_sequence, "ATAAACAAAA")       # type: ignore
             self.assertIn(two_mut_seq[1999][0].fitness, [0.6, 0.7]) # type: ignore  
+
+
+if __name__ == "__main__":
+    unittest.main()
