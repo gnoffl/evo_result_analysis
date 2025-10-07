@@ -5,6 +5,8 @@ import os
 import json
 import tempfile
 import math
+import shutil
+from pandas.testing import assert_series_equal
 from unittest.mock import patch, mock_open, MagicMock
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -222,7 +224,7 @@ class TestAddTfNames(unittest.TestCase):
         self.assertTrue(math.isnan(result.loc['epm_unknown', 'tf_name'])) #type:ignore
 
 
-class TestCompareInitialAndFinalDistributionsCore(unittest.TestCase):
+class TestCompareInitialAndFinalDistribution(unittest.TestCase):
     
     def setUp(self):
         self.sample_mapping = pd.DataFrame({
@@ -230,65 +232,147 @@ class TestCompareInitialAndFinalDistributionsCore(unittest.TestCase):
             'tf_name': ['AraC', 'CRP']
         })
     
-    def test_compare_initial_and_final_distributions_core(self):
+    @patch('analysis.analyze_mapping.get_epm_count_table')
+    @patch('analysis.analyze_mapping.statistics_epm_before_after')
+    def test_compare_initial_and_final_distribution(self, mock_statistics, mock_get_epm_count_table):
         epm_counts = pd.DataFrame({
-            'sequence': ['gene1_mutations_0', 'gene2_mutations_5'],
-            'epm_ara_msr_max_corrected_p1m10': [2, 3],
-            'epm_crp_p2m5': [1, 0]
+            'sequence': ['gene1_mutations_0', 'gene1_mutations_5', "gene2_mutations_0", "gene2_mutations_3"],
+            'epm_ara_msr_max_corrected_p1m10': [5, 10, 4, 12],
+            'epm_crp_p2m5': [3, 2, 4, 3]
         })
         
+        mock_get_epm_count_table.return_value = epm_counts
+        mock_statistics.return_value = {'epm_ara_msr_max_corrected_p1m10': 0.005, 'epm_crp_p2m5': 0.03}
+        
         with tempfile.TemporaryDirectory() as tmp_path:
-            with patch('analysis.analyze_mapping.statistics_epm_before_after', return_value={'epm_ara_msr_max_corrected_p1m10': 0.05}):
-                compare_initial_and_final_distribution(
-                    mapping=self.sample_mapping,
-                    output_folder=tmp_path,
-                    epm_counts=epm_counts
-                )
+            result = compare_initial_and_final_distribution(
+                input_path='dummy_path.csv',
+                mapping=self.sample_mapping,
+                output_folder=tmp_path,
+                new=True
+            )
             
             output_file = os.path.join(tmp_path, "initial_vs_final_per_epm_counts.csv")
             self.assertTrue(os.path.exists(output_file))
-
+            expected_columns = ["initial", "final", "difference", "log_ratio", "significance", "tf_name"]
+            self.assertTrue(all(col in result.columns for col in expected_columns))
+            epm_ara_row = pd.Series({
+                "initial": 9,
+                "final": 22,
+                "difference": 13,
+                "log_ratio": np.log2(22/9),
+                "significance": 0.005,
+                "tf_name": "AraC"
+            }, name='epm_ara_msr_max_corrected_p1m10')
+            epm_crp_row = pd.Series({
+                "initial": 7,
+                "final": 5,
+                "difference": -2,
+                "log_ratio": np.log2(5/7),
+                "significance": 0.03,
+                "tf_name": "CRP"
+            }, name='epm_crp_p2m5')
+            sum_row = pd.Series({
+                "initial": 16,
+                "final": 27,
+                "difference": 11,
+                "log_ratio": np.log2(27/16),
+                "significance": 0.035,
+                "tf_name": pd.NA
+            }, name='sum')
+            assert_series_equal(result.loc['epm_ara_msr_max_corrected_p1m10'], epm_ara_row, check_exact=False)
+            assert_series_equal(result.loc['epm_crp_p2m5'], epm_crp_row, check_exact=False)
+            assert_series_equal(result.loc['sum'], sum_row, check_exact=False)
+            
+            # Verify the mocks were called
+            mock_get_epm_count_table.assert_called_once_with('dummy_path.csv', new=True)
+            mock_statistics.assert_called_once()
 
 class TestAddFitness(unittest.TestCase):
+
+    def setUp(self):
+        self.rundir_max = tempfile.TemporaryDirectory()
+        os.makedirs(os.path.join(self.rundir_max.name, "run1", "gene1", "saved_populations"), exist_ok=True)
+        os.makedirs(os.path.join(self.rundir_max.name, "run1", "gene2", "saved_populations"), exist_ok=True)
+        gene1_pareto = [['seq1', 0.5, 0], ['seq2', 0.8, 1], ['seq3', 0.9, 2]]
+        gene2_pareto = [['seq1', 0.5, 0], ['seq2', 0.8, 1], ['seq3', 0.9, 3]]
+        with open(os.path.join(self.rundir_max.name, "run1", "gene1", "saved_populations", "gene1_pareto_front.json"), 'w') as f:
+            json.dump(gene1_pareto, f)
+        with open(os.path.join(self.rundir_max.name, "run1", "gene2", "saved_populations", "pareto_front.json"), 'w') as f:
+            json.dump(gene2_pareto, f)
+        self.rundir_min = tempfile.TemporaryDirectory()
+        os.makedirs(os.path.join(self.rundir_min.name, "run1", "gene1", "saved_populations"), exist_ok=True)
+        os.makedirs(os.path.join(self.rundir_min.name, "run1", "gene2", "saved_populations"), exist_ok=True)
+        gene1_pareto = [['seq1', 0.5, 0], ['seq2', 0.2, 1], ['seq3', 0.1, 2]]
+        gene2_pareto = [['seq1', 0.5, 0], ['seq2', 0.2, 1], ['seq3', 0.1, 3]]
+        with open(os.path.join(self.rundir_min.name, "run1", "gene1", "saved_populations", "gene1_pareto_front.json"), 'w') as f:
+            json.dump(gene1_pareto, f)
+        with open(os.path.join(self.rundir_min.name, "run1", "gene2", "saved_populations", "pareto_front.json"), 'w') as f:
+            json.dump(gene2_pareto, f)
     
-    def test_add_fitness_success(self):
+    def tearDown(self):
+        shutil.rmtree(self.rundir_max.name)
+        shutil.rmtree(self.rundir_min.name)
+    
+    def test_add_fitness_max_success(self):
         df = pd.DataFrame({
-            'sequence': ['run1__gene1_mutations_0:0_seed', 'run1__gene1_mutations_1:1_seed'],
+            'sequence': ['run1__gene1_mutations_0', 'run1__gene1_mutations_1', 'run1__gene1_mutations_2', 'run1__gene2_mutations_0', 'run1__gene2_mutations_1', 'run1__gene2_mutations_3'],
+            'number_mutations': [0, 1, 2, 0, 1, 3]
+        })
+        
+        add_fitness(df, self.rundir_max.name)
+        
+        self.assertIn('fitness', df.columns)
+        self.assertIn('diff_fitness', df.columns)
+        self.assertIn('diff_fitness_normalized', df.columns)
+        expected_fitness = pd.Series([0.5, 0.8, 0.9, 0.5, 0.8, 0.9], name='fitness', index=df.index)
+        expected_diff_fitness = pd.Series([np.nan, 0.3, 0.1, np.nan, 0.3, 0.1], name='diff_fitness', index=df.index)
+        expected_diff_fitness_normalized = pd.Series([np.nan, 0.3, 0.1, np.nan, 0.3, 0.05], name='diff_fitness_normalized', index=df.index)
+        assert_series_equal(df['fitness'], expected_fitness)
+        assert_series_equal(df['diff_fitness'], expected_diff_fitness)
+        assert_series_equal(df['diff_fitness_normalized'], expected_diff_fitness_normalized)
+
+
+    def test_add_fitness_min_success(self):
+        df = pd.DataFrame({
+            'sequence': ['run1__gene1_mutations_0', 'run1__gene1_mutations_1', 'run1__gene1_mutations_2', 'run1__gene2_mutations_0', 'run1__gene2_mutations_1', 'run1__gene2_mutations_3'],
+            'number_mutations': [0, 1, 2, 0, 1, 3]
+        })
+        
+        add_fitness(df, self.rundir_min.name)
+        
+        self.assertIn('fitness', df.columns)
+        self.assertIn('diff_fitness', df.columns)
+        self.assertIn('diff_fitness_normalized', df.columns)
+        expected_fitness = pd.Series([0.5, 0.2, 0.1, 0.5, 0.2, 0.1], name='fitness', index=df.index)
+        expected_diff_fitness = pd.Series([np.nan, -0.3, -0.1, np.nan, -0.3, -0.1], name='diff_fitness', index=df.index)
+        expected_diff_fitness_normalized = pd.Series([np.nan, -0.3, -0.1, np.nan, -0.3, -0.05], name='diff_fitness_normalized', index=df.index)
+        assert_series_equal(df['fitness'], expected_fitness)
+        assert_series_equal(df['diff_fitness'], expected_diff_fitness)
+        assert_series_equal(df['diff_fitness_normalized'], expected_diff_fitness_normalized)
+
+    def test_add_fitness_file_not_found(self):
+        df = pd.DataFrame({
+            'sequence': ['run1__gene3_mutations_0', 'run1__gene3_mutations_1'],
             'number_mutations': [0, 1]
         })
         
-        with tempfile.TemporaryDirectory() as tmp_path:
-            # Create mock pareto front file
-            pareto_data = [['seq1', 0.5, 0], ['seq2', 0.8, 1]]
-            pareto_dir = os.path.join(tmp_path, "run1", "gene1", "saved_populations")
-            os.makedirs(pareto_dir, exist_ok=True)
-            pareto_file = os.path.join(pareto_dir, "gene1_pareto_front.json")
-            with open(pareto_file, 'w') as f:
-                json.dump(pareto_data, f)
-            
-            add_fitness(df, tmp_path)
-            
-            self.assertIn('fitness', df.columns)
-            self.assertIn('diff_fitness', df.columns)
-            self.assertIn('diff_fitness_normalized', df.columns)
-    
-    def test_add_fitness_file_not_found(self):
-        df = pd.DataFrame({
-            'sequence': ['run1__gene1_mutations_0:0_seed'],
-            'number_mutations': [0]
-        })
+        add_fitness(df, self.rundir_max.name)
+        self.assertIn('fitness', df.columns)
+        self.assertIn('diff_fitness', df.columns)
+        self.assertIn('diff_fitness_normalized', df.columns)
+        expected_fitness = pd.Series([np.nan, np.nan], name='fitness', index=df.index)
+        expected_diff_fitness = pd.Series([np.nan, np.nan], name='diff_fitness', index=df.index)
+        expected_diff_fitness_normalized = pd.Series([np.nan, np.nan], name='diff_fitness_normalized', index=df.index)
+        assert_series_equal(df['fitness'], expected_fitness)
+        assert_series_equal(df['diff_fitness'], expected_diff_fitness)
+        assert_series_equal(df['diff_fitness_normalized'], expected_diff_fitness_normalized)
         
-        with tempfile.TemporaryDirectory() as tmp_path:
-            with patch('builtins.print') as mock_print:
-                add_fitness(df, tmp_path)
-            
-            mock_print.assert_called()
-            self.assertTrue(pd.isna(df.loc[0, 'fitness']))
 
 
 class TestFindDiffTf(unittest.TestCase):
     
-    def test_find_diff_tf_single_change(self):
+    def test_find_diff_tf_single_change_pos(self):
         epm_cols = ['epm_ara_msr_max_corrected_p1m10', 'epm_crp_p2m5']
         diff_epms = pd.Series({'epm_ara_msr_max_corrected_p1m10': 1, 'epm_crp_p2m5': 0})
         
@@ -297,6 +381,24 @@ class TestFindDiffTf(unittest.TestCase):
         self.assertEqual(tf, 'epm_ara_msr_max_corrected_p1m10')
         self.assertEqual(counter, 1)
     
+    def test_find_diff_tf_single_change_neg(self):
+        epm_cols = ['epm_ara_msr_max_corrected_p1m10', 'epm_crp_p2m5']
+        diff_epms = pd.Series({'epm_ara_msr_max_corrected_p1m10': 0, 'epm_crp_p2m5': -1})
+        
+        tf, counter = find_diff_tf(epm_cols, diff_epms)
+        
+        self.assertEqual(tf, 'epm_crp_p2m5')
+        self.assertEqual(counter, -1)
+
+    def test_find_diff_tf_multi_change(self):
+        epm_cols = ['epm_ara_msr_max_corrected_p1m10', 'epm_crp_p2m5', 'epm_asd_p1m6']
+        diff_epms = pd.Series({'epm_ara_msr_max_corrected_p1m10': 1, 'epm_crp_p2m5': -1, "epm_asd_p1m6": 1})
+        
+        tf, counter = find_diff_tf(epm_cols, diff_epms)
+        
+        self.assertIsNone(tf)
+        self.assertEqual(counter, 1)
+
     def test_find_diff_tf_multiple_changes(self):
         epm_cols = ['epm_ara_msr_max_corrected_p1m10', 'epm_crp_p2m5']
         diff_epms = pd.Series({'epm_ara_msr_max_corrected_p1m10': 1, 'epm_crp_p2m5': 1})
@@ -306,21 +408,42 @@ class TestFindDiffTf(unittest.TestCase):
         self.assertIsNone(tf)
         self.assertEqual(counter, 2)
 
+    def test_find_diff_tf_multiple_changes_1(self):
+        epm_cols = ['epm_ara_msr_max_corrected_p1m10', 'epm_crp_p2m5']
+        diff_epms = pd.Series({'epm_ara_msr_max_corrected_p1m10': 0, 'epm_crp_p2m5': 2})
+        
+        tf, counter = find_diff_tf(epm_cols, diff_epms)
+        
+        self.assertIsNone(tf)
+        self.assertEqual(counter, 2)
+
+    def test_find_diff_tf_no_changes(self):
+        epm_cols = ['epm_ara_msr_max_corrected_p1m10', 'epm_crp_p2m5']
+        diff_epms = pd.Series({'epm_ara_msr_max_corrected_p1m10': 0, 'epm_crp_p2m5': 0})
+
+        tf, counter = find_diff_tf(epm_cols, diff_epms)
+        
+        self.assertIsNone(tf)
+        self.assertEqual(counter, 0)
+
 
 class TestAddDiffTf(unittest.TestCase):
     
     def test_add_diff_tf(self):
         df = pd.DataFrame({
-            'sequence': ['gene1_mutations_0', 'gene1_mutations_1'],
-            'number_mutations': [0, 1],
-            'epm_ara_msr_max_corrected_p1m10': [1, 2],
-            'epm_crp_p2m5': [1, 1]
+            'sequence': ['gene1_mutations_0', 'gene1_mutations_1', 'gene1_mutations_2', 'gene2_mutations_0', 'gene2_mutations_1', 'gene2_mutations_2'],
+            'number_mutations': [0, 1, 2, 0, 1, 2],
+            'epm_ara_msr_max_corrected_p1m10': [1, 2, 1, 1, 1, 1],
+            'epm_crp_p2m5': [1, 1, 1, 1, 1, 0]
         })
         
         result = add_diff_tf(df)
         
         self.assertIn('diff_tf', result.columns)
-        self.assertEqual(result.loc[1, 'diff_tf'], 'epm_ara_msr_max_corrected_p1m10')
+        expected_diff_tf = pd.Series([pd.NA, 'epm_ara_msr_max_corrected_p1m10', "epm_ara_msr_max_corrected_p1m10", pd.NA, pd.NA, 'epm_crp_p2m5'], name='diff_tf', index=df.index)
+        expected_introduced_removed = pd.Series([pd.NA, "+", "-", pd.NA, pd.NA, '-'], name='introduced_removed', index=df.index)
+        assert_series_equal(result['diff_tf'], expected_diff_tf)
+        assert_series_equal(result['introduced_removed'], expected_introduced_removed)
 
 
 class TestAddOriginalSequenceAndNumberMutations(unittest.TestCase):
@@ -342,36 +465,48 @@ class TestAnalyzeMutationsEffect(unittest.TestCase):
     
     def setUp(self):
         self.sample_mapping = pd.DataFrame({
-            'epm': ['epm_ara_msr_max_corrected_p1m10', 'epm_crp_p2m5'],
-            'tf_name': ['AraC', 'CRP']
+            'epm': ['epm_dummy_p1m10', 'epm_dummy_p1m11'],
+            'tf_name': ['DMY10', pd.NA]
         })
+
+        self.rundir_max = tempfile.TemporaryDirectory()
+        os.makedirs(os.path.join(self.rundir_max.name, "run1", "gene1", "saved_populations"), exist_ok=True)
+        os.makedirs(os.path.join(self.rundir_max.name, "run1", "gene2", "saved_populations"), exist_ok=True)
+        gene1_pareto = [['seq1', 0.1, 0], ['seq2', 0.2, 1], ['seq3', 0.3, 2], ['seq3', 0.4, 3], ['seq3', 0.5, 4], ['seq3', 0.6, 5], ['seq3', 0.7, 6], ['seq3', 0.8, 7], ['seq3', 0.90, 8], ['seq3', 0.902, 9], ['seq3', 0.903, 10], ['seq3', 0.904, 11], ['seq3', 0.905, 12]]
+        gene2_pareto = [['seq1', 0.01, 0], ['seq2', 0.02, 1], ['seq3', 0.13, 2], ['seq3', 0.14, 3], ['seq3', 0.25, 4], ['seq3', 0.26, 5], ['seq3', 0.37, 6], ['seq3', 0.38, 7], ['seq3', 0.39, 8], ['seq3', 0.50, 9], ['seq3', 0.61, 10], ['seq3', 0.62, 11], ['seq3', 0.73, 12], ['seq3', 0.74, 13], ['seq3', 0.85, 14], ['seq3', 0.86, 15], ['seq3', 0.97, 16]]
+        with open(os.path.join(self.rundir_max.name, "run1", "gene1", "saved_populations", "gene1_pareto_front.json"), 'w') as f:
+            json.dump(gene1_pareto, f)
+        with open(os.path.join(self.rundir_max.name, "run1", "gene2", "saved_populations", "pareto_front.json"), 'w') as f:
+            json.dump(gene2_pareto, f)
+    
+    def tearDown(self):
+        shutil.rmtree(self.rundir_max.name)
     
     @patch('analysis.analyze_mapping.get_epm_count_table')
-    @patch('analysis.analyze_mapping.add_fitness')
-    @patch('analysis.analyze_mapping.add_diff_tf')
-    @patch('pandas.DataFrame.to_csv')
-    def test_analyze_mutations_effect(self, mock_to_csv, mock_add_diff_tf, mock_add_fitness, mock_get_epm_count_table):
+    def test_analyze_mutations_effect(self, mock_get_epm_count_table):
         # Setup mock return values
         mock_epm_counts = pd.DataFrame({
-            'sequence': ['gene1_mutations_0', 'gene1_mutations_1'],
-            'epm_ara_msr_max_corrected_p1m10': [1, 2],
-            'diff_fitness_normalized': [np.nan, 0.1],
-            'epm': ['epm_ara_msr_max_corrected_p1m10', 'epm_ara_msr_max_corrected_p1m10']
+            'sequence': ['run1__gene1_mutations_0', 'run1__gene1_mutations_1', 'run1__gene1_mutations_2', 'run1__gene1_mutations_3', 'run1__gene1_mutations_4', 'run1__gene1_mutations_5', 'run1__gene1_mutations_6', 'run1__gene1_mutations_7', 'run1__gene1_mutations_8', 'run1__gene1_mutations_9', 'run1__gene1_mutations_10', 'run1__gene1_mutations_11', 'run1__gene1_mutations_12', 'run1__gene2_mutations_0', 'run1__gene2_mutations_1', 'run1__gene2_mutations_2', 'run1__gene2_mutations_3', 'run1__gene2_mutations_4', 'run1__gene2_mutations_5', 'run1__gene2_mutations_6', 'run1__gene2_mutations_7', 'run1__gene2_mutations_8', 'run1__gene2_mutations_9', 'run1__gene2_mutations_10', 'run1__gene2_mutations_11', 'run1__gene2_mutations_12', 'run1__gene2_mutations_13', 'run1__gene2_mutations_14', 'run1__gene2_mutations_15', 'run1__gene2_mutations_16'],
+            'epm_dummy_p1m10': [1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 9, 9, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            'epm_dummy_p1m11': [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 2, 1, 2, 1, 2, 3, 2, 1, 2, 1, 2, 1, 2, 1],
         })
         mock_get_epm_count_table.return_value = mock_epm_counts
-        mock_add_diff_tf.return_value = mock_epm_counts
         
         with tempfile.TemporaryDirectory() as tmp_path:
-            with patch('builtins.print'):
-                result = analyze_mutations_effect(
-                    'dummy_path.csv',
-                    tmp_path,
-                    self.sample_mapping,
-                    'dummy_data_path'
-                )
-            
-            self.assertIsInstance(result, pd.DataFrame)
-            mock_to_csv.assert_called_once()
+            result = analyze_mutations_effect(
+                input_path='dummy_path.csv',
+                output_folder=tmp_path,
+                mapping=self.sample_mapping,
+                data_path=self.rundir_max.name,
+            )
+            self.assertTrue(os.path.exists(os.path.join(tmp_path, "effect_per_mutation_epm.csv")))
+
+        self.assertIsInstance(result, pd.DataFrame)
+        expected_effects = pd.Series([0.11, 0.01, 0.1], index=[2, 1, 0], name="avg_effect")
+        assert_series_equal(result['avg_effect'], expected_effects, check_exact=False)
+        for pval in result["pval"]:
+            self.assertLessEqual(pval, 1)
+            self.assertGreaterEqual(pval, 0)
 
 
 class TestIntegration(unittest.TestCase):
@@ -417,9 +552,6 @@ class TestIntegration(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    # unittest.main()
-    testObj = TestAddTfNames()
-    testObj.setUp()
-    testObj.test_add_tf_names()
-    print("Tests ran successfully.")
+    unittest.main()
+    
 
