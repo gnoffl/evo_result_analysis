@@ -3,7 +3,7 @@ import json
 import argparse
 import random
 import string
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
@@ -139,6 +139,7 @@ def compare_initial_and_final_distribution(input_path: str, mapping: pd.DataFram
     # sequences are named as "<gene>_mutations_<number>"
     # for each gene get the first and last sequence
     genes = epm_counts["sequence"].str.split("_mutations_", expand=True)[0].unique()
+    epm_counts = epm_counts.sort_values(by="sequence")
     for gene in genes:
         first_seq = epm_counts[epm_counts["sequence"].str.startswith(gene)].iloc[0]
         last_seq = epm_counts[epm_counts["sequence"].str.startswith(gene)].iloc[-1]
@@ -166,9 +167,12 @@ def compare_initial_and_final_distribution(input_path: str, mapping: pd.DataFram
     df.loc["sum"] = df.sum(numeric_only=True)
     # recalculate log ratio for sum row
     df.at["sum", "log_ratio"] = np.log2(df.at["sum", "final"] / df.at["sum", "initial"])
+    if "index" in df.columns:
+        df = df.drop(columns=["index"])
     os.makedirs(output_folder, exist_ok=True)
     output_path = os.path.join(output_folder, "initial_vs_final_per_epm_counts.csv")
     df.to_csv(output_path, index=True)
+    return df
 
 
 def add_fitness(df: pd.DataFrame, data_path: str) -> None:
@@ -217,14 +221,17 @@ def add_fitness(df: pd.DataFrame, data_path: str) -> None:
         previous_mutations = row["number_mutations"]
 
 
-def find_diff_tf(epm_cols, diff_epms) -> Tuple[Optional[str], int]:
+def find_diff_tf(epm_cols: List[str], diff_epms: pd.Series) -> Tuple[Optional[str], int]:
     difference_counter = 0
     tf = ""
+    not_more_than_one_tf_changed = True
     for col in epm_cols:
         if diff_epms[col] != 0:
-            difference_counter += abs(diff_epms[col])
+            if difference_counter != 0:
+                not_more_than_one_tf_changed = False
+            difference_counter += diff_epms[col]
             tf = col
-    if difference_counter == 1:
+    if not_more_than_one_tf_changed and abs(difference_counter) == 1:
         return tf, difference_counter
     return None, difference_counter
 
@@ -234,6 +241,7 @@ def add_diff_tf(df: pd.DataFrame) -> pd.DataFrame:
     Add difference in TFs to the EPM counts DataFrame.
     """
     df["diff_tf"] = pd.NA
+    df["introduced_removed"] = pd.NA
     epm_cols = [col for col in df.columns if col.startswith("epm_")]
     previous_epms = df.iloc[0]
     previous_epms = previous_epms[epm_cols]
@@ -247,6 +255,7 @@ def add_diff_tf(df: pd.DataFrame) -> pd.DataFrame:
         diff_tf, counter = find_diff_tf(epm_cols, diff_epms)
         if diff_tf is not None:
             df.loc[i, "diff_tf"] = diff_tf
+            df.loc[i, "introduced_removed"] = "+" if counter > 0 else "-"
         previous_epms = current_epms
     return df
 
@@ -268,50 +277,73 @@ def analyze_mutations_effect(input_path: str, output_folder: str, mapping: pd.Da
     add_fitness(epm_counts, data_path=data_path)
     add_diff_tf(epm_counts)
     epm_counts = epm_counts.merge(mapping, left_on="diff_tf", right_on="epm", how="left")
-    epm_counts = epm_counts.drop(columns=["diff_tf"])
+    epm_counts = epm_counts.drop(columns=["epm"])
     print(f"average mutation effect: {epm_counts['diff_fitness_normalized'].mean()}")
 
-    epms, effects, pvals = [], [], []
-    for epm_of_interest in tqdm.tqdm(epm_counts["epm"].unique()):
-        of_interest = epm_counts[epm_counts["epm"] == epm_of_interest]
-        other = epm_counts[epm_counts["epm"] != epm_of_interest]
+    # Create a combined grouping column for TF and introduction/removal status
+    epm_counts["tf_status"] = epm_counts["diff_tf"].astype(str) + "_" + epm_counts["introduced_removed"].astype(str)
+    epms, effects, pvals, tf_names, statuses = [], [], [], [], []
+    # Get unique combinations of TF and status, excluding NaN values
+    valid_combinations = epm_counts.dropna(subset=["diff_tf", "introduced_removed"])
+    unique_tf_status = valid_combinations["tf_status"].unique()
+    
+    for tf_status in tqdm.tqdm(unique_tf_status):
+        # Extract TF name and status from the combined key
+        tf_name, status = tf_status.rsplit("_", 1)
+        
+        # Get data for this specific TF and status combination
+        of_interest = epm_counts[epm_counts["tf_status"] == tf_status]
+        
+        # Get data for all other TF/status combinations
+        other = epm_counts[(epm_counts["tf_status"] != tf_status) & epm_counts["tf_status"].notna()]
 
-        interest = of_interest["diff_fitness_normalized"]
-        other = other["diff_fitness_normalized"]
+        interest = of_interest["diff_fitness_normalized"].dropna()
+        other = other["diff_fitness_normalized"].dropna()
+        
         try:
             #see if samples are normal distributed
             interest_normal = scipy.stats.normaltest(interest)
             other_normal = scipy.stats.normaltest(other)
-            if interest_normal.pvalue < 0.05 and other_normal.pvalue < 0.05:
+            if interest_normal.pvalue > 0.05 and other_normal.pvalue > 0.05:
                 # use t-test
-                print(f"performing t-test because both distributions are normal")
+                print(f"performing t-test for {tf_name} ({status}) because both distributions are normal")
                 t_stat, p_value = scipy.stats.ttest_ind(interest, other)
             else:
                 # use Mann-Whitney U test
-                print(f"performing Mann-Whitney U test because at least one distribution is not normal")
+                print(f"performing Mann-Whitney U test for {tf_name} ({status}) because at least one distribution is not normal")
                 u_stat, p_value = scipy.stats.mannwhitneyu(interest, other, alternative="two-sided", nan_policy='omit')
-        except Exception:
+        except Exception as e:
+            print(f"Error in statistical test for {tf_name} ({status}): {e}")
             p_value = np.nan
+            
         average_interest = interest.mean()
         average_other = other.mean()
-        print(f"Average {epm_of_interest} diff_fitness_normalized: {average_interest}")
+        print(f"Average {tf_name} ({status}) diff_fitness_normalized: {average_interest}")
         print(f"Average other TFs diff_fitness_normalized: {average_other}")
         print(f"Statistical test result: p-value={p_value}")
+        
         effects.append(average_interest)
         pvals.append(p_value)
-        epms.append(epm_of_interest)
+        epms.append(tf_name)
+        tf_names.append(tf_name)
+        statuses.append(status)
 
     epm_effect_df = pd.DataFrame({
         "epm": epms,
+        "tf_name": tf_names,
+        "introduced_removed": statuses,
         "avg_effect": effects,
         "pval": pvals
     })
+
+    # Sort by p-value for easier interpretation
+    epm_effect_df = epm_effect_df.sort_values(by="pval")
 
     #merge ratio and p_val onto epm_counts
     os.makedirs(output_folder, exist_ok=True)
     epm_effect_df.to_csv(output_path, index=False)
 
-    return epm_counts
+    return epm_effect_df
 
 
 def parse_args():
