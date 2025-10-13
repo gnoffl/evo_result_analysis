@@ -11,9 +11,11 @@ import pandas as pd
 def get_sequence_at_mutation_count(pareto_front: List[Tuple[str, float, float]], target_mutation_count: int) -> str:
     # implement binary search for the mutation count
     mutation_counts = [round(item[2]) for item in pareto_front]
-    index = bisect.bisect_left(mutation_counts, target_mutation_count)
-    if index < len(pareto_front) and mutation_counts[index] == target_mutation_count:
-        return pareto_front[index][0]
+    mutation_counts_asc = mutation_counts[::-1]
+    index = bisect.bisect_left(mutation_counts_asc, target_mutation_count)
+    if index < len(pareto_front) and mutation_counts_asc[index] == target_mutation_count:
+        reversed_index = len(pareto_front) - 1 - index
+        return pareto_front[reversed_index][0]
     else:
         print(mutation_counts)
         print(target_mutation_count)
