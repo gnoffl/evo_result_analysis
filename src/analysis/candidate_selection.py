@@ -26,6 +26,7 @@ def select_candidates(results_folder: str, output_path: str, starting_fitness_ma
         start_fitness = pareto_front[-1][1]
         final_fitness = pareto_front[0][1]
         max_num_mutations = pareto_front[0][2]
+        half_max_mutations = calculate_half_max_mutations(pareto_front)
         
         for fitness in np.arange(0, 1, 0.1):
             if fitness < start_fitness or fitness > final_fitness:
@@ -36,6 +37,7 @@ def select_candidates(results_folder: str, output_path: str, starting_fitness_ma
         selected.setdefault("max_num_mutations", []).append(max_num_mutations)
         selected.setdefault("start_fitness", []).append(start_fitness)
         selected.setdefault("final_fitness", []).append(final_fitness)
+        selected.setdefault("half_max_mutations", []).append(half_max_mutations)
     
     selected = pd.DataFrame(selected)
     selected = selected.set_index("gene")
