@@ -1,5 +1,6 @@
 import math
 from typing import Dict, List, Tuple
+from matplotlib import colors
 import numpy as np
 from analysis.summarize_mutations import MutationsGene
 import os
@@ -7,6 +8,9 @@ import json
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import argparse
+
+
+COLORS = {"A": "blue", "C": "orange", "G": "green", "T": "red", "Sum": "black"}
 
 def count_mutations_single_gene(mutation_data: Dict, gene_name: str, generation: int = 1999) -> Tuple[List[int], List[int]]:
     if gene_name not in mutation_data:
@@ -185,7 +189,7 @@ def plot_dict_as_stacked_bars(data_dict: Dict, title: str, xlabel: str, ylabel: 
     plt.clf()
     fig, ax = plt.subplots()
     for letter, counts in letter_counts_from.items():
-        ax.bar(x_labels, counts, bottom=bottom_line, label=letter)
+        ax.bar(x_labels, counts, bottom=bottom_line, label=letter, color=COLORS[letter])
         bottom_line += counts
 
     ax.legend()
@@ -211,7 +215,6 @@ def make_line_plot_rolling_window(data_dict: Dict, name: str, window_size: int =
         "G": np.empty(SEQUENCE_LENGTH),
         "T": np.empty(SEQUENCE_LENGTH)
     }
-    colors = {"A": "green", "C": "blue", "G": "red", "T": "orange", "Sum": "black"}
     for letter in results.keys():
         counts = np.array([data_dict.get(x, {}).get(letter, 0) for x in range(SEQUENCE_LENGTH)])
         rolling_mean = np.convolve(counts, np.ones(window_size)/window_size, mode='valid')
@@ -237,7 +240,7 @@ def make_line_plot_rolling_window(data_dict: Dict, name: str, window_size: int =
     plt.clf()
     plt.figure(figsize=(8, 5.333))
     for letter, values in results.items():
-        plt.plot(indexes, values, label=letter, color=colors[letter])
+        plt.plot(indexes, values, label=letter, color=COLORS[letter])
     plt.xlabel('Position in Sequence', fontsize=13)
     plt.ylabel('Frequency', fontsize=13)
     plt.title(title, fontsize=15)
