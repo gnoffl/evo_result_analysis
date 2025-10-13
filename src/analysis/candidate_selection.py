@@ -52,8 +52,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Select genes with the lowest starting values from analysis results.")
     parser.add_argument("--results_folder", "-r", type=str, help="Path to the folder containing analysis results.")
     parser.add_argument("--output_path", "-o", type=str, help="Path to save the selected genes CSV file.")
+    parser.add_argument("--starting_fitness_max", "-max", type=float, default=None, help="Maximum starting fitness to filter genes.")
+    parser.add_argument("--starting_fitness_min", "-min", type=float, default=None, help="Minimum starting fitness to filter genes.")
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
-    select_candidates(args.results_folder, args.output_path)
+    select_candidates(args.results_folder, args.output_path, args.starting_fitness_max, args.starting_fitness_min)
