@@ -46,8 +46,9 @@ def select_candidates(results_folder: str, output_path: str, starting_fitness_ma
                 value = get_min_mutation_count_for_fitness(pareto_front, fitness)
             selected.setdefault(f"mutations_for_fitness_{fitness:.1f}", []).append(value)
             selected.setdefault(f"sequence_for_fitness_{fitness:.1f}", []).append(
-                get_sequence_at_mutation_count(pareto_front, value) if not np.isnan(value) else ""
+                get_sequence_at_mutation_count(pareto_front, int(value)) if not np.isnan(value) else ""
             )
+        selected.setdefault("reference_sequence", []).append(pareto_front[-1][0])
         selected.setdefault("max_num_mutations", []).append(max_num_mutations)
         selected.setdefault("start_fitness", []).append(start_fitness)
         selected.setdefault("final_fitness", []).append(final_fitness)
