@@ -231,19 +231,15 @@ class TestSimpleResultStats(unittest.TestCase):
     def test_calculate_half_max_mutations(self):
         """Test calculating half max mutations."""
         # Test maximization scenario
-        pareto_front = [["seq1", 0.9, 5], ["seq2", 0.7, 3], ["seq3", 0.5, 2], ["seq4", 0.1, 1]]
-        fitnesses = [0.9, 0.7, 0.5, 0.1]
-        num_mutations = [5, 3, 2, 1]
+        pareto_front = [("seq1", 0.9, 5), ("seq2", 0.7, 3), ("seq3", 0.5, 2), ("seq4", 0.1, 1)]
 
-        result = calculate_half_max_mutations(fitnesses, num_mutations, pareto_front)
+        result = calculate_half_max_mutations(pareto_front)
         self.assertEqual(result, 2)
         
         # Test minimization scenario
-        pareto_front_min = [["seq1", 0.1, 5], ["seq2", 0.3, 3], ["seq3", 0.5, 2], ["seq4", 0.9, 1]]
-        fitnesses_min = [0.1, 0.3, 0.5, 0.9]
-        num_mutations_min = [5, 3, 2, 1]
+        pareto_front_min = [("seq1", 0.1, 5), ("seq2", 0.3, 3), ("seq3", 0.5, 2), ("seq4", 0.9, 1)]
         
-        result_min = calculate_half_max_mutations(fitnesses_min, num_mutations_min, pareto_front_min)
+        result_min = calculate_half_max_mutations(pareto_front_min)
         self.assertEqual(result_min, 2)
     
     def test_summary_stat_calculation(self):
@@ -744,8 +740,8 @@ class TestSimpleResultStats(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    # unittest.main()
-    test_obj = TestSimpleResultStats()
-    test_obj.setUp()
-    test_obj.test_show_random_fronts_more_samples_than_genes()
-    test_obj.tearDown()
+    unittest.main()
+    # test_obj = TestSimpleResultStats()
+    # test_obj.setUp()
+    # test_obj.test_show_random_fronts_more_samples_than_genes()
+    # test_obj.tearDown()

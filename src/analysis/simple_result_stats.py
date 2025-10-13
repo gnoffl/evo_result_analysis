@@ -25,17 +25,20 @@ def add_basic_stats(stats: Dict[str, Dict[str, Any]], fitnesses: List[float], nu
             "origin_chromosome": gene.split("_")[0],
         }
 
-def calculate_half_max_mutations(fitnesses: List[float], num_mutations: List[int], pareto_front: List) -> int:
-    half_max_fitness = (fitnesses[0] + fitnesses[-1]) / 2
-    # items in the pareto front are sorted descending regarding their fitness
+def get_min_mutation_count_for_fitness(pareto_front: List[Tuple[str, float, int]], target_fitness: float) -> int:
     for i, item in enumerate(pareto_front):
-        if fitnesses[0] > fitnesses[-1]:
-            if item[1] < half_max_fitness:
-                return num_mutations[i-1]
+        if pareto_front[0][1] > pareto_front[-1][1]:
+            if item[1] < target_fitness:
+                return pareto_front[i-1][2]
         else:
-            if item[1] > half_max_fitness:
-                return num_mutations[i-1]
-    return num_mutations[-1]
+            if item[1] > target_fitness:
+                return pareto_front[i-1][2]
+    return pareto_front[-1][2]
+
+def calculate_half_max_mutations(pareto_front: List[Tuple[str, float, int]]) -> int:
+    half_max_fitness = (pareto_front[0][1] + pareto_front[-1][1]) / 2
+    # items in the pareto front are sorted descending regarding their fitness
+    return get_min_mutation_count_for_fitness(pareto_front, half_max_fitness)
 
 # for folder structure
 # -results_folder
@@ -86,7 +89,7 @@ def get_stats_per_gene(results_folder: str, name: str, output_folder: str = ".")
         add_basic_stats(stats, fitnesses, num_mutations, gene)
     
         #add number of mutations for half max fitness
-        mutations_half_max = calculate_half_max_mutations(fitnesses=fitnesses, num_mutations=num_mutations, pareto_front=pareto_front)
+        mutations_half_max = calculate_half_max_mutations(pareto_front=pareto_front)
         stats[gene]['num_mutations_half_max_effect'] = mutations_half_max
 
     print(f"Stats for {name} calculated, saving to {output_path}")
