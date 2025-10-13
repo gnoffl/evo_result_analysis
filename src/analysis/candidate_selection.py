@@ -1,0 +1,59 @@
+import os
+import argparse
+import json
+from typing import Optional
+
+from analysis.simple_result_stats import calculate_half_max_mutations, get_min_mutation_count_for_fitness
+import numpy as np
+import pandas as pd
+
+def select_candidates(results_folder: str, output_path: str, starting_fitness_max: Optional[float] = None, starting_fitness_min: Optional[float] = None) -> None:
+    """
+    Select genes with the lowest starting values from analysis results.
+    """
+    if not os.path.exists(results_folder):
+        raise FileNotFoundError(f"The specified results folder does not exist: {results_folder}")
+
+    gene_folders = [os.path.join(results_folder, d) for d in os.listdir(results_folder) if os.path.isdir(os.path.join(results_folder, d))]
+    pareto_paths = [os.path.join(gene_folder, "saved_populations", "pareto_front.json") for gene_folder in gene_folders]
+    pareto_paths = [p for p in pareto_paths if os.path.isfile(p)]
+
+    selected = {}
+    for pareto_path in pareto_paths:
+        selected.setdefault("gene", []).append(os.path.basename(os.path.dirname(os.path.dirname(pareto_path))))
+        with open(pareto_path, 'r') as file:
+            pareto_front = json.load(file)
+        start_fitness = pareto_front[-1][1]
+        final_fitness = pareto_front[0][1]
+        max_num_mutations = pareto_front[0][2]
+        
+        for fitness in np.arange(0, 1, 0.1):
+            if fitness < start_fitness or fitness > final_fitness:
+                value = np.nan
+            else:
+                value = get_min_mutation_count_for_fitness(pareto_front, fitness)
+            selected.setdefault(f"mutations_for_fitness_{fitness:.1f}", []).append(value)
+        selected.setdefault("max_num_mutations", []).append(max_num_mutations)
+        selected.setdefault("start_fitness", []).append(start_fitness)
+        selected.setdefault("final_fitness", []).append(final_fitness)
+    
+    selected = pd.DataFrame(selected)
+    selected = selected.set_index("gene")
+    if starting_fitness_max is not None:
+        selected = selected[selected["start_fitness"] <= starting_fitness_max]
+    if starting_fitness_min is not None:
+        selected = selected[selected["start_fitness"] >= starting_fitness_min]
+    selected = selected.sort_values(by="start_fitness", ascending=True)
+    print(selected.describe())
+    selected.to_csv(output_path)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Select genes with the lowest starting values from analysis results.")
+    parser.add_argument("--results_folder", "-r", type=str, help="Path to the folder containing analysis results.")
+    parser.add_argument("--output_path", "-o", type=str, help="Path to save the selected genes CSV file.")
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    args = parse_args()
+    select_candidates(args.results_folder, args.output_path)
