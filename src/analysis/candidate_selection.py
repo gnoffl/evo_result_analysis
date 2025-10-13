@@ -17,6 +17,7 @@ def get_sequence_at_mutation_count(pareto_front: List[Tuple[str, float, float]],
     else:
         print(mutation_counts)
         print(target_mutation_count)
+        print(index)
         raise ValueError(f"Mutation count {target_mutation_count} not found in pareto front.")
 
 
