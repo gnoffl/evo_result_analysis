@@ -1,11 +1,22 @@
 import os
 import argparse
 import json
-from typing import Optional
+import bisect
+from typing import List, Optional, Tuple
 
 from analysis.simple_result_stats import calculate_half_max_mutations, get_min_mutation_count_for_fitness
 import numpy as np
 import pandas as pd
+
+def get_sequence_at_mutation_count(pareto_front: List[Tuple[str, float, int]], target_mutation_count: int) -> str:
+    # implement binary search for the mutation count
+    mutation_counts = [item[2] for item in pareto_front]
+    index = bisect.bisect_left(mutation_counts, target_mutation_count)
+    if index < len(pareto_front) and mutation_counts[index] == target_mutation_count:
+        return pareto_front[index][0]
+    else:
+        raise ValueError(f"Mutation count {target_mutation_count} not found in pareto front.")
+
 
 def select_candidates(results_folder: str, output_path: str, starting_fitness_max: Optional[float] = None, starting_fitness_min: Optional[float] = None) -> None:
     """
@@ -34,6 +45,9 @@ def select_candidates(results_folder: str, output_path: str, starting_fitness_ma
             else:
                 value = get_min_mutation_count_for_fitness(pareto_front, fitness)
             selected.setdefault(f"mutations_for_fitness_{fitness:.1f}", []).append(value)
+            selected.setdefault(f"sequence_for_fitness_{fitness:.1f}", []).append(
+                get_sequence_at_mutation_count(pareto_front, value) if not np.isnan(value) else ""
+            )
         selected.setdefault("max_num_mutations", []).append(max_num_mutations)
         selected.setdefault("start_fitness", []).append(start_fitness)
         selected.setdefault("final_fitness", []).append(final_fitness)
