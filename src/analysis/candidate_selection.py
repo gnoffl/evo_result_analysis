@@ -3,7 +3,7 @@ import argparse
 import json
 import bisect
 import matplotlib.pyplot as plt
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from analysis.simple_result_stats import calculate_half_max_mutations, get_min_mutation_count_for_fitness
 import numpy as np
@@ -18,64 +18,94 @@ def get_data_at_mutation_count(pareto_front: List[Tuple[str, float, float]], tar
         reversed_index = len(pareto_front) - 1 - index
         return pareto_front[reversed_index]
     else:
-        print(mutation_counts)
-        print(target_mutation_count)
-        print(index)
         raise ValueError(f"Mutation count {target_mutation_count} not found in pareto front.")
 
-
-def preliminary_selection(results_folder: str, output_path: str, starting_fitness_max: Optional[float] = None, starting_fitness_min: Optional[float] = None) -> None:
-    """
-    Select genes with the lowest starting values from analysis results.
-    """
+def get_pareto_front_paths(results_folder: str) -> List[str]:
     if not os.path.exists(results_folder):
         raise FileNotFoundError(f"The specified results folder does not exist: {results_folder}")
 
     gene_folders = [os.path.join(results_folder, d) for d in os.listdir(results_folder) if os.path.isdir(os.path.join(results_folder, d))]
     pareto_paths = [os.path.join(gene_folder, "saved_populations", "pareto_front.json") for gene_folder in gene_folders]
     pareto_paths = [p for p in pareto_paths if os.path.isfile(p)]
+    return pareto_paths
 
-    selected = {}
-    for pareto_path in pareto_paths:
-        selected.setdefault("gene", []).append(os.path.basename(os.path.dirname(os.path.dirname(pareto_path))))
-        selected["gene"][-1] = selected["gene"][-1].split("_")[1]
-        print(selected["gene"][-1])
-        with open(pareto_path, 'r') as file:
-            pareto_front = json.load(file)
-        start_fitness = pareto_front[-1][1]
-        final_fitness = pareto_front[0][1]
-        max_num_mutations = pareto_front[0][2]
-        half_max_mutations = calculate_half_max_mutations(pareto_front)
+def get_gene_name_from_path(pareto_path: str) -> str:
+    return os.path.basename(os.path.dirname(os.path.dirname(pareto_path))).split("_")[1]
 
-        for mutations in [1, 2, 3, 5, 7, 10, 15, 20]:
-            value = get_data_at_mutation_count(pareto_front, mutations)[1]
-            selected.setdefault(f"fitness_delta_for_{mutations}_mutations", []).append(value - start_fitness)
-            selected.setdefault(f"sequence_for_{mutations}_mutations", []).append(get_data_at_mutation_count(pareto_front, mutations)[0])
-        
-        for fitness in np.arange(0, 1, 0.1):
-            if fitness < start_fitness or fitness > final_fitness:
-                value = np.nan
-            else:
-                value = get_min_mutation_count_for_fitness(pareto_front, fitness)
-            selected.setdefault(f"mutations_for_fitness_{fitness:.1f}", []).append(value)
-            selected.setdefault(f"sequence_for_fitness_{fitness:.1f}", []).append(
-                get_data_at_mutation_count(pareto_front, round(value))[0] if not np.isnan(value) else ""
-            )
-        selected.setdefault("reference_sequence", []).append(pareto_front[-1][0])
-        selected.setdefault("max_num_mutations", []).append(max_num_mutations)
-        selected.setdefault("start_fitness", []).append(start_fitness)
-        selected.setdefault("final_fitness", []).append(final_fitness)
-        selected.setdefault("half_max_mutations", []).append(half_max_mutations)
-    
-    selected = pd.DataFrame(selected)
-    selected = selected.set_index("gene")
+def process_mutations(pareto_front: List[Tuple[str, float, float]], start_fitness: float) -> Dict[str, Optional[float]]:
+    mutation_data = {}
+    for mutations in [1, 2, 3, 5, 7, 10, 15, 20]:
+        try:
+            sequence, fitness, _ = get_data_at_mutation_count(pareto_front, mutations)
+            mutation_data[f"fitness_delta_for_{mutations}_mutations"] = fitness - start_fitness
+            mutation_data[f"sequence_for_{mutations}_mutations"] = sequence
+        except ValueError:
+            mutation_data[f"fitness_delta_for_{mutations}_mutations"] = np.nan
+            mutation_data[f"sequence_for_{mutations}_mutations"] = ""
+    return mutation_data
+
+def process_fitness_thresholds(pareto_front: List[Tuple[str, float, float]], start_fitness: float, final_fitness: float) -> Dict[str, List[float]]:
+    fitness_data = {}
+    for fitness in np.arange(0, 1, 0.1):
+        if fitness < start_fitness or fitness > final_fitness:
+            mutation_count = np.nan
+        else:
+            mutation_count = get_min_mutation_count_for_fitness(pareto_front, fitness)
+            try:
+                sequence, _, _ = get_data_at_mutation_count(pareto_front, round(mutation_count))
+            except ValueError:
+                sequence = ""
+        fitness_data[f"mutations_for_fitness_{fitness:.1f}"] = mutation_count
+        fitness_data[f"sequence_for_fitness_{fitness:.1f}"] = sequence
+    return fitness_data
+
+def process_single_gene(pareto_path: str) -> Dict:
+    gene_name = get_gene_name_from_path(pareto_path)
+    with open(pareto_path, 'r') as file:
+        pareto_front = json.load(file)
+    start_fitness = pareto_front[-1][1]
+    final_fitness = pareto_front[0][1]
+    max_num_mutations = pareto_front[0][2]
+    half_max_mutations = calculate_half_max_mutations(pareto_front)
+
+    gene_data = {
+            "gene": gene_name,
+            "reference_sequence": pareto_front[-1][0],
+            "max_num_mutations": max_num_mutations,
+            "start_fitness": start_fitness,
+            "final_fitness": final_fitness,
+            "half_max_mutations": half_max_mutations,
+        }
+
+    gene_data.update(process_mutations(pareto_front=pareto_front, start_fitness=start_fitness))
+    gene_data.update(process_fitness_thresholds(pareto_front=pareto_front, start_fitness=start_fitness, final_fitness=final_fitness))
+    return gene_data
+
+
+def filter_and_sort_results(selected_df: pd.DataFrame, starting_fitness_max: Optional[float], starting_fitness_min: Optional[float]) -> pd.DataFrame:
     if starting_fitness_max is not None:
-        selected = selected[selected["start_fitness"] <= starting_fitness_max]
+        selected_df = selected_df[selected_df["start_fitness"] <= starting_fitness_max]
     if starting_fitness_min is not None:
-        selected = selected[selected["start_fitness"] >= starting_fitness_min]
-    selected = selected.sort_values(by="start_fitness", ascending=True)
-    print(selected.describe())
-    selected.to_csv(output_path)
+        selected_df = selected_df[selected_df["start_fitness"] >= starting_fitness_min]
+    selected_df = selected_df.sort_values(by="start_fitness", ascending=True)
+    return selected_df
+
+def preliminary_selection(results_folder: str, output_path: str, starting_fitness_max: Optional[float] = None, starting_fitness_min: Optional[float] = None) -> None:
+    """
+    Select genes with the lowest starting values from analysis results.
+    """
+    pareto_paths = get_pareto_front_paths(results_folder)
+
+    all_gene_data = []
+    for pareto_path in pareto_paths:
+        gene_data = process_single_gene(pareto_path)
+        all_gene_data.append(gene_data)
+
+    selected_df = pd.DataFrame(all_gene_data).set_index("gene")
+    selected_df = filter_and_sort_results(selected_df, starting_fitness_max, starting_fitness_min)
+    print(selected_df.describe())
+    selected_df.to_csv(output_path)
+
 
 
 def load_selected_genes(csv_path: str) -> pd.DataFrame:
@@ -258,7 +288,7 @@ if __name__ == "__main__":
     # PARAMETERS FOR GOF CANDIDATE SELECTION
     # final_selection(single_path="/home/gernot/ARCitect/ARCs/genRE/assays/Evolution/protocols/paper/analysis/GOF_LOF/GOF/GOF_single_mutation/candidate_genes_GOF_single.csv",
     #                 multi_path="/home/gernot/ARCitect/ARCs/genRE/assays/Evolution/protocols/paper/analysis/GOF_LOF/GOF/GOF_multi_mutation/candidate_genes_GOF_multi.csv",
-    #                 output_path="selected_genes_GOF.csv",
+    #                 output_path="data/selected_genes_GOF.csv",
     #                 n_candidates=3)
     args = parse_args()
     if not args.final_selection and not args.preliminary_selection:
