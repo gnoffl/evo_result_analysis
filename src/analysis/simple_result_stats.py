@@ -25,20 +25,21 @@ def add_basic_stats(stats: Dict[str, Dict[str, Any]], fitnesses: List[float], nu
             "origin_chromosome": gene.split("_")[0],
         }
 
-def get_min_mutation_count_for_fitness(pareto_front: List[Tuple[str, float, int]], target_fitness: float) -> int:
+def get_min_mutation_count_for_fitness(pareto_front: List[Tuple[str, float, float]], target_fitness: float) -> float:
+    EPSILON = 1e-9
     for i, item in enumerate(pareto_front):
         if pareto_front[0][1] > pareto_front[-1][1]:
-            if item[1] < target_fitness:
+            if item[1] < target_fitness - EPSILON:
                 return pareto_front[i-1][2]
         else:
-            if item[1] > target_fitness:
+            if item[1] > target_fitness + EPSILON:
                 return pareto_front[i-1][2]
     return pareto_front[-1][2]
 
-def calculate_half_max_mutations(pareto_front: List[Tuple[str, float, int]]) -> int:
+def calculate_half_max_mutations(pareto_front: List[Tuple[str, float, float]]) -> int:
     half_max_fitness = (pareto_front[0][1] + pareto_front[-1][1]) / 2
     # items in the pareto front are sorted descending regarding their fitness
-    return get_min_mutation_count_for_fitness(pareto_front, half_max_fitness)
+    return round(get_min_mutation_count_for_fitness(pareto_front, half_max_fitness))
 
 # for folder structure
 # -results_folder

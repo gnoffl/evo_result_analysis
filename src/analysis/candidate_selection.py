@@ -3,7 +3,7 @@ import argparse
 import json
 import bisect
 import matplotlib.pyplot as plt
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from analysis.simple_result_stats import calculate_half_max_mutations, get_min_mutation_count_for_fitness
 import numpy as np
@@ -32,23 +32,27 @@ def get_pareto_front_paths(results_folder: str) -> List[str]:
 def get_gene_name_from_path(pareto_path: str) -> str:
     return os.path.basename(os.path.dirname(os.path.dirname(pareto_path))).split("_")[1]
 
-def process_mutations(pareto_front: List[Tuple[str, float, float]], start_fitness: float) -> Dict[str, Optional[float]]:
+def process_mutations(pareto_front: List[Tuple[str, float, float]]) -> Dict[str, Optional[float]]:
     mutation_data = {}
+    start_fitness = pareto_front[-1][1]
     for mutations in [1, 2, 3, 5, 7, 10, 15, 20]:
         try:
             sequence, fitness, _ = get_data_at_mutation_count(pareto_front, mutations)
-            mutation_data[f"fitness_delta_for_{mutations}_mutations"] = fitness - start_fitness
+            mutation_data[f"fitness_delta_for_{mutations}_mutations"] = abs(fitness - start_fitness)
             mutation_data[f"sequence_for_{mutations}_mutations"] = sequence
         except ValueError:
             mutation_data[f"fitness_delta_for_{mutations}_mutations"] = np.nan
             mutation_data[f"sequence_for_{mutations}_mutations"] = ""
     return mutation_data
 
-def process_fitness_thresholds(pareto_front: List[Tuple[str, float, float]], start_fitness: float, final_fitness: float) -> Dict[str, List[float]]:
+def process_fitness_thresholds(pareto_front: List[Tuple[str, float, float]]) -> Dict[str, List[float]]:
     fitness_data = {}
-    for fitness in np.arange(0, 1, 0.1):
-        if fitness < start_fitness or fitness > final_fitness:
+    min_fitness = min(pareto_front[0][1], pareto_front[-1][1])
+    max_fitness = max(pareto_front[0][1], pareto_front[-1][1])
+    for fitness in np.arange(0, 1.01, 0.1):
+        if fitness < min_fitness or fitness > max_fitness:
             mutation_count = np.nan
+            sequence = ""
         else:
             mutation_count = get_min_mutation_count_for_fitness(pareto_front, fitness)
             try:
@@ -59,7 +63,7 @@ def process_fitness_thresholds(pareto_front: List[Tuple[str, float, float]], sta
         fitness_data[f"sequence_for_fitness_{fitness:.1f}"] = sequence
     return fitness_data
 
-def process_single_gene(pareto_path: str) -> Dict:
+def process_single_gene(pareto_path: str) -> Tuple[Dict, bool]:
     gene_name = get_gene_name_from_path(pareto_path)
     with open(pareto_path, 'r') as file:
         pareto_front = json.load(file)
@@ -69,25 +73,24 @@ def process_single_gene(pareto_path: str) -> Dict:
     half_max_mutations = calculate_half_max_mutations(pareto_front)
 
     gene_data = {
-            "gene": gene_name,
-            "reference_sequence": pareto_front[-1][0],
-            "max_num_mutations": max_num_mutations,
-            "start_fitness": start_fitness,
-            "final_fitness": final_fitness,
-            "half_max_mutations": half_max_mutations,
-        }
+        "gene": gene_name,
+        "reference_sequence": pareto_front[-1][0],
+        "max_num_mutations": max_num_mutations,
+        "start_fitness": start_fitness,
+        "final_fitness": final_fitness,
+        "half_max_mutations": half_max_mutations,
+    }
+    gene_data.update(process_mutations(pareto_front=pareto_front))
+    gene_data.update(process_fitness_thresholds(pareto_front=pareto_front))
+    return gene_data, final_fitness > start_fitness
 
-    gene_data.update(process_mutations(pareto_front=pareto_front, start_fitness=start_fitness))
-    gene_data.update(process_fitness_thresholds(pareto_front=pareto_front, start_fitness=start_fitness, final_fitness=final_fitness))
-    return gene_data
 
-
-def filter_and_sort_results(selected_df: pd.DataFrame, starting_fitness_max: Optional[float], starting_fitness_min: Optional[float]) -> pd.DataFrame:
+def filter_and_sort_results(selected_df: pd.DataFrame, starting_fitness_max: Optional[float], starting_fitness_min: Optional[float], ascending: bool) -> pd.DataFrame:
     if starting_fitness_max is not None:
         selected_df = selected_df[selected_df["start_fitness"] <= starting_fitness_max]
     if starting_fitness_min is not None:
         selected_df = selected_df[selected_df["start_fitness"] >= starting_fitness_min]
-    selected_df = selected_df.sort_values(by="start_fitness", ascending=True)
+    selected_df = selected_df.sort_values(by="start_fitness", ascending=ascending)
     return selected_df
 
 def preliminary_selection(results_folder: str, output_path: str, starting_fitness_max: Optional[float] = None, starting_fitness_min: Optional[float] = None) -> None:
@@ -98,11 +101,11 @@ def preliminary_selection(results_folder: str, output_path: str, starting_fitnes
 
     all_gene_data = []
     for pareto_path in pareto_paths:
-        gene_data = process_single_gene(pareto_path)
+        gene_data, increasing = process_single_gene(pareto_path)
         all_gene_data.append(gene_data)
 
     selected_df = pd.DataFrame(all_gene_data).set_index("gene")
-    selected_df = filter_and_sort_results(selected_df, starting_fitness_max, starting_fitness_min)
+    selected_df = filter_and_sort_results(selected_df, starting_fitness_max, starting_fitness_min, ascending=increasing)
     print(selected_df.describe())
     selected_df.to_csv(output_path)
 
@@ -182,14 +185,33 @@ def find_best_mutation_deltas(merged: pd.DataFrame):
         merged[f"per_mutation_delta_for_{mutations}_mutations"] = [val/mutations if not pd.isna(val) else np.nan for val in best_fitnesses]
         merged[f"best_sequence_for_{mutations}_mutations"] = best_sequences
 
+def get_sorted_values(row, per_mutation_columns: List[str], min_delta: float) -> List[Tuple[str, float]]:
+    values = []
+    for col in per_mutation_columns:
+        if pd.isna(row[col]):
+            values.append((col, -np.inf))
+            continue
+        mutation_count = int(col.split("_")[-2])
+        total_delta = row[f"best_fitness_delta_for_{mutation_count}_mutations"]
+        if pd.isna(total_delta):
+            values.append((col, -np.inf))
+            continue
+        if total_delta >= min_delta - 1e-6:
+            values.append((col, row[col]))
+        else:
+            values.append((col, -np.inf))
+    values = sorted(values, key=lambda x: x[1], reverse=True)
+    return values
 
-def find_best_mutation_count_per_gene(row: pd.Series, rank: int = 1) -> int:
+def find_best_mutation_count_per_gene(row: pd.Series, rank: int = 1, min_delta: float = 0.3) -> Union[int, float]:
+    EPSILON = 1e-6
     per_mutation_columns = [col for col in row.index if col.startswith("per_mutation_delta_for_") and col.endswith("_mutations")]
-    # get column name with the highest value
-    for _ in range(rank):
-        best_col = max(per_mutation_columns, key=lambda col: row[col] if pd.notna(row[col]) else -np.inf) #type:ignore
-        per_mutation_columns.remove(best_col)
-    return best_col.split("_")[-2]
+    sorted_values = get_sorted_values(row, per_mutation_columns, min_delta)
+    if rank > len(sorted_values):
+        return np.nan
+    best_col_tuple = sorted_values[rank - 1]
+    mutation_count = int(best_col_tuple[0].split("_")[-2])
+    return mutation_count if row[f"best_fitness_delta_for_{mutation_count}_mutations"] >= min_delta - 1e-6 else np.nan
 
 def find_best_mutations_per_gene(merged: pd.DataFrame, n_candidates: int):
     for results_rank in range(1, n_candidates + 1):
@@ -204,7 +226,7 @@ def selected_per_mutation(merged: pd.DataFrame, n_candidates: int) -> pd.DataFra
     for col in best_delta_cols:
         curr_df = relevant_merged.sort_values(by=col, ascending=False).iloc[:n_candidates]
         for gene in curr_df.index:
-            mutation_col.append(col.split("_")[-2])
+            mutation_col.append(int(col.split("_")[-2]))
             best_deltas.append(curr_df.loc[gene, col])
             best_delta_genes.append(gene)
             best_delta_sequences.append(curr_df.loc[gene, col.replace("best_fitness_delta", "best_sequence")])
@@ -228,7 +250,10 @@ def selected_per_gene(merged: pd.DataFrame, n_candidates: int) -> pd.DataFrame:
     best_deltas, best_delta_genes, best_delta_sequences, references, mutation_col, start_fitnesses, fitnesses = [], [], [], [], [], [], []
     for gene, row in merged.iterrows():
         for mutation_col_rank in [f"best_mutation_count_rank_{i}" for i in range(1, n_candidates + 1)]:
-            best_mutation_count = int(row[mutation_col_rank])
+            best_mutation_count = float(row[mutation_col_rank])
+            if pd.isna(best_mutation_count):
+                break
+            best_mutation_count = round(best_mutation_count)
             best_deltas.append(row[f"best_fitness_delta_for_{best_mutation_count}_mutations"])
             best_delta_genes.append(gene)
             best_delta_sequences.append(row[f"best_sequence_for_{best_mutation_count}_mutations"])
@@ -249,16 +274,29 @@ def selected_per_gene(merged: pd.DataFrame, n_candidates: int) -> pd.DataFrame:
     return summary
 
 
-def final_selection(single_path: str, multi_path: str, output_path: str, n_candidates: int):
+def combine_selections(per_gene_bests: pd.DataFrame, per_mutation_bests: pd.DataFrame) -> pd.DataFrame:
+    per_mutation_bests = per_mutation_bests.copy()
+    for i, row in per_mutation_bests.iterrows():
+        gene, mutations = row["gene"], row["mutations"]
+        per_gene_rows = per_gene_bests[(per_gene_bests["gene"] == gene) & (per_gene_bests["mutations"] == mutations)]
+        if not per_gene_rows.empty:
+            per_mutation_bests.at[i, "selection_reason"] = "both"
+            per_gene_bests = per_gene_bests.drop(per_gene_rows.index)
+    final_selection = pd.concat([per_gene_bests, per_mutation_bests]).drop_duplicates(subset=["gene", "mutations"]).reset_index(drop=True)
+    return final_selection
+
+
+def final_selection(single_path: str, multi_path: str, output_path: str, n_candidates: int, min_delta: float = 0.3) -> None:
+    EPSILON = 1e-6
     selected_single = load_selected_genes(single_path)
     selected_multi = load_selected_genes(multi_path)
     merged = selected_single.merge(selected_multi, left_index=True, right_index=True, suffixes=("_single", "_multi"))
     find_best_mutation_deltas(merged)
     find_best_mutations_per_gene(merged, n_candidates=n_candidates)
     per_gene_bests = selected_per_gene(merged, n_candidates=n_candidates)
-    per_gene_bests = per_gene_bests[per_gene_bests["best_fitness_delta"] > 0.3]
+    per_gene_bests = per_gene_bests[per_gene_bests["best_fitness_delta"] >= min_delta - EPSILON]
     per_mutation_bests = selected_per_mutation(merged, n_candidates=n_candidates)
-    final_selection = pd.concat([per_gene_bests, per_mutation_bests]).drop_duplicates(subset=["gene", "mutations"])
+    final_selection = combine_selections(per_gene_bests, per_mutation_bests)
     final_selection.to_csv(output_path, index=False)
 
 
