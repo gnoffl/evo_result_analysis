@@ -4,15 +4,20 @@ import tempfile
 import json
 import shutil
 import random
+from collections import Counter
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for testing
 from unittest.mock import patch, MagicMock, mock_open
 from typing import List
+from analysis.summarize_mutations import MutationsGene
 from analysis.analyze_mutations import (
     count_mutations_single_gene, count_mutations_all_genes, print_mutation_stats, calculate_mutation_stats,
     create_ideal_distribution, create_worst_case_distribution, calculate_conservation_statistic,
     calculate_conservation_statistics, calc_conservation_stat_stats, plot_dict_as_stacked_bars, make_line_plot_rolling_window,
-    plot_hist_half_max_mutations_stacked, plot_mutations_location, plot_hist_mutation_conservation
+    plot_hist_half_max_mutations_stacked, plot_mutations_location, plot_hist_mutation_conservation,
+    calculate_mutation_distances_single_gene, calculate_mutation_distances, plot_mutation_distances,
+    load_mutation_data, analyze_mutation_distances, get_random_mutation_distributions, analyze_range_single_gene,
+    plot_dist_hist,
 )
 from analysis.summarize_mutations import MutatedSequence
 import numpy as np
@@ -27,7 +32,7 @@ class TestAnalyzeMutations(unittest.TestCase):
         mutation_data = {
             "gene1": {
                 "reference_sequence": "AAAAAAAAAA",
-                "1999": ["0AT1AG2AC|0.8", "0AT1AG|0.6", "|0.5"],
+                "1999": ["0AT1AG5AC|0.8", "0AT1AG|0.6", "|0.5"],
                 "100": ["0AT1AG|0.6", "|0.5"]
             },
             "gene2": {
@@ -382,7 +387,216 @@ class TestAnalyzeMutations(unittest.TestCase):
         # Check that the output file was created
         expected_file = os.path.join(self.temp_dir, "hist_mutation_conservation_test_gen_1999.pdf")
         self.assertTrue(os.path.exists(expected_file))
+    
+    def test_calculate_mutation_distances_single_gene(self):
+        """Test calculating mutation distances for a single gene."""
+        # Create a mock MutatedSequence with specific mutations
+        distances = calculate_mutation_distances_single_gene([1, 3, 7, 10, 5])
+        
+        # Expected distances: 3-1=2, 5-3=2, 7-5=2, 10-7=3
+        expected_distances = Counter([2, 2, 2, 3])
+        
+        self.assertEqual(distances, expected_distances)
+        self.assertIsInstance(distances, Counter)
+    
+    def test_calculate_mutation_distances_single_gene_edge_cases(self):
+        """Test edge cases for mutation distance calculation."""
+        # Test with no mutations
+        distances_empty = calculate_mutation_distances_single_gene([])
+        self.assertEqual(distances_empty, Counter())
+        
+        # Test with single mutation
+        distances_single = calculate_mutation_distances_single_gene([5])
+        self.assertEqual(distances_single, Counter())
+        
+        # Test with two adjacent mutations
+        distances_adjacent = calculate_mutation_distances_single_gene([10, 11])
+        expected_adjacent = Counter([1])
+        self.assertEqual(distances_adjacent, expected_adjacent)
+    
+    def test_calculate_mutation_distances(self):
+        """Test calculating mutation distances for all genes."""
+        
+        # Mock MutationsGene behavior for multiple genes
+        mock_gene_instance = MagicMock()
+        mock_gene_instance.generation_dict = {1999: []}
+        mock_gene_instance.get_init_and_optimal_fitness_generation.return_value = (0.5, 0.9)
+        
+        # Create different mock sequences for different genes
+        mock_seq1 = MagicMock()
+        mock_seq1.mutations = [(0, 'A', 'T'), (2, 'G', 'C'), (5, 'T', 'A')]  # distances: [2, 3]
+        
+        mock_seq2 = MagicMock() 
+        mock_seq2.mutations = [(1, 'C', 'G'), (3, 'A', 'T'), (6, 'G', 'A')]  # distances: [2, 3]
 
+        distances = calculate_mutation_distances(load_mutation_data(self.mutation_file))
+
+        # Expected combined distances: [2, 3] + [2, 3] = Counter({2: 2, 3: 2})
+        expected_distances = Counter({1: 2, 4: 1})
+        
+        self.assertEqual(distances, expected_distances)
+        self.assertIsInstance(distances, Counter)
+        
+        # Verify that MutationsGene.from_dict was called for each gene in test data
+    
+    @patch('analysis.analyze_mutations.calculate_mutation_distances')
+    def test_plot_mutation_distances(self, mock_calc_distances):
+        """Test plotting mutation distances."""
+        mock_distances = Counter({1: 5, 2: 8, 3: 3, 5: 2, 10: 1})
+        mock_calc_distances.return_value = mock_distances
+        
+        # Import the function for testing
+        
+        plot_mutation_distances(self.mutation_file, "test", self.temp_dir)
+        
+        # Verify that calculate_mutation_distances was called
+        mock_calc_distances.assert_called_once()
+        
+        # Check that the output file was created
+        expected_file = os.path.join(self.temp_dir, "mutation_distances_test.pdf")
+        expected_file_2 = os.path.join(self.temp_dir, "mutation_distances_test_smaller_distances.pdf")
+        self.assertTrue(os.path.exists(expected_file))
+        self.assertTrue(os.path.exists(expected_file_2))
+
+    def test_load_mutation_data(self):
+        """Test loading mutation data from file."""
+        mutation_data = load_mutation_data(self.mutation_file)
+        
+        # Check that we get MutationsGene instances
+        self.assertIn("gene1", mutation_data)
+        self.assertIn("gene2", mutation_data)
+        self.assertEqual(len(mutation_data), 2)
+        
+        # Check that each value is a MutationsGene instance
+        for gene_name, mutations_gene in mutation_data.items():
+            self.assertIsInstance(mutations_gene, MutationsGene)
+            self.assertIn(1999, mutations_gene.generation_dict)
+
+    @patch('analysis.analyze_mutations.load_mutation_data')
+    @patch('analysis.analyze_mutations.analyze_range_single_gene')
+    def test_analyze_mutation_distances(self, mock_analyze_range, mock_load_data):
+        """Test analyzing mutation distances."""
+        # Mock load_mutation_data
+        mock_gene_instance = MagicMock()
+        mock_gene_instance.generation_dict = {1999: []}
+        mock_gene_instance.get_init_and_optimal_fitness_generation.return_value = (0.5, 0.9)
+        mock_seq = MagicMock()
+        mock_seq.mutations = [(0, 'A', 'T'), (2, 'G', 'C'), (5, 'T', 'A')]
+        mock_gene_instance.get_equal_or_next_closest_fitness.return_value = mock_seq
+        mock_load_data.return_value = {"gene1": mock_gene_instance, "gene2": mock_gene_instance}
+        
+        # Mock analyze_range_single_gene
+        mock_analyze_range.return_value = (100, 200, 120, 180, 140, 160)  # first, last, start_90, end_90, start_50, end_50
+        
+        analyze_mutation_distances(mock_load_data.return_value, self.temp_dir, "test")
+        
+        # Check that output file was created
+        output_file = os.path.join(self.temp_dir, "mutation_ranges_test.txt")
+        self.assertTrue(os.path.exists(output_file))
+        
+        # Check content of output file
+        with open(output_file, 'r') as f:
+            content = f.read()
+            self.assertIn("90% quantile start", content)
+            self.assertIn("90% quantile end", content)
+            self.assertIn("50% quantile start", content)
+            self.assertIn("50% quantile end", content)
+
+    def test_get_random_mutation_distributions(self):
+        """Test generating random mutation distributions."""
+        # Use smaller numbers for testing
+        random_dist = get_random_mutation_distributions(mutable_positions=100, num_samples=10)
+        
+        self.assertIsInstance(random_dist, Counter)
+        # Should have some distances
+        self.assertGreater(len(random_dist), 0)
+        # All distances should be positive
+        for distance in random_dist.keys():
+            self.assertGreater(distance, 0)
+
+    def test_analyze_range_single_gene(self):
+        """Test analyzing range for a single gene."""
+        # Test with a simple case
+        mutations = [1, 2, 3, 4, 50, 60, 70, 80, 90, 100]  # 10 mutations
+        first, last, start_90, end_90, start_50, end_50 = analyze_range_single_gene(mutations)
+        
+        # Check that we get valid ranges
+        self.assertIsInstance(start_90, int)
+        self.assertIsInstance(end_90, int)
+        self.assertIsInstance(start_50, int)
+        self.assertIsInstance(end_50, int)
+        
+        # Check that ranges make sense
+        self.assertLessEqual(start_90, end_90)
+        self.assertLessEqual(start_50, end_50)
+        self.assertLessEqual(end_50 - start_50, end_90 - start_90)  # 50% range should be smaller
+        self.assertEqual(start_90, 1)
+        self.assertEqual(end_90, 90)
+        self.assertEqual(start_50, 1)
+        self.assertEqual(end_50, 50)
+        self.assertEqual(first, 1)
+        self.assertEqual(last, 100)
+
+    def test_analyze_range_single_gene_edge_cases(self):
+        """Test edge cases for analyze_range_single_gene."""
+        # Test with minimum viable mutations (need at least 2 for 50% quantile)
+        mutations = [10]
+        first, last, start_90, end_90, start_50, end_50 = analyze_range_single_gene(mutations)
+        
+        # With only 2 mutations, both quantiles should be the same
+        self.assertEqual(first, 10)
+        self.assertEqual(last, 10)
+        self.assertEqual(start_90, 10)
+        self.assertEqual(end_90, 10)
+        self.assertEqual(start_50, 10)
+        self.assertEqual(end_50, 10)
+        
+        # Test with empty list should raise error
+        with self.assertRaises((ValueError, IndexError)):
+            analyze_range_single_gene([])
+
+    @patch('matplotlib.pyplot.savefig')
+    @patch('matplotlib.pyplot.clf')
+    @patch('matplotlib.pyplot.figure')
+    def test_plot_dist_hist(self, mock_figure, mock_clf, mock_savefig):
+        """Test plotting distribution histogram."""
+        distances = [1, 2, 3, 4, 5]
+        counts = [10, 8, 6, 4, 2]
+        
+        plot_dist_hist("test", self.temp_dir, distances, counts)
+        
+        # Check that matplotlib functions were called
+        mock_figure.assert_called_once()
+        mock_clf.assert_called_once()
+        mock_savefig.assert_called_once()
+
+    @patch('matplotlib.pyplot.savefig')
+    @patch('matplotlib.pyplot.clf')
+    @patch('matplotlib.pyplot.figure')
+    def test_plot_dist_hist_with_random(self, mock_figure, mock_clf, mock_savefig):
+        """Test plotting distribution histogram with random distribution."""
+        distances = [1, 2, 3, 4, 5]
+        counts = [10, 8, 6, 4, 2]
+        random_dist = Counter({1: 5, 2: 4, 3: 3, 4: 2, 5: 1})
+        
+        plot_dist_hist("test", self.temp_dir, distances, counts, random_dist)
+        
+        # Check that matplotlib functions were called
+        mock_figure.assert_called_once()
+        mock_clf.assert_called_once()
+        mock_savefig.assert_called_once()
+
+
+    def test_calculate_mutation_distances_single_gene_with_positions(self):
+        """Test calculating mutation distances with position list."""
+        positions = [1, 3, 7, 10]
+        distances = calculate_mutation_distances_single_gene(positions)
+        
+        # Expected distances: 3-1=2, 7-3=4, 10-7=3
+        expected_distances = Counter([2, 4, 3])
+        
+        self.assertEqual(distances, expected_distances)
+        self.assertIsInstance(distances, Counter)
 
 class TestAnalyzeMutationsIntegration(unittest.TestCase):
     """Integration tests using more complex test data."""
@@ -586,3 +800,8 @@ class TestAnalyzeMutationsIntegration(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+    # testObj = TestAnalyzeMutations()
+    # testObj.setUp()
+    # testObj.test_analyze_range_single_gene_edge_cases()
+    # testObj.tearDown()
+    # print("Tests ran successfully.")

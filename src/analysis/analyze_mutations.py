@@ -1,6 +1,8 @@
 import math
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
+from collections import Counter
 from matplotlib import colors
+from itertools import accumulate
 import numpy as np
 from analysis.summarize_mutations import MutationsGene
 import os
@@ -9,8 +11,10 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import argparse
 
+from analysis.summarize_mutations import MutatedSequence
 
-COLORS = {"A": "blue", "C": "orange", "G": "green", "T": "red", "Sum": "black"}
+
+COLORS = {"A": "green", "C": "blue", "G": "orange", "T": "red", "Sum": "black"}
 
 def count_mutations_single_gene(mutation_data: Dict, gene_name: str, generation: int = 1999) -> Tuple[List[int], List[int]]:
     if gene_name not in mutation_data:
@@ -365,6 +369,133 @@ def plot_hist_mutation_conservation(mutation_data_path: str, name: str, generati
     plt.savefig(os.path.join(output_folder, f"hist_mutation_conservation_{name}_gen_{generation}.pdf"), dpi=300, bbox_inches='tight')
 
 
+def calculate_mutation_distances_single_gene(mutations: List[int]) -> Counter:
+    mutation_locations = sorted(mutations)
+    mutation_distances = np.diff(mutation_locations)  # This calculates consecutive differences
+    distance_counts = Counter(mutation_distances)
+    return distance_counts
+
+
+def load_mutation_data(mutation_data_path: str) -> Dict[str, MutationsGene]:
+    with open(mutation_data_path, 'r') as f:
+        mutation_data = json.load(f)
+    loaded = {gene: MutationsGene.from_dict(data) for gene, data in mutation_data.items()}
+    return loaded
+
+
+def analyze_mutation_distances(mutation_data: Dict[str, MutationsGene], output_folder: str, name: str) -> None:
+    start_mins, end_maxs, max_spans, starts_90, ends_90, starts_50, ends_50, spans_90, spans_50 = [], [], [], [], [], [], [], [], []
+    for gene, generation_mutations in mutation_data.items():
+        generations = sorted([int(gen) for gen in generation_mutations.generation_dict.keys()])
+        final_generation = generations[-1]
+        min_fit, max_fit = generation_mutations.get_init_and_optimal_fitness_generation(final_generation)
+        max_seq = generation_mutations.get_equal_or_next_closest_fitness(final_generation, max_fit)
+        start_min, end_max, start_90, end_90, start_50, end_50 = analyze_range_single_gene([pos for pos, _, _ in max_seq.mutations])
+        starts_90.append(start_90)
+        ends_90.append(end_90)
+        starts_50.append(start_50)
+        ends_50.append(end_50)
+        start_mins.append(start_min)
+        end_maxs.append(end_max)
+        spans_90.append(end_90 - start_90 + 1)
+        spans_50.append(end_50 - start_50 + 1)
+        max_spans.append(end_max - start_min + 1)
+    start_mins, end_maxs, max_spans, starts_90, ends_90, spans_90, starts_50, ends_50, spans_50 = np.array(start_mins), np.array(end_maxs), np.array(max_spans), np.array(starts_90), np.array(ends_90), np.array(spans_90), np.array(starts_50), np.array(ends_50), np.array(spans_50)
+    with open(os.path.join(output_folder, f"mutation_ranges_{name}.txt"), 'w') as f:
+        f.write(f"First mutation: Mean={np.mean(start_mins)}, Std={np.std(start_mins)}, Min={np.min(start_mins)}, Max={np.max(start_mins)}\n")
+        f.write(f"Last mutation: Mean={np.mean(end_maxs)}, Std={np.std(end_maxs)}, Min={np.min(end_maxs)}, Max={np.max(end_maxs)}\n")
+        f.write(f"Max span: Mean={np.mean(max_spans)}, Std={np.std(max_spans)}, Min={np.min(max_spans)}, Max={np.max(max_spans)}\n")
+        f.write(f"90% quantile start: Mean={np.mean(starts_90)}, Std={np.std(starts_90)}, Min={np.min(starts_90)}, Max={np.max(starts_90)}\n")
+        f.write(f"90% quantile end: Mean={np.mean(ends_90)}, Std={np.std(ends_90)}, Min={np.min(ends_90)}, Max={np.max(ends_90)}\n")
+        f.write(f"90% quantile span: Mean={np.mean(spans_90)}, Std={np.std(spans_90)}, Min={np.min(spans_90)}, Max={np.max(spans_90)}\n")
+        f.write(f"50% quantile start: Mean={np.mean(starts_50)}, Std={np.std(starts_50)}, Min={np.min(starts_50)}, Max={np.max(starts_50)}\n")
+        f.write(f"50% quantile end: Mean={np.mean(ends_50)}, Std={np.std(ends_50)}, Min={np.min(ends_50)}, Max={np.max(ends_50)}\n")
+        f.write(f"50% quantile span: Mean={np.mean(spans_50)}, Std={np.std(spans_50)}, Min={np.min(spans_50)}, Max={np.max(spans_50)}\n")
+
+def calculate_mutation_distances(mutation_data: Dict[str, MutationsGene]) -> Counter:
+    distances_distribution = Counter()
+    for gene, generation_mutations in mutation_data.items():
+        generations = sorted([int(gen) for gen in generation_mutations.generation_dict.keys()])
+        final_generation = generations[-1]
+        min_fit, max_fit = generation_mutations.get_init_and_optimal_fitness_generation(final_generation)
+        max_seq = generation_mutations.get_equal_or_next_closest_fitness(final_generation, max_fit)
+        single_gene_distance_counts = calculate_mutation_distances_single_gene([pos for pos, _, _ in max_seq.mutations])
+        distances_distribution += single_gene_distance_counts
+    return distances_distribution
+
+
+def get_random_mutation_distributions(mutable_positions: int = 3000, num_samples: int = 10000) -> Counter:
+    choose_from = [i for i in range(mutable_positions)]
+    random_numbers = [np.random.choice(choose_from, size=90, replace=False) for _ in range(num_samples)]
+    counters = []
+    for positions in random_numbers:
+        distance_counts = calculate_mutation_distances_single_gene(list(positions))
+        counters.append(distance_counts)
+    keys = {k for counter in counters for k in counter.keys()}
+    summed = {k: sum([counter.get(k, 0) for counter in counters]) for k in keys}
+    return Counter(summed)
+
+def analyze_range_single_gene(mutations: List[int]) -> Tuple[int, int, int, int, int, int]:
+    mutation_locations = sorted(mutations)
+    length = len(mutation_locations)
+    quantile_90 = math.ceil(0.9 * length)
+    quantile_50 = math.ceil(0.5 * length)
+    first, last = 0, len(mutation_locations) - 1
+    min_first, max_last = mutation_locations[first], mutation_locations[last]
+    contained = length
+    start_90, end_90, start_50, end_50 = None, None, None, None
+    while True:
+        if contained == quantile_90:
+            start_90, end_90 = mutation_locations[first], mutation_locations[last]
+        if contained == quantile_50:
+            start_50, end_50 = mutation_locations[first], mutation_locations[last]
+            break
+        if contained <= 0:
+            raise ValueError("Could not find spans for quantiles.")
+        front_gap = mutation_locations[first + 1] - mutation_locations[first]
+        back_gap = mutation_locations[last] - mutation_locations[last - 1]
+        if front_gap >= back_gap:
+            first += 1
+        else:
+            last -= 1
+        contained -= 1
+    return min_first, max_last, start_90, end_90, start_50, end_50 #type: ignore
+
+def plot_mutation_distances(mutation_data_path: str, name: str, output_folder: str) -> None:
+    # random_distribution = get_random_mutation_distributions()
+    mutation_data = load_mutation_data(mutation_data_path)
+    analyze_mutation_distances(mutation_data, output_folder, name)
+    distances_distribution = calculate_mutation_distances(mutation_data)
+    distances = sorted(distances_distribution.keys())
+    counts = [distances_distribution[dist] for dist in distances]
+    plot_dist_hist(name, output_folder, distances, counts) # , random_distribution)
+    # random_distribution_short = Counter({dist: count for dist, count in random_distribution.items() if dist <= 200})
+    smaller_distances = [dist for dist in distances if dist <= 200]
+    smaller_counts = [distances_distribution[dist] for dist in smaller_distances]
+    plot_dist_hist(f"{name}_smaller_distances", output_folder, smaller_distances, smaller_counts) #, random_distribution_short)
+
+
+def plot_dist_hist(name, output_folder, distances, counts, random_distribution: Optional[Counter] = None):
+    plt.clf()
+    plt.figure(figsize=(12, 6))
+    plt.bar(distances, counts, width=1.0, edgecolor='black')
+    if random_distribution:
+        max_count = max(counts)
+        random_x = sorted(random_distribution.keys())
+        random_y = [random_distribution[dist] for dist in random_x]
+        max_rand = max(random_y)
+        random_y = [y * (max_count / max_rand) for y in random_y]
+        plt.plot(random_x, random_y, color='green', label='Random Mutation Distribution')
+        plt.legend()
+    plt.xlabel('Mutation Distance')
+    plt.ylabel('Frequency')
+    plt.title(f'Mutation Distances Distribution for {name}')
+    plt.xlim(0, max(distances) + 1)
+    plt.savefig(os.path.join(output_folder, f"mutation_distances_{name}.pdf"), dpi=300, bbox_inches='tight')
+    
+
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Analyze mutations from evolution results and generate visualizations')
     parser.add_argument('--mutation_data', '-m', help='Path to the mutation data JSON file', required=True)
@@ -380,6 +511,7 @@ def parse_args():
     parser.add_argument('--plot_stacked_only', action='store_true', help='Generate only stacked bar plots for mutation locations')
     parser.add_argument('--plot_rolling_only', action='store_true', help='Generate only rolling window plots for mutation locations')
     parser.add_argument("--plot_mutation_conservation", action='store_true', help='Calculate conservation statistics for mutations in each gene')
+    parser.add_argument("--plot_mutation_distances", action='store_true', help='Calculate mutation distances for mutations in each gene')
     parser.add_argument('--all', action='store_true', help='Run all analysis steps')
     
     args = parser.parse_args()
@@ -397,8 +529,9 @@ def main():
     run_half_max_stacked = args.plot_half_max_stacked or args.all
     run_mutations_location = args.plot_mutations_location or args.plot_stacked_only or args.plot_rolling_only or args.all
     run_mutation_conservation = args.plot_mutation_conservation or args.all
+    run_mutation_distances = args.plot_mutation_distances or args.all
 
-    if not (run_half_max_stacked or run_mutations_location or run_mutation_conservation):
+    if not (run_half_max_stacked or run_mutations_location or run_mutation_conservation or run_mutation_distances):
         raise ValueError("Currently no analysis is selected for execution, so nothing is done. Use --all to run all available analyses or use -h to get an overview of available analyses.")
     
     # Create output folder if it doesn't exist
@@ -409,6 +542,12 @@ def main():
             plot_hist_half_max_mutations_stacked(args.mutation_data, args.name, args.output_folder)
         except Exception as e:
             print(f"Error while plotting half max mutations stacked: {e}")
+    
+    if run_mutation_distances:
+        try:
+            plot_mutation_distances(args.mutation_data, args.name, args.output_folder)
+        except Exception as e:
+            print(f"Error while calculating mutation distances: {e}")
     
     if run_mutations_location:
         # Determine plot types based on specific flags
