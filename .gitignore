@@ -5,6 +5,7 @@ __pycache__/
 *$py.class
 data/*
 visualization/*
+run_mutations_analysis.sh
 
 # C extensions
 *.so
