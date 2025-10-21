@@ -287,6 +287,15 @@ def show_random_fronts(results_folder: str, num_samples: int = 4, output_folder:
         plot_pareto_front(os.path.join(results_folder, gene, 'saved_populations', 'pareto_front.json'), os.path.join(out_folder, f'pareto_front_{gene}.png'))
 
 
+def deduplicate_pareto_front(pareto_front: List[Tuple[str, float, int]]) -> List[Tuple[str, float, int]]:
+    pareto_front = sorted(pareto_front, key=lambda x: x[2], reverse=False)
+    deduplicated = [pareto_front[0]]
+    for item in pareto_front:
+        if item[2] != deduplicated[-1][2]:
+            deduplicated.append(item)
+    return deduplicated
+
+
 def expand_pareto_front(pareto_front: List[Tuple[str, float, int]], max_number_mutation: int) -> List[Tuple[str, float, int]]:
     """Expand the pareto front to include all points with the same fitness.
 
@@ -296,7 +305,7 @@ def expand_pareto_front(pareto_front: List[Tuple[str, float, int]], max_number_m
     Returns:
         List[Tuple[str, float, int]]: The expanded pareto front.
     """
-    pareto_front = sorted(pareto_front, key=lambda x: x[2], reverse=False)
+    pareto_front = deduplicate_pareto_front(pareto_front)
     expanded_front = [pareto_front[0]]
     next_index_old_front = 1
     while len(expanded_front) < max_number_mutation + 1:
@@ -305,7 +314,7 @@ def expand_pareto_front(pareto_front: List[Tuple[str, float, int]], max_number_m
         except IndexError:
             next_item_old_front = ("", 0, max_number_mutation + 10)
         curr_item_new_front = expanded_front[-1]
-        if next_item_old_front[2] <= curr_item_new_front[2] + 1:
+        if next_item_old_front[2] == curr_item_new_front[2] + 1:
             expanded_front.append(next_item_old_front)
             next_index_old_front += 1
         else:

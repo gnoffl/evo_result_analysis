@@ -14,7 +14,8 @@ from analysis.simple_result_stats import (
     draw_visualize_start_vs_max_fitness_by_mutations, plot_pareto_front, show_random_fronts,
     show_average_pareto_front, expand_pareto_front, normalize_front, calculate_loss_pareto_front,
     calculate_loss_over_generations_single_gene, calculate_loss_over_generations,
-    plot_loss_over_generations, plot_half_max_mutations_vs_initial_fitness, hist_half_max_mutations
+    plot_loss_over_generations, plot_half_max_mutations_vs_initial_fitness, hist_half_max_mutations,
+    deduplicate_pareto_front
 )
 
 
@@ -231,13 +232,13 @@ class TestSimpleResultStats(unittest.TestCase):
     def test_calculate_half_max_mutations(self):
         """Test calculating half max mutations."""
         # Test maximization scenario
-        pareto_front = [("seq1", 0.9, 5), ("seq2", 0.7, 3), ("seq3", 0.5, 2), ("seq4", 0.1, 1)]
+        pareto_front = [("seq1", 0.9, 5.), ("seq2", 0.7, 3.), ("seq3", 0.5, 2.), ("seq4", 0.1, 1.)]
 
         result = calculate_half_max_mutations(pareto_front)
         self.assertEqual(result, 2)
         
         # Test minimization scenario
-        pareto_front_min = [("seq1", 0.1, 5), ("seq2", 0.3, 3), ("seq3", 0.5, 2), ("seq4", 0.9, 1)]
+        pareto_front_min = [("seq1", 0.1, 5.), ("seq2", 0.3, 3.), ("seq3", 0.5, 2.), ("seq4", 0.9, 1.)]
         
         result_min = calculate_half_max_mutations(pareto_front_min)
         self.assertEqual(result_min, 2)
@@ -322,13 +323,35 @@ class TestSimpleResultStats(unittest.TestCase):
         self.assertIn("Summary for test:", content)
         self.assertEqual(content, result)
     
+    def test_deduplicate_pareto_front(self):
+        pareto_front_min = [("seq1", 0.9, 0), ("seq2", 0.7, 2), ("seq3", 0.5, 5), ("seq4", 0.7, 2)]
+        deduped = deduplicate_pareto_front(pareto_front_min)
+        self.assertEqual(len(deduped), 3)
+        self.assertEqual(deduped[0][1], 0.9)
+        self.assertEqual(deduped[1][1], 0.7)
+        self.assertEqual(deduped[2][1], 0.5)
+        self.assertEqual(deduped[0][2], 0)
+        self.assertEqual(deduped[1][2], 2)
+        self.assertEqual(deduped[2][2], 5)
+
+        pareto_front_max = [("seq1", 0.9, 5), ("seq2", 0.7, 2), ("seq3", 0.5, 0), ("seq4", 0.7, 2)]
+        deduped = deduplicate_pareto_front(pareto_front_max)
+        self.assertEqual(len(deduped), 3)
+        self.assertEqual(deduped[0][1], 0.5)
+        self.assertEqual(deduped[1][1], 0.7)
+        self.assertEqual(deduped[2][1], 0.9)
+        self.assertEqual(deduped[0][2], 0)
+        self.assertEqual(deduped[1][2], 2)
+        self.assertEqual(deduped[2][2], 5)
+        
+    
     def test_expand_pareto_front(self):
         """Test expanding pareto front to include all mutation numbers."""
         # minimization case
-        pareto_front = [("seq1", 0.9, 0), ("seq2", 0.7, 2), ("seq3", 0.5, 5)]
+        pareto_front_min = [("seq1", 0.9, 0), ("seq2", 0.7, 2), ("seq3", 0.5, 5), ("seq4", 0.7, 2)]
         max_mutations = 7
         
-        expanded = expand_pareto_front(pareto_front, max_mutations)
+        expanded = expand_pareto_front(pareto_front_min, max_mutations)
         
         self.assertEqual(len(expanded), 8)  # 0 to 7 mutations
         
@@ -347,7 +370,7 @@ class TestSimpleResultStats(unittest.TestCase):
         self.assertEqual(expanded[7][1], 0.5)  # Original fitness at 5 mutations
 
         # maximization case
-        pareto_front_max = [("seq1", 0.1, 0), ("seq2", 0.5, 2), ("seq3", 0.9, 5)]
+        pareto_front_max = [("seq1", 0.1, 0), ("seq2", 0.5, 2), ("seq3", 0.9, 5), ("seq4", 0.5, 2)]
         max_mutations_max = 7
         expanded_max = expand_pareto_front(pareto_front_max, max_mutations_max)
         self.assertEqual(len(expanded_max), 8)  # 0 to 7 mutations
