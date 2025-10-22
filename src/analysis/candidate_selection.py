@@ -204,7 +204,6 @@ def get_sorted_values(row, per_mutation_columns: List[str], min_delta: float) ->
     return values
 
 def find_best_mutation_count_per_gene(row: pd.Series, rank: int = 1, min_delta: float = 0.3) -> Union[int, float]:
-    EPSILON = 1e-6
     per_mutation_columns = [col for col in row.index if col.startswith("per_mutation_delta_for_") and col.endswith("_mutations")]
     sorted_values = get_sorted_values(row, per_mutation_columns, min_delta)
     if rank > len(sorted_values):
@@ -218,6 +217,7 @@ def find_best_mutations_per_gene(merged: pd.DataFrame, n_candidates: int):
         merged[f"best_mutation_count_rank_{results_rank}"] = merged.apply(lambda row: find_best_mutation_count_per_gene(row, rank=results_rank), axis=1)
 
 def selected_per_mutation(merged: pd.DataFrame, n_candidates: int) -> pd.DataFrame:
+    maximization = merged.iloc[0]["final_fitness_single"] > merged.iloc[0]["start_fitness_single"]
     mutations = [1, 2, 3, 5, 7, 10, 15, 20]
     best_deltas, best_delta_genes, best_delta_sequences, references, mutation_col, start_fitnesses, fitnesses = [], [], [], [], [], [], []
     rel_cols = [col for col in merged.columns if col.startswith("best_fitness_delta_for_") or col.startswith("best_sequence_for_") or (col.startswith("sequence_for_") and col.endswith("_mutations")) or col.startswith("reference")]
@@ -232,7 +232,8 @@ def selected_per_mutation(merged: pd.DataFrame, n_candidates: int) -> pd.DataFra
             best_delta_sequences.append(curr_df.loc[gene, col.replace("best_fitness_delta", "best_sequence")])
             references.append(curr_df.loc[gene, "reference_sequence_single"])
             start_fitnesses.append(merged.loc[gene, "start_fitness_single"])
-            fitnesses.append(start_fitnesses[-1] + best_deltas[-1])
+            fitness = start_fitnesses[-1] + best_deltas[-1] if maximization else start_fitnesses[-1] - best_deltas[-1]
+            fitnesses.append(fitness)
     summary = pd.DataFrame({
         "gene": best_delta_genes,
         "mutations": mutation_col,
@@ -259,7 +260,8 @@ def selected_per_gene(merged: pd.DataFrame, n_candidates: int) -> pd.DataFrame:
             best_delta_sequences.append(row[f"best_sequence_for_{best_mutation_count}_mutations"])
             references.append(row["reference_sequence_single"])
             start_fitnesses.append(row["start_fitness_single"])
-            fitnesses.append(start_fitnesses[-1] + best_deltas[-1])
+            fitness = start_fitnesses[-1] + best_deltas[-1] if row["final_fitness_single"] > row["start_fitness_single"] else start_fitnesses[-1] - best_deltas[-1]
+            fitnesses.append(fitness)
             mutation_col.append(best_mutation_count)
     summary = pd.DataFrame({
         "gene": best_delta_genes,
