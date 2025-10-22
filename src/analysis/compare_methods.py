@@ -179,9 +179,9 @@ def compare_methods_final(results_paths: Dict[str, str], output_dir: str, max_mu
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Compare evolutionary methods based on their results.")
-    parser.add_argument("--results_paths", type=str, nargs='+', required=True, help="Paths to the results of different methods.")
-    parser.add_argument("--methods", type=str, nargs='+', required=True, help="Names of the methods corresponding to the results paths.")
-    parser.add_argument("--output_dir", type=str, required=True, help="Directory to save the output plots.")
+    parser.add_argument("--results_paths", "-r", type=str, nargs='+', required=True, help="Paths to the results of different methods.")
+    parser.add_argument("--methods", "-m", type=str, nargs='+', required=True, help="Names of the methods corresponding to the results paths.")
+    parser.add_argument("--output_dir", "-o", type=str, required=True, help="Directory to save the output plots.")
     parsed = parser.parse_args()
     if len(parsed.results_paths) != len(parsed.methods):
         raise ValueError("Number of results paths must match number of methods.")
