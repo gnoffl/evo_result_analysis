@@ -143,7 +143,7 @@ def plot_interesting_pareto_fronts(fronts: Dict[str, List[Tuple[str, float, int]
 def compare_methods_final(results_paths: Dict[str, str], output_dir: str, max_mutations: int = 90) -> None:
     gene_folder_paths = {}
     for method, path in results_paths.items():
-        gene_folder_paths[method] = [os.path.join(path, folder) for folder in os.listdir(path)]
+        gene_folder_paths[method] = [os.path.join(path, folder) for folder in os.listdir(path) if os.path.isdir(os.path.join(path, folder))]
     gene_paths = get_gene_paths(gene_folder_paths)
     check_genes_present(gene_paths, methods=list(results_paths.keys()))
     min_diff_data, max_abs_diff_data, max_summed_diff_data, max_delta_max_summed_data = None, None, None, None
