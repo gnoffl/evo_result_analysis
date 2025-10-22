@@ -93,7 +93,7 @@ def plot_normalized_fronts(normalized_fronts: Dict[str, List[List[Tuple[float, i
     plt.legend()
     plt.savefig(os.path.join(output_dir, "normalized_pareto_fronts_comparison.png"), dpi=300, bbox_inches='tight')
     plt.close()
-    plot_differences_between_fronts(fronts=average_fronts, gene_name="", tag="", output_dir=output_dir, output_name="normalized_pareto_fronts_differences.png")
+    plot_differences_between_fronts(fronts=average_fronts, gene_name="average fitness", tag="normalized", output_dir=output_dir, output_name="normalized_pareto_fronts_differences.png")
 
 def plot_interesting_pareto_fronts_values(fronts: Dict[str, List[Tuple[str, float, int]]], gene_name: str, tag: str, output_dir: str) -> None:
     plt.clf()
