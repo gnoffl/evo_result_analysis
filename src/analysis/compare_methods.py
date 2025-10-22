@@ -3,7 +3,7 @@ import os
 import json
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Tuple
+from typing import List, Dict, Optional, Tuple
 from matplotlib import pyplot as plt
 
 from analysis.simple_result_stats import expand_pareto_front
@@ -80,8 +80,10 @@ def get_plot_vals_normalized_fronts(normalized_fronts: List[List[Tuple[float, in
 
 def plot_normalized_fronts(normalized_fronts: Dict[str, List[List[Tuple[float, int]]]], output_dir: str) -> None:
     plt.clf()
+    average_fronts = {}
     for method, fronts in normalized_fronts.items():
         average_mutations, average_fitnesses, std_fitnesses = get_plot_vals_normalized_fronts(fronts)
+        average_fronts[method] = [("", fitness, mutation) for fitness, mutation in zip(average_fitnesses, average_mutations)]
         plt.errorbar(average_mutations, average_fitnesses, yerr=std_fitnesses, label=method)
     plt.xlabel("Number of Mutations")
     plt.ylabel("Normalized Fitness")
@@ -91,6 +93,7 @@ def plot_normalized_fronts(normalized_fronts: Dict[str, List[List[Tuple[float, i
     plt.legend()
     plt.savefig(os.path.join(output_dir, "normalized_pareto_fronts_comparison.png"), dpi=300, bbox_inches='tight')
     plt.close()
+    plot_differences_between_fronts(fronts=average_fronts, gene_name="", tag="", output_dir=output_dir, output_name="normalized_pareto_fronts_differences.png")
 
 def plot_interesting_pareto_fronts_values(fronts: Dict[str, List[Tuple[str, float, int]]], gene_name: str, tag: str, output_dir: str) -> None:
     plt.clf()
@@ -106,7 +109,11 @@ def plot_interesting_pareto_fronts_values(fronts: Dict[str, List[Tuple[str, floa
     plt.savefig(os.path.join(output_dir, f"pareto_fronts_comparison_{gene_name}_{tag}.png"), dpi=300, bbox_inches='tight')
 
 def get_differences_and_mutations(fronts: Dict[str, List[Tuple[str, float, int]]]) -> Dict[str, Tuple[List[float], List[int]]]:
-    reference_method = max(fronts.keys(), key=lambda m: sum([item[1] for item in fronts[m]]))  #type: ignore
+    maximization = fronts[list(fronts.keys())[0]][0][1] < fronts[list(fronts.keys())[0]][-1][1]
+    if maximization:
+        reference_method = max(fronts.keys(), key=lambda m: sum([item[1] for item in fronts[m]]))  #type: ignore
+    else:
+        reference_method = min(fronts.keys(), key=lambda m: sum([item[1] for item in fronts[m]]))  #type: ignore
     reference_front = fronts[reference_method]
     differences_dict = {}
     for method, front in fronts.items():
@@ -115,7 +122,7 @@ def get_differences_and_mutations(fronts: Dict[str, List[Tuple[str, float, int]]
         differences_dict[method] = (differences, mutations)
     return differences_dict
 
-def plot_differences_between_fronts(fronts: Dict[str, List[Tuple[str, float, int]]], gene_name: str, tag: str, output_dir: str) -> None:
+def plot_differences_between_fronts(fronts: Dict[str, List[Tuple[str, float, int]]], gene_name: str, tag: str, output_dir: str, output_name: Optional[str] = None) -> None:
     # all fronts need to have the same lengths and same mutations
     lengths = [len(front) for front in fronts.values()]
     if len(set(lengths)) != 1:
@@ -133,7 +140,8 @@ def plot_differences_between_fronts(fronts: Dict[str, List[Tuple[str, float, int
     plt.title(f"Differences Between Pareto Fronts for {gene_name} ({tag})")
     plt.xlim(-1, 91)
     plt.legend()
-    plt.savefig(os.path.join(output_dir, f"pareto_fronts_differences_{gene_name}_{tag}.png"), dpi=300, bbox_inches='tight')
+    output_name = output_name if output_name is not None else f"pareto_fronts_differences_{gene_name}_{tag}.png"
+    plt.savefig(os.path.join(output_dir, output_name), dpi=300, bbox_inches='tight')
 
 def plot_interesting_pareto_fronts(fronts: Dict[str, List[Tuple[str, float, int]]], gene_name: str, tag: str, output_dir: str) -> None:
     plot_interesting_pareto_fronts_values(fronts, gene_name, tag, output_dir)
@@ -191,8 +199,6 @@ def parse_args():
 
 #TODO: compare avg loss over generations (linear and log scale)
 #TODO: compare avg final fronts (next to each other and differences)
-# log gene with max difference between methods (both progress and final)
-    # account for both abs and summed deviation between fronts
 
 if __name__ == "__main__":
     args, results_paths = parse_args()
