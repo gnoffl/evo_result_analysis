@@ -1,3 +1,4 @@
+import argparse
 import os
 import json
 import pandas as pd
@@ -176,7 +177,24 @@ def compare_methods_final(results_paths: Dict[str, str], output_dir: str, max_mu
     plot_interesting_pareto_fronts(fronts=max_delta_max_summed_data[1], gene_name=max_delta_max_summed_data[0], tag="max_delta", output_dir=output_dir) #type: ignore
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Compare evolutionary methods based on their results.")
+    parser.add_argument("--results_paths", type=str, nargs='+', required=True, help="Paths to the results of different methods.")
+    parser.add_argument("--methods", type=str, nargs='+', required=True, help="Names of the methods corresponding to the results paths.")
+    parser.add_argument("--output_dir", type=str, required=True, help="Directory to save the output plots.")
+    parsed = parser.parse_args()
+    if len(parsed.results_paths) != len(parsed.methods):
+        raise ValueError("Number of results paths must match number of methods.")
+    results_paths = {method: path for method, path in zip(parser.parse_args().methods, parser.parse_args().results_paths)}
+    return parsed, results_paths
+
+
 #TODO: compare avg loss over generations (linear and log scale)
 #TODO: compare avg final fronts (next to each other and differences)
 # log gene with max difference between methods (both progress and final)
     # account for both abs and summed deviation between fronts
+
+if __name__ == "__main__":
+    args, results_paths = parse_args()
+    # compare_methods_progress(results_paths=results_paths)
+    compare_methods_final(results_paths=results_paths, output_dir=args.output_dir)
