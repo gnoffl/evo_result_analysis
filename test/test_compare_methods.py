@@ -16,7 +16,7 @@ from analysis.compare_methods import (
     get_plot_vals_normalized_fronts, plot_normalized_fronts,
     plot_interesting_pareto_fronts_values, get_differences_and_mutations,
     plot_differences_between_fronts, plot_interesting_pareto_fronts,
-    compare_methods_final
+    compare_methods_final, update_ranks_and_areas
 )
 
 
@@ -251,14 +251,14 @@ class TestCompareMethods(unittest.TestCase):
         """Test plotting normalized fronts."""
         normalized_fronts = {
             "method1": [[(0.8, 10), (0.6, 20)], [(0.7, 12), (0.5, 22)]],
-            "method2": [[(0.6, 11), (0.4, 21)], [(0.5, 13), (0.3, 23)]]
+            "method2": [[(0.6, 10), (0.4, 20)], [(0.5, 12), (0.3, 22)]]
         }
         
         plot_normalized_fronts(normalized_fronts, self.temp_dir)
         
         # Check that matplotlib functions were called
         self.assertEqual(mock_errorbar.call_count, 2)  # One call per method
-        mock_legend.assert_called_once()
+        self.assertEqual(mock_legend.call_count, 2)  # One call per method
         mock_close.assert_called_once()
         
         # Check that savefig was called with correct path
@@ -292,8 +292,8 @@ class TestCompareMethods(unittest.TestCase):
         differences_dict = get_differences_and_mutations(fronts)
         
         expected = {
-            "method1": ([0.0, 0.0, 0.0], [10, 20, 30]),
-            "method2": ([0.1, 0.1, 0.1], [10, 20, 30])
+            "method1": ([0.1, 0.1, 0.1], [10, 20, 30]),
+            "method2": ([0.0, 0.0, 0.0], [10, 20, 30])
         }
 
         for method in expected:
@@ -382,6 +382,33 @@ class TestCompareMethods(unittest.TestCase):
         
         with self.assertRaises(FileNotFoundError):
             compare_methods_final(results_paths, self.temp_dir)
+    
+    def test_update_ranks_and_areas(self):
+        """Test updating ranks and areas aggregation."""
+        ranks_and_areas = {}
+        differences = {"methodA": 0.2, "methodB": 0.5, "methodC": 0.0}
+        
+        # First update
+        update_ranks_and_areas(ranks_and_areas, differences)
+        
+        # Expected order by difference ascending: methodC (0.1) -> rank 1, methodA (0.2) -> rank 2, methodB (0.5) -> rank 3
+        expected_ranks_first = {"methodC": 1, "methodA": 2, "methodB": 3}
+        expected_areas_first = {"methodA": 0.2, "methodB": 0.5, "methodC": 0.0}
+        
+        self.assertIn("ranks", ranks_and_areas)
+        self.assertIn("areas", ranks_and_areas)
+        self.assertEqual(ranks_and_areas["ranks"], expected_ranks_first)
+        for method in expected_areas_first:
+            self.assertAlmostEqual(ranks_and_areas["areas"][method], expected_areas_first[method])
+        
+        # Call again to ensure aggregation (ranks sum, areas sum)
+        update_ranks_and_areas(ranks_and_areas, differences)
+        expected_ranks_second = {k: v * 2 for k, v in expected_ranks_first.items()}
+        expected_areas_second = {k: v * 2 for k, v in expected_areas_first.items()}
+        
+        self.assertEqual(ranks_and_areas["ranks"], expected_ranks_second)
+        for method in expected_areas_second:
+            self.assertAlmostEqual(ranks_and_areas["areas"][method], expected_areas_second[method])
 
 
 class TestCompareMethodsIntegration(unittest.TestCase):

@@ -3,7 +3,7 @@ import os
 import json
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Optional, Tuple
+from typing import Any, List, Dict, Optional, Tuple
 from matplotlib import pyplot as plt
 
 from analysis.simple_result_stats import expand_pareto_front
@@ -117,7 +117,7 @@ def get_differences_and_mutations(fronts: Dict[str, List[Tuple[str, float, int]]
     reference_front = fronts[reference_method]
     differences_dict = {}
     for method, front in fronts.items():
-        differences = [item1[1] - item2[1] for item1, item2 in zip(reference_front, front)]
+        differences = [item1[1] - item2[1] for item1, item2 in zip(front, reference_front)]
         mutations = [item[2] for item in front]
         differences_dict[method] = (differences, mutations)
     return differences_dict
@@ -148,6 +148,15 @@ def plot_interesting_pareto_fronts(fronts: Dict[str, List[Tuple[str, float, int]
     plot_differences_between_fronts(fronts, gene_name, tag, output_dir)
 
 
+def update_ranks_and_areas(ranks_and_areas: Dict[str, Dict[str, Any]], differences: Dict[str, float]) -> None:
+    sorted_differences = sorted(differences.items(), key=lambda x: x[1])
+    for rank, (method, value) in enumerate(sorted_differences):
+        ranks_and_areas["ranks"] = ranks_and_areas.get("ranks", {})
+        ranks_and_areas["areas"] = ranks_and_areas.get("areas", {})
+        ranks_and_areas["ranks"][method] = ranks_and_areas["ranks"].get(method, 0) + rank + 1
+        ranks_and_areas["areas"][method] = ranks_and_areas["areas"].get(method, 0) + value
+
+
 def compare_methods_final(results_paths: Dict[str, str], output_dir: str, max_mutations: int = 90) -> None:
     gene_folder_paths = {}
     for method, path in results_paths.items():
@@ -157,12 +166,14 @@ def compare_methods_final(results_paths: Dict[str, str], output_dir: str, max_mu
     min_diff_data, max_abs_diff_data, max_summed_diff_data, max_delta_max_summed_data = None, None, None, None
     min_diff, max_abs_diff, max_summed_diff, max_delta_max_summed = float("inf"), -1, -1, -1
     normalized_fronts = {}
+    ranks_and_areas = {}
     for gene, method_paths in gene_paths.items():
         fronts = {}
         for method, path in method_paths.items():
             with open(path, 'r') as f:
                 fronts[method] = expand_pareto_front(json.load(f), max_number_mutation=max_mutations)
         differences = calculate_differences_between_fronts(fronts)
+        update_ranks_and_areas(ranks_and_areas, differences["summed_diff"])
         differences = {measurement: sum([value]) for measurement, values in differences.items() for value in values.values()}
         if differences["abs_diff"] < min_diff:
             min_diff = differences["abs_diff"]
@@ -178,11 +189,15 @@ def compare_methods_final(results_paths: Dict[str, str], output_dir: str, max_mu
             max_delta_max_summed = delta_max_summed
             max_delta_max_summed_data = (gene, fronts)
         add_normalized_fronts(fronts, normalized_fronts_all=normalized_fronts)
+    # normalize ranks
+    ranks_and_areas["ranks"] = {method: rank / len(gene_paths) for method, rank in ranks_and_areas["ranks"].items()}
     plot_normalized_fronts(normalized_fronts, output_dir=output_dir)
     plot_interesting_pareto_fronts(fronts=min_diff_data[1], gene_name=min_diff_data[0], tag="min_diff", output_dir=output_dir) #type: ignore
     plot_interesting_pareto_fronts(fronts=max_abs_diff_data[1], gene_name=max_abs_diff_data[0], tag="max_abs", output_dir=output_dir) #type: ignore
     plot_interesting_pareto_fronts(fronts=max_summed_diff_data[1], gene_name=max_summed_diff_data[0], tag="max_sum", output_dir=output_dir) #type: ignore
     plot_interesting_pareto_fronts(fronts=max_delta_max_summed_data[1], gene_name=max_delta_max_summed_data[0], tag="max_delta", output_dir=output_dir) #type: ignore
+    with open(os.path.join(output_dir, "ranks_and_areas.json"), 'w') as f:
+        json.dump(ranks_and_areas, f, indent=2)
 
 
 def parse_args():
