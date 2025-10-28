@@ -38,8 +38,12 @@ def get_gene_paths(gene_folder_paths: Dict[str, List[str]]) -> Dict[str, Dict[st
 
 def calculate_differences_between_fronts(fronts: Dict[str, List[Tuple[str, float, int]]]) -> Dict[str, Dict[str, float]]:
     areas = {method: sum([item[1] for item in front]) for method, front in fronts.items()}
+    maximization = fronts[list(fronts.keys())[0]][0][1] < fronts[list(fronts.keys())[0]][-1][1]
+    if maximization:
+        reference = max(areas, key=areas.get)   #type: ignore
+    else:
+        reference = min(areas, key=areas.get)   #type: ignore
     # get method with max area as reference
-    reference = max(areas, key=areas.get)   #type: ignore
     differences = {"summed_diff": {method: abs(areas[reference] - area) for method, area in areas.items()}}
     for method, front in fronts.items():
         if method == reference:

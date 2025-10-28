@@ -155,8 +155,8 @@ class TestCompareMethods(unittest.TestCase):
         self.assertIsInstance(differences["summed_diff"], (dict))
         
         # Differences should be non-negative
-        expected_abs = {"method1": 0.0, "method2": 0.15}
-        expected_summed = {"method1": 0.0, "method2": 0.05}
+        expected_abs = {"method1": 0.15, "method2": 0.0}
+        expected_summed = {"method1": 0.05, "method2": 0.00}
         for method in expected_abs:
             self.assertAlmostEqual(differences["abs_diff"][method], expected_abs[method])
             self.assertAlmostEqual(differences["summed_diff"][method], expected_summed[method])
@@ -466,7 +466,7 @@ class TestCompareMethodsIntegration(unittest.TestCase):
         }
         
         # This should complete without errors
-        compare_methods_final(results_paths, self.temp_dir, max_mutations=100)
+        compare_methods_final(results_paths, self.temp_dir, max_mutations=15)
         
         # Check that output files were created
         expected_file = os.path.join(self.temp_dir, "normalized_pareto_fronts_comparison.png")
@@ -520,14 +520,14 @@ class TestCompareMethodsIntegration(unittest.TestCase):
 
         expected = {
             "abs_diff": {
-                "nsga2": 0.7,
-                "spea2": 0.0,
-                "moead": 0.6
+                "nsga2": 0.0,
+                "spea2": 0.7,
+                "moead": 0.9
             },
             "summed_diff": {
-                "nsga2": 0.6,
-                "spea2": 0.0,
-                "moead": 0.5
+                "nsga2": 0.0,
+                "spea2": 0.6,
+                "moead": 0.1
             }
         }
         
@@ -569,6 +569,6 @@ if __name__ == '__main__':
     unittest.main()
     # testObj = TestCompareMethodsIntegration()
     # testObj.setUp()
-    # testObj.test_integration_differences_calculation()
+    # testObj.test_integration_full_comparison()
     # testObj.tearDown()
     # print("Success!")
