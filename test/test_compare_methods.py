@@ -394,10 +394,12 @@ class TestCompareMethods(unittest.TestCase):
         # Expected order by difference ascending: methodC (0.1) -> rank 1, methodA (0.2) -> rank 2, methodB (0.5) -> rank 3
         expected_ranks_first = {"methodC": 1, "methodA": 2, "methodB": 3}
         expected_areas_first = {"methodA": 0.2, "methodB": 0.5, "methodC": 0.0}
+        expected_best_first = {"methodC": 1, "methodA": 0, "methodB": 0}
         
         self.assertIn("ranks", ranks_and_areas)
         self.assertIn("areas", ranks_and_areas)
         self.assertEqual(ranks_and_areas["ranks"], expected_ranks_first)
+        self.assertEqual(ranks_and_areas["best"], expected_best_first)
         for method in expected_areas_first:
             self.assertAlmostEqual(ranks_and_areas["areas"][method], expected_areas_first[method])
         
@@ -405,8 +407,10 @@ class TestCompareMethods(unittest.TestCase):
         update_ranks_and_areas(ranks_and_areas, differences)
         expected_ranks_second = {k: v * 2 for k, v in expected_ranks_first.items()}
         expected_areas_second = {k: v * 2 for k, v in expected_areas_first.items()}
+        expected_best_second = {k: v * 2 for k, v in expected_best_first.items()}
         
         self.assertEqual(ranks_and_areas["ranks"], expected_ranks_second)
+        self.assertEqual(ranks_and_areas["best"], expected_best_second)
         for method in expected_areas_second:
             self.assertAlmostEqual(ranks_and_areas["areas"][method], expected_areas_second[method])
 

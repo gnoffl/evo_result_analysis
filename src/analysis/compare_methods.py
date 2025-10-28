@@ -157,8 +157,12 @@ def update_ranks_and_areas(ranks_and_areas: Dict[str, Dict[str, Any]], differenc
     for rank, (method, value) in enumerate(sorted_differences):
         ranks_and_areas["ranks"] = ranks_and_areas.get("ranks", {})
         ranks_and_areas["areas"] = ranks_and_areas.get("areas", {})
+        ranks_and_areas["best"] = ranks_and_areas.get("best", {})
         ranks_and_areas["ranks"][method] = ranks_and_areas["ranks"].get(method, 0) + rank + 1
         ranks_and_areas["areas"][method] = ranks_and_areas["areas"].get(method, 0) + value
+        ranks_and_areas["best"][method] = ranks_and_areas["best"].get(method, 0)
+        if rank == 0:
+            ranks_and_areas["best"][method] += 1
 
 
 def compare_methods_final(results_paths: Dict[str, str], output_dir: str, max_mutations: int = 90) -> None:
@@ -193,8 +197,9 @@ def compare_methods_final(results_paths: Dict[str, str], output_dir: str, max_mu
             max_delta_max_summed = delta_max_summed
             max_delta_max_summed_data = (gene, fronts)
         add_normalized_fronts(fronts, normalized_fronts_all=normalized_fronts)
-    # normalize ranks
+    # normalize ranks and best counts
     ranks_and_areas["ranks"] = {method: rank / len(gene_paths) for method, rank in ranks_and_areas["ranks"].items()}
+    ranks_and_areas["best"] = {method: best / len(gene_paths) for method, best in ranks_and_areas["best"].items()}
     plot_normalized_fronts(normalized_fronts, output_dir=output_dir)
     plot_interesting_pareto_fronts(fronts=min_diff_data[1], gene_name=min_diff_data[0], tag="min_diff", output_dir=output_dir) #type: ignore
     plot_interesting_pareto_fronts(fronts=max_abs_diff_data[1], gene_name=max_abs_diff_data[0], tag="max_abs", output_dir=output_dir) #type: ignore
