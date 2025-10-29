@@ -286,8 +286,8 @@ def compare_diversity_methods(input_data: Dict[str, Tuple[str, str]], output_dir
 def parse_args():
     parser = argparse.ArgumentParser(description="Compare evolutionary methods based on their results.")
     parser.add_argument("--results_paths", "-r", type=str, nargs='+', required=True, help="Paths to the results of different methods.")
-    parser.add_argument("--mutation_data", "-m", type=str, nargs='*', help="Path to mutation data if needed for diversity comparison.", default=[])
-    parser.add_argument("--methods", "-m", type=str, nargs='+', required=True, help="Names of the methods corresponding to the results paths.")
+    parser.add_argument("--mutation_data", "-mu", type=str, nargs='*', help="Path to mutation data if needed for diversity comparison.", default=[])
+    parser.add_argument("--methods", "-me", type=str, nargs='+', required=True, help="Names of the methods corresponding to the results paths.")
     parser.add_argument("--output_dir", "-o", type=str, required=True, help="Directory to save the output plots.")
 
     parser.add_argument("--final", "-f", action='store_true', help="Compare final results of methods.")
