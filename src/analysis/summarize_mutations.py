@@ -261,6 +261,7 @@ def summarize_mutations_all_folders(base_folder_path: str, name: str, final_gene
     if generation is not None:
         output_name += f"_gen{generation}"
     output_name += ".json"
+    os.makedirs(output_folder, exist_ok=True)
     save_path = os.path.join(output_folder, output_name)
     if os.path.exists(save_path):
         raise FileExistsError(f"Output file {save_path} already exists. Please choose a different name or delete the existing file.")
