@@ -87,7 +87,8 @@ class MutatedSequence:
             return False
         return (self.reference_sequence == other.reference_sequence and
                 self.mutations == other.mutations and
-                self.mutated_sequence == other.mutated_sequence)
+                self.mutated_sequence == other.mutated_sequence and
+                self.fitness == other.fitness)
 
 
 #class that contains a dictionary with the generations of the evolutionary algorithm as key, and a list of MutatedSequence objects as value
@@ -249,6 +250,11 @@ class MutationsGene:
                 results[gen] = [seq for seq in sequences if seq.fitness == fitness]
         return results
     
+
+    def get_all_mutations_generation(self, generation: int) -> List[Tuple[int, str, str]]:
+        mutations = self.generation_dict[generation]
+        total_mutations = set([mut for seq in mutations for mut in seq.mutations])
+        return list(total_mutations)
 
 def summarize_mutations_all_folders(base_folder_path: str, name: str, final_generation: int, generation: Optional[int] = None, output_folder: str = ".") -> Dict[str, MutationsGene]:
     output_name = f"all_mutated_sequences_{name}"

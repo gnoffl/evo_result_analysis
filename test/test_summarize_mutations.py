@@ -442,6 +442,18 @@ class TestMutationsGene(unittest.TestCase):
         self.assertEqual(seq.fitness, 0.8)
         self.assertEqual(seq.get_mutation_number(), 3)
 
+    def test_get_all_mutations_generation(self):
+        """Test aggregation of all mutations in a generation."""
+        gene = MutationsGene(self.gene_folder_min, final_generation=1999)
+        mutations_list = gene.get_all_mutations_generation(1999)
+        self.assertIsInstance(mutations_list, list)
+
+        # Build expected set from the pareto front sequences defined in setUp
+        expected = set([(2, 'A', 'G'), (2, 'A', 'C'), (8, 'T', 'G'), (10, 'T', 'C'), (12, 'T', 'A')])
+
+        self.assertEqual(set(mutations_list), expected)
+
+
 class TestSummarizeMutations(unittest.TestCase):
     """Test cases for summarize_mutations module functions."""
     
