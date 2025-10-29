@@ -1,6 +1,7 @@
 import argparse
 import os
 import json
+from analysis.summarize_mutations import MutationsGene
 import pandas as pd
 import numpy as np
 from typing import Any, List, Dict, Optional, Tuple
@@ -208,23 +209,103 @@ def compare_methods_final(results_paths: Dict[str, str], output_dir: str, max_mu
     with open(os.path.join(output_dir, "ranks_and_areas.json"), 'w') as f:
         json.dump(ranks_and_areas, f, indent=2)
 
+def load_mutation_data(input_data):
+    method_dict = {}
+    genes = {}
+    for method, (results_path, mutation_path) in input_data.items():
+        with open(mutation_path, 'r') as f:
+            mutation_data = json.load(f)
+            method_dict[method] = mutation_data
+            genes[method] = sorted(list(mutation_data.keys()))
+    gene_names = genes[list(genes.keys())[0]]
+    for method, gene_list in genes.items():
+        if gene_list != gene_names:
+            raise ValueError(f"Gene lists do not match between methods. Method {method} has different genes.")
+    for method in method_dict.keys():
+        mutation_data = method_dict[method]
+        for gene, data in mutation_data.items():
+            mutation_data[gene] = MutationsGene.from_dict(data)
+    return method_dict, gene_names
+
+def count_mutations_per_method(method_dict, gene):
+    curr_dict = {}
+    for method, mutation_data in method_dict.items():
+        gene_data: MutationsGene = mutation_data[gene]
+        generations = sorted([int(gen) for gen in gene_data.generation_dict.keys()])
+        final_generation = generations[-1]
+        mutation_list = gene_data.get_all_mutations_generation(generation=final_generation)
+        mutation_count = len(mutation_list)
+        curr_dict[method] = mutation_count
+    return curr_dict
+
+def get_ranks_from_sorted(curr_dict: Dict[str, float]) -> List[float]:
+    sorted_methods = sorted(curr_dict.items(), key=lambda x: x[1], reverse=True)
+    duplicated = {}
+    for method, mutation_count in sorted_methods:
+        duplicated[mutation_count] = duplicated.get(mutation_count, []) + [method]
+    ranks = []
+    last_rank = 0
+    for mutation_count, methods in sorted(duplicated.items(), key=lambda x: x[0], reverse=True):
+        length = len(methods)
+        curr_rank =  (2 * last_rank + 1 + length) / 2
+        ranks.extend([curr_rank] * length)
+        last_rank += length
+    return ranks
+
+def update_comparison_dict(comparison_dict, curr_dict):
+    sorted_methods = sorted(curr_dict.items(), key=lambda x: x[1], reverse=True)
+    ranks = get_ranks_from_sorted(curr_dict)
+
+    for i, (method, mutation_count) in enumerate(sorted_methods):
+        comparison_dict.setdefault("mutation_count", {}).setdefault(method, 0)
+        comparison_dict.setdefault("ranks", {}).setdefault(method, 0)
+        comparison_dict.setdefault("best", {}).setdefault(method, 0)
+        comparison_dict["mutation_count"][method] += mutation_count
+        comparison_dict["ranks"][method] += ranks[i]
+        if ranks[i] == ranks[0]:
+            comparison_dict["best"][method] += 1 / ranks.count(ranks[i])
+
+def rank_by_mutation_count(method_dict, gene_names):
+    comparison_dict = {}
+    for gene in gene_names:
+        curr_dict = count_mutations_per_method(method_dict, gene)
+        # sort curr_dict by mutation count
+        update_comparison_dict(comparison_dict, curr_dict)
+    # normalize ranks and best counts
+    comparison_dict["ranks"] = {method: rank / len(gene_names) for method, rank in comparison_dict["ranks"].items()}
+    comparison_dict["best"] = {method: best / len(gene_names) for method, best in comparison_dict["best"].items()}
+    return comparison_dict
+
+def compare_diversity_methods(input_data: Dict[str, Tuple[str, str]], output_dir: str) -> None:
+    method_dict, gene_names = load_mutation_data(input_data)
+    comparison_dict = rank_by_mutation_count(method_dict, gene_names)
+    with open(os.path.join(output_dir, "diversity_comparison.json"), 'w') as f:
+        json.dump(comparison_dict, f, indent=2)
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Compare evolutionary methods based on their results.")
     parser.add_argument("--results_paths", "-r", type=str, nargs='+', required=True, help="Paths to the results of different methods.")
+    parser.add_argument("--mutation_data", "-m", type=str, nargs='*', help="Path to mutation data if needed for diversity comparison.", default=[])
     parser.add_argument("--methods", "-m", type=str, nargs='+', required=True, help="Names of the methods corresponding to the results paths.")
     parser.add_argument("--output_dir", "-o", type=str, required=True, help="Directory to save the output plots.")
     parsed = parser.parse_args()
     if len(parsed.results_paths) != len(parsed.methods):
         raise ValueError("Number of results paths must match number of methods.")
+    if parsed.mutation_data and len(parsed.mutation_data) != len(parsed.methods):
+        raise ValueError("Number of mutation data paths must match number of methods.")
+    mutation_data = {}
+    if parsed.mutation_data:
+        mutation_data = {method: (results_path, mutation_path) for method, mutation_path, results_path in zip(parsed.methods, parsed.mutation_data, parsed.results_paths)}
     results_paths = {method: path for method, path in zip(parser.parse_args().methods, parser.parse_args().results_paths)}
-    return parsed, results_paths
+    return parsed, results_paths, mutation_data
 
 
 #TODO: compare avg loss over generations (linear and log scale)
 #TODO: compare avg final fronts (next to each other and differences)
 
 if __name__ == "__main__":
-    args, results_paths = parse_args()
+    args, results_paths, mutation_data = parse_args()
     # compare_methods_progress(results_paths=results_paths)
     compare_methods_final(results_paths=results_paths, output_dir=args.output_dir)
+    compare_diversity_methods(input_data=mutation_data, output_dir=args.output_dir)

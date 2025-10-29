@@ -4,6 +4,7 @@ import tempfile
 import json
 import shutil
 from analysis.simple_result_stats import expand_pareto_front
+from analysis.summarize_mutations import MutationsGene
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for testing
@@ -16,7 +17,9 @@ from analysis.compare_methods import (
     get_plot_vals_normalized_fronts, plot_normalized_fronts,
     plot_interesting_pareto_fronts_values, get_differences_and_mutations,
     plot_differences_between_fronts, plot_interesting_pareto_fronts,
-    compare_methods_final, update_ranks_and_areas
+    compare_methods_final, update_ranks_and_areas,
+    load_mutation_data, count_mutations_per_method, update_comparison_dict,
+    rank_by_mutation_count, compare_diversity_methods, get_ranks_from_sorted
 )
 
 
@@ -413,6 +416,165 @@ class TestCompareMethods(unittest.TestCase):
         self.assertEqual(ranks_and_areas["best"], expected_best_second)
         for method in expected_areas_second:
             self.assertAlmostEqual(ranks_and_areas["areas"][method], expected_areas_second[method])
+    
+
+class TestCompareDiversity(unittest.TestCase):
+    """Dedicated tests for diversity comparison utilities (load/update/rank/compare)."""
+
+    def setUp(self):
+        """Create temporary folder and sample mutation JSONs used by multiple tests."""
+        self.temp_dir = tempfile.mkdtemp()
+        # Define two methods with identical gene lists
+        self.genes = ["geneA", "geneB"]
+        self.ref_seq = "AAAAAA"
+        self.method1_data = {
+            "geneA": {"reference_sequence": self.ref_seq, "1999": ["1AT|0.5", "|0.4"]},
+            "geneB": {"reference_sequence": self.ref_seq, "1999": ["2AT3AG|0.6", "1AG|0.5", "|0.4"]}
+        }
+        self.method2_data = {
+            "geneA": {"reference_sequence": self.ref_seq, "1999": ["|0.4"]},
+            "geneB": {"reference_sequence": self.ref_seq, "1999": ["2AT|0.6", "|0.4"]}
+        }
+        self.m1_path = os.path.join(self.temp_dir, "method1_mut.json")
+        self.m2_path = os.path.join(self.temp_dir, "method2_mut.json")
+        with open(self.m1_path, 'w') as f:
+            json.dump(self.method1_data, f)
+        with open(self.m2_path, 'w') as f:
+            json.dump(self.method2_data, f)
+
+        # Input mapping expected by load_mutation_data: method -> (results_path, mutation_path)
+        self.input_data = {
+            "method1": (os.path.join(self.temp_dir, "method1_results"), self.m1_path),
+            "method2": (os.path.join(self.temp_dir, "method2_results"), self.m2_path)
+        }
+        # create dummy results folders
+        os.makedirs(self.input_data["method1"][0], exist_ok=True)
+        os.makedirs(self.input_data["method2"][0], exist_ok=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    def test_load_mutation_data(self):
+        """Test load_mutation_data returns expected structures and gene list."""
+        method_dict, gene_names = load_mutation_data(self.input_data)
+        # Basic checks
+        self.assertIn("method1", method_dict)
+        self.assertIn("method2", method_dict)
+        self.assertEqual(sorted(gene_names), sorted(self.genes))
+        # Each method value should be a dict mapping gene->MutationsGene
+        for method in ["method1", "method2"]:
+            self.assertIsInstance(method_dict[method], dict)
+            for gene in self.genes:
+                self.assertIn(gene, method_dict[method])
+                mg = method_dict[method][gene]
+                self.assertTrue(hasattr(mg, "generation_dict"))
+                self.assertIn(1999, mg.generation_dict)
+
+    def test_count_mutations_per_method(self):
+        """Test count_mutations_per_method returns correct per-method counts for a gene."""
+        method_dict, gene_names = load_mutation_data(self.input_data)
+        counts = count_mutations_per_method(method_dict, "geneB")
+        # method1 geneB has three unique mutation positions, method2 has one
+        self.assertEqual(counts["method1"], 3)
+        self.assertEqual(counts["method2"], 1)
+        method_dict = {
+            "method1": {
+                "geneA": MutationsGene.from_dict({
+                    "reference_sequence": "AAAAAA",
+                    1999: ["1AT|0.5", "|0.4"]
+                }),
+            },
+            "method2": {
+                "geneA": MutationsGene.from_dict({
+                    "reference_sequence": "AAAAAA",
+                    1999: ["|0.4"]
+                }),
+            }
+        }
+        counts = count_mutations_per_method(method_dict, "geneA")
+        self.assertEqual(counts["method1"], 1)
+        self.assertEqual(counts["method2"], 0)
+    
+    def test_get_ranks_from_sorted(self):
+        input_dict = {
+            "A": 10.,
+            "B": 2.,
+            "C": 5.,
+            "D": 2.,
+            "E": 7.,
+            "F": 3.,
+            "G": 3.,
+            "H": 3.,
+            "I": 3.,
+            "J": 2.,
+        }
+        calculated_ranks = get_ranks_from_sorted(input_dict)
+        expected_ranks = [1, 2, 3, 5.5, 5.5, 5.5, 5.5, 9, 9, 9]
+        self.assertEqual(calculated_ranks, expected_ranks)
+
+    def test_update_comparison_dict(self):
+        """Test update_comparison_dict increments mutation_count, ranks and best correctly."""
+        comparison = {}
+        curr = {"m1": 5, "m2": 2, "m3": 7, "m4": 7}
+        update_comparison_dict(comparison, curr)
+        # mutation_count aggregated
+        self.assertEqual(comparison["mutation_count"]["m1"], 5)
+        self.assertEqual(comparison["mutation_count"]["m2"], 2)
+        self.assertEqual(comparison["mutation_count"]["m3"], 7)
+        self.assertEqual(comparison["mutation_count"]["m4"], 7)
+        # ranks should reflect sorted order ascending by mutation_count: m2 (rank1), m1 (rank2), m3 (rank3)
+        self.assertEqual(comparison["ranks"]["m1"], 3)
+        self.assertEqual(comparison["ranks"]["m2"], 4)
+        self.assertEqual(comparison["ranks"]["m3"], 1.5)
+        self.assertEqual(comparison["ranks"]["m4"], 1.5)
+        # best count should set 1 for the best (lowest) method
+        self.assertEqual(comparison["best"]["m1"], 0)
+        self.assertEqual(comparison["best"]["m2"], 0.)
+        self.assertEqual(comparison["best"]["m3"], 0.5)
+        self.assertEqual(comparison["best"]["m4"], 0.5)
+        # call again to ensure aggregation
+        update_comparison_dict(comparison, {"m1": 1, "m2": 2, "m3": 3, "m4": 4})
+        # mutation_count aggregated
+        self.assertEqual(comparison["mutation_count"]["m1"], 6)
+        self.assertEqual(comparison["mutation_count"]["m2"], 4)
+        self.assertEqual(comparison["mutation_count"]["m3"], 10)
+        self.assertEqual(comparison["mutation_count"]["m4"], 11)
+        # ranks should reflect sorted order ascending by mutation_count: m2 (rank1), m1 (rank2), m3 (rank3)
+        self.assertEqual(comparison["ranks"]["m1"], 7)
+        self.assertEqual(comparison["ranks"]["m2"], 7)
+        self.assertEqual(comparison["ranks"]["m3"], 3.5)
+        self.assertEqual(comparison["ranks"]["m4"], 2.5)
+        # best count should set 1 for the best (lowest) method
+        self.assertEqual(comparison["best"]["m1"], 0)
+        self.assertEqual(comparison["best"]["m2"], 0.)
+        self.assertEqual(comparison["best"]["m3"], 0.5)
+        self.assertEqual(comparison["best"]["m4"], 1.5)
+
+    def test_rank_by_mutation_count(self):
+        """Test rank_by_mutation_count aggregates counts, ranks and best correctly across genes."""
+        method_dict, gene_names = load_mutation_data(self.input_data)
+        comparison = rank_by_mutation_count(method_dict, gene_names)
+        self.assertIn("mutation_count", comparison)
+        self.assertIn("ranks", comparison)
+        self.assertIn("best", comparison)
+        # mutation counts should sum to total across genes: method1 = 1 (geneA) + 3 (geneB) = 4
+        self.assertEqual(comparison["mutation_count"]["method1"], 4)
+        self.assertEqual(comparison["mutation_count"]["method2"], 1)
+        self.assertEqual(comparison["ranks"]["method1"], 1)
+        self.assertEqual(comparison["ranks"]["method2"], 2)
+        self.assertEqual(comparison["best"]["method1"], 1)
+        self.assertEqual(comparison["best"]["method2"], 0.)
+
+    def test_compare_diversity_methods_writes_file(self):
+        """Test compare_diversity_methods creates diversity_comparison.json with expected keys."""
+        compare_diversity_methods(self.input_data, self.temp_dir)
+        out_file = os.path.join(self.temp_dir, "diversity_comparison.json")
+        self.assertTrue(os.path.exists(out_file))
+        with open(out_file, 'r') as f:
+            content = json.load(f)
+        self.assertIn("mutation_count", content)
+        self.assertIn("ranks", content)
+        self.assertIn("best", content)
 
 
 class TestCompareMethodsIntegration(unittest.TestCase):
@@ -571,8 +733,8 @@ class TestCompareMethodsIntegration(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-    # testObj = TestCompareMethodsIntegration()
+    # testObj = TestCompareDiversity()
     # testObj.setUp()
-    # testObj.test_integration_full_comparison()
+    # testObj.test_compare_diversity_methods_writes_file()
     # testObj.tearDown()
     # print("Success!")
