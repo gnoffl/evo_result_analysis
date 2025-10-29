@@ -289,6 +289,11 @@ def parse_args():
     parser.add_argument("--mutation_data", "-m", type=str, nargs='*', help="Path to mutation data if needed for diversity comparison.", default=[])
     parser.add_argument("--methods", "-m", type=str, nargs='+', required=True, help="Names of the methods corresponding to the results paths.")
     parser.add_argument("--output_dir", "-o", type=str, required=True, help="Directory to save the output plots.")
+
+    parser.add_argument("--final", "-f", action='store_true', help="Compare final results of methods.")
+    parser.add_argument("--diversity", "-d", action='store_true', help="Compare diversity of methods based on mutation data.")
+    parser.add_argument("--progress", "-p", action='store_true', help="Compare progress of methods over generations.")
+    parser.add_argument("--all", "-a", action='store_true', help="Compare all aspects of methods.")
     parsed = parser.parse_args()
     if len(parsed.results_paths) != len(parsed.methods):
         raise ValueError("Number of results paths must match number of methods.")
@@ -306,6 +311,16 @@ def parse_args():
 
 if __name__ == "__main__":
     args, results_paths, mutation_data = parse_args()
+    run_final = args.final or args.all
+    run_diversity = args.diversity or args.all
+    run_progress = args.progress or args.all
+    if not (run_final or run_diversity or run_progress):
+        raise ValueError("At least one of --final, --diversity, --progress, or --all must be specified.")
     # compare_methods_progress(results_paths=results_paths)
-    compare_methods_final(results_paths=results_paths, output_dir=args.output_dir)
-    compare_diversity_methods(input_data=mutation_data, output_dir=args.output_dir)
+    if run_final:
+        compare_methods_final(results_paths=results_paths, output_dir=args.output_dir)
+    if run_diversity:
+        compare_diversity_methods(input_data=mutation_data, output_dir=args.output_dir)
+    if run_progress:
+        raise NotImplementedError("Progress comparison not yet implemented.")
+        compare_methods_progress(results_paths=results_paths)
