@@ -90,7 +90,7 @@ def get_stats_per_gene(results_folder: str, name: str, output_folder: str = ".")
         add_basic_stats(stats, fitnesses, num_mutations, gene)
     
         #add number of mutations for half max fitness
-        mutations_half_max = calculate_half_max_mutations(pareto_front=pareto_front)
+        mutations_half_max = calculate_half_max_mutations(pareto_front=pareto_front) # type: ignore
         stats[gene]['num_mutations_half_max_effect'] = mutations_half_max
 
     print(f"Stats for {name} calculated, saving to {output_path}")
@@ -571,10 +571,10 @@ def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_
         else:
             print(f"Skipping gene {stat['origin_chromosome']}, no mutations at half max effect found.")
 
-    max_mutations = max(half_max_mutations) if half_max_mutations else 0
-    possible_mutations = int(max_mutations) + 1
+    max_mutations = round(max(half_max_mutations)) if half_max_mutations else 0
+    bins = np.arange(0, max_mutations + 2) - 0.5  # to center bins on integers
     
-    plt.hist(half_max_mutations, bins=possible_mutations, alpha=0.7)
+    plt.hist(half_max_mutations, bins=bins, alpha=0.7) #type:ignore
     plt.xlabel('Mutations at Half Max Effect')
     plt.ylabel('Frequency')
     plt.title('Histogram of Mutations at Half Max Effect')
