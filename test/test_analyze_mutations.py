@@ -54,7 +54,9 @@ class TestAnalyzeMutations(unittest.TestCase):
         """Test counting mutations for a single gene."""
         with open(self.mutation_file, 'r') as f:
             mutation_data = json.load(f)
-        counts, individual_counts = count_mutations_single_gene(mutation_data, "gene1", generation=1999)
+        all_generations = MutationsGene.from_dict(mutation_data["gene1"])
+        pareto_front = all_generations.generation_dict[1999]
+        counts, individual_counts = count_mutations_single_gene(pareto_front)
 
         # Check that we get correct number of mutation types and individual counts
         # gene1 has: "0AT1AG2AC|0.8" (3 mutations), "0AT1AG|0.6" (2 mutations), "|0.5" (0 mutations)
@@ -64,22 +66,6 @@ class TestAnalyzeMutations(unittest.TestCase):
         self.assertEqual(individual_counts, [3, 2, 0])
         self.assertEqual(len(counts), 3)  # 3 unique mutations
         self.assertEqual(sorted(counts), [1, 2, 2])  # Counts should be [2, 2, 1] in some order
-    
-    def test_count_mutations_single_gene_not_found(self):
-        """Test error handling when gene is not found."""
-        with open(self.mutation_file, 'r') as f:
-            mutation_data = json.load(f)
-        with self.assertRaises(ValueError) as context:
-            count_mutations_single_gene(mutation_data, "nonexistent_gene", generation=1999)
-        self.assertIn("Gene nonexistent_gene not found", str(context.exception))
-    
-    def test_count_mutations_single_gene_generation_not_found(self):
-        """Test error handling when generation is not found."""
-        with open(self.mutation_file, 'r') as f:
-            mutation_data = json.load(f)
-        with self.assertRaises(ValueError) as context:
-            count_mutations_single_gene(mutation_data, "gene1", generation=9999)
-        self.assertIn("Generation 9999 not found", str(context.exception))
     
     def test_count_mutations_all_genes(self):
         """Test counting mutations for all genes."""

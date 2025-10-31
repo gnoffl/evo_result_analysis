@@ -16,16 +16,10 @@ from analysis.summarize_mutations import MutatedSequence
 
 COLORS = {"A": "green", "C": "blue", "G": "orange", "T": "red", "Sum": "black"}
 
-def count_mutations_single_gene(mutation_data: Dict, gene_name: str, generation: int = 1999) -> Tuple[List[int], List[int]]:
-    if gene_name not in mutation_data:
-        raise ValueError(f"Gene {gene_name} not found in mutation data.")
-    data_for_all_generations = MutationsGene.from_dict(mutation_data[gene_name])
-    if generation not in data_for_all_generations.generation_dict.keys():
-        raise ValueError(f"Generation {generation} not found in mutation data for gene {gene_name}.")
-    pareto_front_current_generation = data_for_all_generations.generation_dict[generation]
+def count_mutations_single_gene(pareto_front: List[MutatedSequence]) -> Tuple[List[int], List[int]]:
     mutation_counts = {}
     individual_mutation_counts = []
-    for individual in pareto_front_current_generation:
+    for individual in pareto_front:
         individual_mutation_counts.append(len(individual.mutations))
         for pos, ref, mut in individual.mutations:
             mutation_counts[str(pos) + str(mut)] = mutation_counts.get(str(pos) + str(mut), 0) + 1
@@ -43,9 +37,10 @@ def count_mutations_all_genes(mutation_data_path: str, generation: int = 1999) -
     mutation_counts = {}
     for gene_name in mutation_data.keys():
         try:
-            counts, individual_mutation_counts = count_mutations_single_gene(mutation_data, gene_name, generation)
+            data_for_all_generations = MutationsGene.from_dict(mutation_data[gene_name])
+            counts, individual_mutation_counts = count_mutations_single_gene(data_for_all_generations.generation_dict[generation])
             mutation_counts[gene_name] = (counts, individual_mutation_counts)
-        except ValueError as e:
+        except KeyError as e:
             print(f"Skipping {gene_name}: {e}")
     return mutation_counts
 
