@@ -1,13 +1,15 @@
 import argparse
 import os
 import json
-from analysis.summarize_mutations import MutationsGene
 import pandas as pd
 import numpy as np
+import math
 from typing import Any, List, Dict, Optional, Tuple
 from matplotlib import pyplot as plt
 
 from analysis.simple_result_stats import expand_pareto_front
+from analysis.summarize_mutations import MutatedSequence, MutationsGene
+from analysis.analyze_mutations import count_mutations_single_gene, calculate_conservation_statistic
 
 
 def compare_methods_progress(results_paths: List[str]) -> None:
@@ -252,15 +254,15 @@ def get_ranks_from_sorted(curr_dict: Dict[str, float]) -> List[float]:
         last_rank += length
     return ranks
 
-def update_comparison_dict(comparison_dict, curr_dict):
-    sorted_methods = sorted(curr_dict.items(), key=lambda x: x[1], reverse=True)
+def update_comparison_dict(comparison_dict, curr_dict, max_best: bool = True, summation_field: str = "mutation_count"):
+    sorted_methods = sorted(curr_dict.items(), key=lambda x: x[1], reverse=max_best)
     ranks = get_ranks_from_sorted(curr_dict)
 
     for i, (method, mutation_count) in enumerate(sorted_methods):
-        comparison_dict.setdefault("mutation_count", {}).setdefault(method, 0)
+        comparison_dict.setdefault(summation_field, {}).setdefault(method, 0)
         comparison_dict.setdefault("ranks", {}).setdefault(method, 0)
         comparison_dict.setdefault("best", {}).setdefault(method, 0)
-        comparison_dict["mutation_count"][method] += mutation_count
+        comparison_dict[summation_field][method] += mutation_count
         comparison_dict["ranks"][method] += ranks[i]
         if ranks[i] == ranks[0]:
             comparison_dict["best"][method] += 1 / ranks.count(ranks[i])
@@ -276,11 +278,69 @@ def rank_by_mutation_count(method_dict, gene_names):
     comparison_dict["best"] = {method: best / len(gene_names) for method, best in comparison_dict["best"].items()}
     return comparison_dict
 
-def compare_diversity_methods(input_data: Dict[str, Tuple[str, str]], output_dir: str) -> None:
+
+def get_sampled_pareto_fronts(pareto_front: List[MutatedSequence], max_bootstrap: int) -> List[List[MutatedSequence]]:
+    options_per_mutation_count = {}
+    for individual in pareto_front:
+        options_per_mutation_count.setdefault(len(individual.mutations), []).append(individual)
+    choices = [len(options) for options in options_per_mutation_count.values()]
+    possible_combinations = math.prod(choices)
+    bootstraps = min(possible_combinations, max_bootstrap)
+    sampled_fronts = []
+    for _ in range(bootstraps):
+        selected_individuals = []
+        for options in options_per_mutation_count.values():
+            selected_individual = np.random.choice(options)
+            selected_individuals.append(selected_individual)
+        sampled_fronts.append(selected_individuals)
+    return sampled_fronts
+
+
+def calculate_conservation_statistic_pareto_front(pareto_front: List[MutatedSequence], max_bootstrap: int, mutable_positions: int) -> float:
+    stats = []
+    sampled_fronts = get_sampled_pareto_fronts(pareto_front, max_bootstrap)
+    for curr_pareto_front in sampled_fronts:
+        mutation_counts, individual_mutation_counts = count_mutations_single_gene(curr_pareto_front)
+        statistic = calculate_conservation_statistic(mutation_counts=mutation_counts, individual_mutation_counts=individual_mutation_counts, mutable_positions=mutable_positions)
+        stats.append(statistic)
+    average_statistic = sum(stats) / len(stats)
+    return average_statistic
+
+
+def calculate_conservation_per_method(method_dict: Dict[str, Any], gene: str, max_bootstrap: int, mutable_positions: int):
+    method_stats = {}
+    for method, mutation_data in method_dict.items():
+        gene_data: MutationsGene = mutation_data[gene]
+        generations = sorted([int(gen) for gen in gene_data.generation_dict.keys()])
+        final_generation = generations[-1]
+        pareto_front = gene_data.generation_dict[final_generation]
+        diversity_measure = calculate_conservation_statistic_pareto_front(pareto_front, max_bootstrap=max_bootstrap, mutable_positions=mutable_positions)
+        method_stats[method] = diversity_measure
+    return method_stats
+
+
+def rank_by_conservation(method_dict, gene_names: List[str], max_bootstrap: int, mutable_positions: int):
+    comparison_dict = {}
+    for gene in gene_names:
+        curr_dict = calculate_conservation_per_method(method_dict, gene=gene, max_bootstrap=max_bootstrap, mutable_positions=mutable_positions)
+        # sort curr_dict by mutation count
+        update_comparison_dict(comparison_dict, curr_dict, max_best=False, summation_field="conservation_measure")
+    # normalize ranks and best counts
+    comparison_dict["ranks"] = {method: rank / len(gene_names) for method, rank in comparison_dict["ranks"].items()}
+    comparison_dict["best"] = {method: best / len(gene_names) for method, best in comparison_dict["best"].items()}
+    return comparison_dict
+
+def compare_diversity_methods(input_data: Dict[str, Tuple[str, str]], output_dir: str, max_bootstrap: int, mutable_positions: int) -> None:
     method_dict, gene_names = load_mutation_data(input_data)
-    comparison_dict = rank_by_mutation_count(method_dict, gene_names)
+    comparison_dict_mutation_count = rank_by_mutation_count(method_dict, gene_names)
+    comparison_dict_conservation_measure = rank_by_conservation(method_dict, gene_names, max_bootstrap, mutable_positions)
+
+    results_dict = {
+        "mutation_count_comparison": comparison_dict_mutation_count,
+        "conservation_measure_comparison": comparison_dict_conservation_measure
+    }
     with open(os.path.join(output_dir, "diversity_comparison.json"), 'w') as f:
-        json.dump(comparison_dict, f, indent=2)
+        json.dump(results_dict, f, indent=2)
 
 
 def parse_args():
@@ -289,6 +349,8 @@ def parse_args():
     parser.add_argument("--mutation_data", "-mu", type=str, nargs='*', help="Path to mutation data if needed for diversity comparison.", default=[])
     parser.add_argument("--methods", "-me", type=str, nargs='+', required=True, help="Names of the methods corresponding to the results paths.")
     parser.add_argument("--output_dir", "-o", type=str, required=True, help="Directory to save the output plots.")
+    parser.add_argument("--max_bootstrap", "-mb", type=int, default=100, help="Maximum number of bootstrap samples for diversity calculation.")
+    parser.add_argument("--mutable_positions", "-mp", type=int, default=3000, help="Number of mutable positions for diversity calculation.")
 
     parser.add_argument("--final", "-f", action='store_true', help="Compare final results of methods.")
     parser.add_argument("--diversity", "-d", action='store_true', help="Compare diversity of methods based on mutation data.")
@@ -320,7 +382,7 @@ if __name__ == "__main__":
     if run_final:
         compare_methods_final(results_paths=results_paths, output_dir=args.output_dir)
     if run_diversity:
-        compare_diversity_methods(input_data=mutation_data, output_dir=args.output_dir)
+        compare_diversity_methods(input_data=mutation_data, output_dir=args.output_dir, max_bootstrap=args.max_bootstrap, mutable_positions=args.mutable_positions)
     if run_progress:
         raise NotImplementedError("Progress comparison not yet implemented.")
         compare_methods_progress(results_paths=results_paths)

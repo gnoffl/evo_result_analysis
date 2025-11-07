@@ -4,7 +4,7 @@ import tempfile
 import json
 import shutil
 from analysis.simple_result_stats import expand_pareto_front
-from analysis.summarize_mutations import MutationsGene
+from analysis.summarize_mutations import MutatedSequence, MutationsGene
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for testing
@@ -19,7 +19,9 @@ from analysis.compare_methods import (
     plot_differences_between_fronts, plot_interesting_pareto_fronts,
     compare_methods_final, update_ranks_and_areas,
     load_mutation_data, count_mutations_per_method, update_comparison_dict,
-    rank_by_mutation_count, compare_diversity_methods, get_ranks_from_sorted
+    rank_by_mutation_count, compare_diversity_methods, get_ranks_from_sorted,
+    calculate_conservation_statistic_pareto_front, calculate_conservation_per_method,
+    get_sampled_pareto_fronts, rank_by_conservation,
 )
 
 
@@ -567,14 +569,131 @@ class TestCompareDiversity(unittest.TestCase):
 
     def test_compare_diversity_methods_writes_file(self):
         """Test compare_diversity_methods creates diversity_comparison.json with expected keys."""
-        compare_diversity_methods(self.input_data, self.temp_dir)
+        compare_diversity_methods(self.input_data, self.temp_dir, max_bootstrap=5, mutable_positions=10)
         out_file = os.path.join(self.temp_dir, "diversity_comparison.json")
         self.assertTrue(os.path.exists(out_file))
         with open(out_file, 'r') as f:
             content = json.load(f)
-        self.assertIn("mutation_count", content)
-        self.assertIn("ranks", content)
-        self.assertIn("best", content)
+        self.assertIn("mutation_count_comparison", content)
+        self.assertIn("conservation_measure_comparison", content)
+    
+
+    def test_get_sampled_pareto_fronts(self):
+        """get_sampled_pareto_front should return a sampled subset of the pareto front up to max_samples."""
+        class DummyInd:
+            def __init__(self, muts):
+                self.mutations = muts
+        pareto_front = [DummyInd([i]) for i in range(10)]
+        # Test with max_bootstrap greater than front size
+        sampled = get_sampled_pareto_fronts(pareto_front, max_bootstrap=15)
+        self.assertEqual(len(sampled), 10)
+
+        pareto_front.extend([DummyInd([1, i]) for i in range(10)])
+        sampled = get_sampled_pareto_fronts(pareto_front, max_bootstrap=1000)
+        self.assertEqual(len(sampled), 100)
+
+        pareto_front.append(DummyInd([1, 2, 3]))
+        pareto_front.append(DummyInd([1, 2, 3, 4]))
+        pareto_front.append(DummyInd([1, 2, 3, 4, 5]))
+        sampled = get_sampled_pareto_fronts(pareto_front, max_bootstrap=1000)
+        self.assertEqual(len(sampled), 100)
+        # Test that sampled individuals are from original front
+        for front in sampled:
+            for ind in front :
+                self.assertIn(ind, pareto_front)
+        
+        sampled = get_sampled_pareto_fronts(pareto_front, max_bootstrap=5)
+        self.assertEqual(len(sampled), 5)
+    
+    def test_calculate_conservation_statistic_pareto_front(self):
+        """calculate_conservation_statistic_pareto_front should return a float conservation measure."""
+        reference_sequence = "AAAAAA"
+        pareto_front = [
+            MutatedSequence(reference_sequence=reference_sequence, mutated_sequence="AAAAAA", fitness=0),
+            MutatedSequence(reference_sequence=reference_sequence, mutated_sequence="GAAAAA", fitness=0),
+            MutatedSequence(reference_sequence=reference_sequence, mutated_sequence="GGAAAA", fitness=0),
+        ]
+        cons = calculate_conservation_statistic_pareto_front(
+            pareto_front,
+            max_bootstrap=10,
+            mutable_positions=6
+        )
+        self.assertIsInstance(cons, float)
+        self.assertAlmostEqual(cons, 1)
+
+        pareto_front = [
+            MutatedSequence(reference_sequence=reference_sequence, mutated_sequence="AAAAAA", fitness=0),
+            MutatedSequence(reference_sequence=reference_sequence, mutated_sequence="GAAAAA", fitness=0),
+            MutatedSequence(reference_sequence=reference_sequence, mutated_sequence="AGGAAA", fitness=0),
+        ]
+        cons = calculate_conservation_statistic_pareto_front(
+            pareto_front,
+            max_bootstrap=10,
+            mutable_positions=6
+        )
+        self.assertIsInstance(cons, float)
+        self.assertAlmostEqual(cons, 0)
+
+        pareto_front = [
+            MutatedSequence(reference_sequence=reference_sequence, mutated_sequence="AAAAAA", fitness=0),
+            MutatedSequence(reference_sequence=reference_sequence, mutated_sequence="GAAAAA", fitness=0),
+            MutatedSequence(reference_sequence=reference_sequence, mutated_sequence="AGAAAA", fitness=0),
+            MutatedSequence(reference_sequence=reference_sequence, mutated_sequence="AGGAAA", fitness=0),
+            MutatedSequence(reference_sequence=reference_sequence, mutated_sequence="GGGAAA", fitness=0),
+        ]
+        cons = calculate_conservation_statistic_pareto_front(
+            pareto_front,
+            max_bootstrap=10,
+            mutable_positions=6
+        )
+        self.assertIsInstance(cons, float)
+        self.assertGreater(cons, 0.6)
+        self.assertLessEqual(cons, 1)
+
+    @patch('analysis.compare_methods.calculate_conservation_statistic_pareto_front')
+    def test_calculate_diversity_per_method(self, mock_cons_pf):
+        """calculate_diversity_per_method should call conservation function for each method and return mapping."""
+        # Build dummy MutationsGene-like object with generation_dict holding a pareto front
+        # Patch conservation to return deterministic values per method-call
+        mock_cons_pf.side_effect = [0.33, 0.66]
+        inputs_dict = {}
+        for method, item in self.input_data.items():
+            (_, mutation_data_path) = item
+            with open(mutation_data_path, 'r') as f:
+                mut_data = json.load(f)
+            full_method_dict = {gene: MutationsGene.from_dict(mut_data[gene]) for gene in mut_data}
+            inputs_dict[method] = full_method_dict
+        out = calculate_conservation_per_method(inputs_dict, gene="geneA", max_bootstrap=5, mutable_positions=10)
+        self.assertIn("method1", out)
+        self.assertIn("method2", out)
+        self.assertAlmostEqual(out["method1"], 0.33)
+        self.assertAlmostEqual(out["method2"], 0.66)
+        self.assertEqual(mock_cons_pf.call_count, 2)
+
+    @patch('analysis.compare_methods.calculate_conservation_per_method')
+    def test_rank_by_conservation_aggregates_and_normalizes(self, mock_calc_div):
+        """rank_by_conservation should aggregate conservation measures across genes, compute ranks and normalize them."""
+        # Two genes, two methods. Prepare per-gene conservation measures to hit different ordering.
+        # For gene1: m1=0.1, m2=0.2 -> m1 better (lower)
+        # For gene2: m1=0.3, m2=0.05 -> m2 better
+        mock_calc_div.side_effect = [
+            {"m1": 0.1, "m2": 0.2},
+            {"m1": 0.3, "m2": 0.05}
+        ]
+        comparison = rank_by_conservation(method_dict={}, gene_names=["g1", "g2"], max_bootstrap=5, mutable_positions=10)
+        # Should contain aggregated conservation_measure sums, ranks and best normalized by number of genes (2)
+        self.assertIn("conservation_measure", comparison)
+        self.assertIn("ranks", comparison)
+        self.assertIn("best", comparison)
+        # Aggregated sums
+        self.assertAlmostEqual(comparison["conservation_measure"]["m1"], 0.4)
+        self.assertAlmostEqual(comparison["conservation_measure"]["m2"], 0.25)
+        # After two genes, ranks aggregated were (m1:3, m2:3) then normalized by 2 -> 1.5
+        self.assertAlmostEqual(comparison["ranks"]["m1"], 1.5)
+        self.assertAlmostEqual(comparison["ranks"]["m2"], 1.5)
+        # Best counts: each method was best once -> normalized 1/2 = 0.5
+        self.assertAlmostEqual(comparison["best"]["m1"], 0.5)
+        self.assertAlmostEqual(comparison["best"]["m2"], 0.5)
 
 
 class TestCompareMethodsIntegration(unittest.TestCase):
@@ -735,6 +854,6 @@ if __name__ == '__main__':
     unittest.main()
     # testObj = TestCompareDiversity()
     # testObj.setUp()
-    # testObj.test_compare_diversity_methods_writes_file()
+    # testObj.test_rank_by_conservation_aggregates_and_normalizes()
     # testObj.tearDown()
     # print("Success!")
