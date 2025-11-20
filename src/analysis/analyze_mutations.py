@@ -107,12 +107,13 @@ def calculate_conservation_statistic(mutation_counts: List[int], individual_muta
     Returns:
         float: Conservation statistic.
     """
+    sorted_mutation_counts = sorted(mutation_counts, reverse=True)
     worst_case_distribution = create_worst_case_distribution(mutation_counts, mutable_positions)
     ideal_distribution = create_ideal_distribution(individual_mutation_counts, len(worst_case_distribution))
     if np.array_equal(ideal_distribution, worst_case_distribution):
         return 1.0
     mutation_count_distribution = np.zeros(len(worst_case_distribution), dtype=int)
-    mutation_count_distribution[:len(mutation_counts)] = mutation_counts
+    mutation_count_distribution[:len(sorted_mutation_counts)] = sorted_mutation_counts
 
     difference_current_dist = np.abs(ideal_distribution - mutation_count_distribution).sum()
     difference_worst_case_dist = np.abs(ideal_distribution - worst_case_distribution).sum()
@@ -197,7 +198,7 @@ def plot_dict_as_stacked_bars(data_dict: Dict, title: str, xlabel: str, ylabel: 
     ax.set_title(title)
     plt.savefig(file_path, dpi=300, bbox_inches='tight')
 
-def make_line_plot_rolling_window(data_dict: Dict, name: str, window_size: int = 11, output_folder: str = "."):
+def make_line_plot_rolling_window(data_dict: Dict, name: str, output_format: str, window_size: int = 11, output_folder: str = "."):
     """Create a rolling window line plot of mutations.
     
     Args:
@@ -247,10 +248,10 @@ def make_line_plot_rolling_window(data_dict: Dict, name: str, window_size: int =
     plt.yticks(fontsize=12)
     plt.grid()
     plt.legend(fontsize=12)
-    plt.savefig(os.path.join(output_folder, f"rolling_mean_mutations_{name}_{window_size}.pdf"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_folder, f"rolling_mean_mutations_{name}_{window_size}.{output_format}"), dpi=300, bbox_inches='tight')
         
 
-def plot_hist_half_max_mutations_stacked(mutation_data_path: str, name: str, output_folder: str = "."):
+def plot_hist_half_max_mutations_stacked(mutation_data_path: str, name: str, output_format: str, output_folder: str = "."):
     """Generate stacked histogram of mutations at half max fitness.
     
     Args:
@@ -280,17 +281,17 @@ def plot_hist_half_max_mutations_stacked(mutation_data_path: str, name: str, out
                               title=f'Histogram of Mutations at Half Max Fitness for {name} (From)',
                               xlabel='Mutations at Half Max Fitness',
                               ylabel='Frequency',
-                              file_path=os.path.join(output_folder, f"hist_half_max_mutations_stacked_{name}_from.pdf"))
+                              file_path=os.path.join(output_folder, f"hist_half_max_mutations_stacked_{name}_from.{output_format}"))
     # plot mutations from to_dict as stacked histogram
     # for each mutation number, a stacked bar should appear showing the different mutations in different colors
     plot_dict_as_stacked_bars(to_dict,
                               title=f'Histogram of Mutations at Half Max Fitness for {name} (To)',
                               xlabel='Mutations at Half Max Fitness',
                               ylabel='Frequency',
-                              file_path=os.path.join(output_folder, f"hist_half_max_mutations_stacked_{name}_to.pdf"))
+                              file_path=os.path.join(output_folder, f"hist_half_max_mutations_stacked_{name}_to.{output_format}"))
 
 
-def plot_mutations_location(mutation_data_path: str, name: str, window_size: int = 11, plot_stacked: bool = True, plot_rolling: bool = True, output_folder: str = "."):
+def plot_mutations_location(mutation_data_path: str, name: str, output_format: str, window_size: int = 11, plot_stacked: bool = True, plot_rolling: bool = True, output_folder: str = "."):
     """Generate mutation location plots.
     
     Args:
@@ -327,25 +328,25 @@ def plot_mutations_location(mutation_data_path: str, name: str, window_size: int
                                   title=f'Histogram of Mutations Location for {name} (From)',
                                   xlabel='Position',
                                   ylabel='Frequency',
-                                  file_path=os.path.join(output_folder, f"hist_mutations_location_stacked_{name}_from.pdf"))
+                                  file_path=os.path.join(output_folder, f"hist_mutations_location_stacked_{name}_from.{output_format}"))
         plot_dict_as_stacked_bars(to_dict,
                                   title=f'Histogram of Mutations Location for {name} (To)',
                                   xlabel='Position',
                                   ylabel='Frequency',
-                                  file_path=os.path.join(output_folder, f"hist_mutations_location_stacked_{name}_to.pdf"))
+                                  file_path=os.path.join(output_folder, f"hist_mutations_location_stacked_{name}_to.{output_format}"))
         plot_dict_as_stacked_bars(diff_dict,
                                   title=f'Histogram of Mutations Location for {name} (Diff)',
                                   xlabel='Position',
                                   ylabel='Frequency',
-                                  file_path=os.path.join(output_folder, f"hist_mutations_location_stacked_{name}_diff.pdf"))
+                                  file_path=os.path.join(output_folder, f"hist_mutations_location_stacked_{name}_diff.{output_format}"))
     
     if plot_rolling:
-        make_line_plot_rolling_window(from_dict, f"{name}_from", window_size=window_size, output_folder=output_folder)
-        make_line_plot_rolling_window(to_dict, f"{name}_to", window_size=window_size, output_folder=output_folder)
-        make_line_plot_rolling_window(diff_dict, f"{name}_diff", window_size=window_size, output_folder=output_folder)
+        make_line_plot_rolling_window(from_dict, f"{name}_from", output_format=output_format, window_size=window_size, output_folder=output_folder)
+        make_line_plot_rolling_window(to_dict, f"{name}_to", output_format=output_format, window_size=window_size, output_folder=output_folder)
+        make_line_plot_rolling_window(diff_dict, f"{name}_diff", output_format=output_format, window_size=window_size, output_folder=output_folder)
 
 
-def plot_hist_mutation_conservation(mutation_data_path: str, name: str, generation: int = 1999, mutable_positions: int = 3000, output_folder: str = ".") -> None:
+def plot_hist_mutation_conservation(mutation_data_path: str, name: str, output_format: str, generation: int = 1999, mutable_positions: int = 3000, output_folder: str = ".") -> None:
     out_path = os.path.join(output_folder, f"conservation_statistics_{name}_gen_{generation}.json")
     if os.path.isfile(out_path):
         with open(out_path, 'r') as f:
@@ -361,7 +362,7 @@ def plot_hist_mutation_conservation(mutation_data_path: str, name: str, generati
     plt.xlabel('Conservation Statistic')
     plt.ylabel('Frequency')
     plt.title(f'Conservation Statistics for {name} at Generation {generation}')
-    plt.savefig(os.path.join(output_folder, f"hist_mutation_conservation_{name}_gen_{generation}.pdf"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_folder, f"hist_mutation_conservation_{name}_gen_{generation}.{output_format}"), dpi=300, bbox_inches='tight')
 
 
 def calculate_mutation_distances_single_gene(mutations: List[int]) -> Counter:
@@ -456,21 +457,20 @@ def analyze_range_single_gene(mutations: List[int]) -> Tuple[int, int, int, int,
         contained -= 1
     return min_first, max_last, start_90, end_90, start_50, end_50 #type: ignore
 
-def plot_mutation_distances(mutation_data_path: str, name: str, output_folder: str) -> None:
+def plot_mutation_distances(mutation_data_path: str, name: str, output_format: str, output_folder: str) -> None:
     # random_distribution = get_random_mutation_distributions()
     mutation_data = load_mutation_data(mutation_data_path)
     analyze_mutation_distances(mutation_data, output_folder, name)
     distances_distribution = calculate_mutation_distances(mutation_data)
     distances = sorted(distances_distribution.keys())
     counts = [distances_distribution[dist] for dist in distances]
-    plot_dist_hist(name, output_folder, distances, counts) # , random_distribution)
+    plot_dist_hist(name=name, output_folder=output_folder, distances=distances, counts=counts, output_format=output_format) # , random_distribution)
     # random_distribution_short = Counter({dist: count for dist, count in random_distribution.items() if dist <= 200})
     smaller_distances = [dist for dist in distances if dist <= 200]
     smaller_counts = [distances_distribution[dist] for dist in smaller_distances]
-    plot_dist_hist(f"{name}_smaller_distances", output_folder, smaller_distances, smaller_counts) #, random_distribution_short)
+    plot_dist_hist(name=f"{name}_smaller_distances", output_folder=output_folder, distances=smaller_distances, counts=smaller_counts, output_format=output_format) #, random_distribution_short)
 
-
-def plot_dist_hist(name, output_folder, distances, counts, random_distribution: Optional[Counter] = None):
+def plot_dist_hist(name, output_folder, distances, counts, output_format: str, random_distribution: Optional[Counter] = None):
     plt.clf()
     plt.figure(figsize=(12, 6))
     plt.bar(distances, counts, width=1.0, edgecolor='black')
@@ -486,7 +486,7 @@ def plot_dist_hist(name, output_folder, distances, counts, random_distribution: 
     plt.ylabel('Frequency')
     plt.title(f'Mutation Distances Distribution for {name}')
     plt.xlim(0, max(distances) + 1)
-    plt.savefig(os.path.join(output_folder, f"mutation_distances_{name}.pdf"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_folder, f"mutation_distances_{name}.{output_format}"), dpi=300, bbox_inches='tight')
     
 
 
@@ -498,7 +498,8 @@ def parse_args():
     parser.add_argument('--output_folder', '-o', help='Path to the output folder for saving results', default='.', required=False)
     parser.add_argument('--window_size', '-w', type=int, default=31, help='Window size for rolling mean plots (default: 31)')
     parser.add_argument('--generation', '-g', type=int, default=1999, help='Generation to analyze (default: 1999). Currently relevant for conservation statistics of mutations only.')
-    parser.add_argument("--mutable_positions", type=int, default=3000, help='Number of positions in which mutations can occur (default: 3000). Currently relevant for conservation statistics of mutations only.')
+    parser.add_argument("--mutable_positions", "-mp", type=int, default=3000, help='Number of positions in which mutations can occur (default: 3000). Currently relevant for conservation statistics of mutations only.')
+    parser.add_argument("--output_format", "-f", type=str, default="png", help="Output format for plots (e.g., pdf, png). Default is png.")
 
     # Analysis control flags - explicit inclusion
     parser.add_argument('--plot_half_max_stacked', action='store_true', help='Generate stacked histogram of mutations at half max fitness')
@@ -513,7 +514,10 @@ def parse_args():
     
     if not os.path.exists(args.mutation_data):
         raise FileNotFoundError(f"Mutation data file not found: {args.mutation_data}")
-    
+
+    args.output_format = args.output_format.lower().strip('.').strip()
+    if args.output_format not in ['png', 'pdf', 'jpg', 'jpeg', 'svg', "tiff"]:
+        raise ValueError(f"Unsupported output format: {args.output_format}. Supported formats are png, pdf, jpg, jpeg, svg.")
     return args
 
 
@@ -534,13 +538,13 @@ def main():
 
     if run_half_max_stacked:
         try:
-            plot_hist_half_max_mutations_stacked(args.mutation_data, args.name, args.output_folder)
+            plot_hist_half_max_mutations_stacked(mutation_data_path=args.mutation_data, name=args.name, output_format=args.output_format, output_folder=args.output_folder)
         except Exception as e:
             print(f"Error while plotting half max mutations stacked: {e}")
     
     if run_mutation_distances:
         try:
-            plot_mutation_distances(args.mutation_data, args.name, args.output_folder)
+            plot_mutation_distances(mutation_data_path=args.mutation_data, name=args.name, output_format=args.output_format, output_folder=args.output_folder)
         except Exception as e:
             print(f"Error while calculating mutation distances: {e}")
     
@@ -555,17 +559,18 @@ def main():
             plot_stacked, plot_rolling = True, True
 
         try:
-            plot_mutations_location(args.mutation_data, args.name, 
+            plot_mutations_location(mutation_data_path=args.mutation_data, name=args.name, 
                                   window_size=args.window_size,
                                   plot_stacked=plot_stacked,
                                   plot_rolling=plot_rolling,
-                                  output_folder=args.output_folder)
+                                  output_folder=args.output_folder,
+                                  output_format=args.output_format)
         except Exception as e:
             print(f"Error while plotting mutations location: {e}")
         
     if run_mutation_conservation:
         try:
-            plot_hist_mutation_conservation(mutation_data_path=args.mutation_data, name=args.name, generation=args.generation,
+            plot_hist_mutation_conservation(mutation_data_path=args.mutation_data, name=args.name, output_format=args.output_format, generation=args.generation,
                                              mutable_positions=args.mutable_positions, output_folder=args.output_folder)
         except Exception as e:
             print(f"Error while plotting mutation conservation: {e}")
