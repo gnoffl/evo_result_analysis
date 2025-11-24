@@ -381,11 +381,11 @@ def show_average_pareto_front(results_folder: str, output_format: str, output_fo
     # make the dots the same shade of blue as in the show_random_fronts, but the errorbars black
     plt.errorbar(avg_mutations, np.mean(fitnesses, axis=0),
                     yerr=np.std(fitnesses, axis=0), fmt='o', capsize=5, label='Average Pareto Front', color='#1f77b4', ecolor='black')
-    plt.xlabel('Number of Mutations', fontsize=20)
-    plt.ylabel('Normalized DeepCRE Output', fontsize=20)
-    plt.xticks(fontsize=20)
-    plt.yticks(fontsize=20)
-    plt.title('Average Pareto Front', fontsize=23)
+    plt.xlabel('Number of Mutations', fontsize=15)
+    plt.ylabel('Normalized DeepCRE Output', fontsize=15)
+    plt.xticks(fontsize=15)
+    plt.yticks(fontsize=15)
+    plt.title('Average Pareto Front', fontsize=17)
     run_name = os.path.basename(results_folder)
     plt.savefig(os.path.join(output_folder, f'average_pareto_front_{run_name}.{output_format}'), bbox_inches='tight', dpi=1000)
 
@@ -577,11 +577,11 @@ def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_
     bins = np.arange(0, max_mutations + 2) - 0.5  # to center bins on integers
     
     plt.hist(half_max_mutations, bins=bins, alpha=0.7) #type:ignore
-    plt.xlabel('Mutations at Half Max Effect', fontsize=20)
-    plt.xticks([0, 3, 6, 9, 12, 15, 18], fontsize=20)
-    plt.yticks(fontsize=20)
-    plt.ylabel('Frequency', fontsize=20)
-    plt.title('Histogram of Mutations at Half Max Effect', fontsize=23)
+    plt.xlabel('Mutations at Half Max Effect', fontsize=15)
+    plt.xticks([0, 3, 6, 9, 12, 15, 18], fontsize=15)
+    plt.yticks(fontsize=15)
+    plt.ylabel('Frequency', fontsize=15)
+    plt.title('Histogram of Mutations at Half Max Effect', fontsize=17)
     plt.savefig(os.path.join(output_folder, f'hist_half_max_mutations_{name}.{output_format}'), bbox_inches='tight', dpi=1000)
 
 
