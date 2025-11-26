@@ -377,7 +377,7 @@ def show_average_pareto_front(results_folder: str, output_format: str, output_fo
 
     # plot the average pareto front with strandard deviation
     plt.clf()
-    plt.figure()
+    plt.figure(figsize=(8, 5))
     # make the dots the same shade of blue as in the show_random_fronts, but the errorbars black
     plt.errorbar(avg_mutations, np.mean(fitnesses, axis=0),
                     yerr=np.std(fitnesses, axis=0), fmt='o', capsize=5, label='Average Pareto Front', color='#1f77b4', ecolor='black')
@@ -576,6 +576,7 @@ def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_
     max_mutations = round(max(half_max_mutations)) if half_max_mutations else 0
     bins = np.arange(0, max_mutations + 2) - 0.5  # to center bins on integers
     
+    plt.figure(figsize=(8, 5))
     plt.hist(half_max_mutations, bins=bins, alpha=0.7) #type:ignore
     plt.xlabel('Mutations at Half Max Effect', fontsize=15)
     plt.xticks([0, 3, 6, 9, 12, 15, 18], fontsize=15)
