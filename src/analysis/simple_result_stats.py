@@ -555,6 +555,41 @@ def plot_half_max_mutations_vs_initial_fitness(stats: Dict[str, Dict[str, Any]],
     plt.savefig(os.path.join(output_folder, f'half_max_mutations_vs_initial_fitness_{name}.{output_format}'), bbox_inches='tight')
 
 
+def distribution_half_max_mutations(stats_path: str) -> None:
+    """calculates the distribution of the number of mutations at half max effect
+
+    Args:
+        stats_path (str): Path to the stats JSON file.
+    """
+    with open(stats_path, 'r') as f:
+        stats = json.load(f)
+    
+    half_max_mutation_counts = {}
+    for stat in stats.values():
+        if 'num_mutations_half_max_effect' in stat:
+            count = stat['num_mutations_half_max_effect']
+            if count not in half_max_mutation_counts:
+                half_max_mutation_counts[count] = 0
+            half_max_mutation_counts[count] += 1
+    gene_counts = sum(half_max_mutation_counts.values())
+    print(gene_counts)
+    sorted_counts = sorted(half_max_mutation_counts.items())
+    print(sorted_counts)
+    print("Distribution of mutations at half max effect (mutations, frequency, percentage):")
+    for count, freq in sorted_counts:
+        percentage = round(freq / gene_counts * 100, 2)
+        print(f"  {count}: {freq} ({percentage}%)")
+    cumulative_percentages = []
+    cumulative = 0.0
+    for count, freq in sorted_counts:
+        percentage = freq / gene_counts * 100
+        cumulative += percentage
+        cumulative_percentages.append((count, round(cumulative, 2)))
+    print("Cumulative distribution of mutations at half max effect (mutations, cumulative percentage):")
+    for count, cum_percentage in cumulative_percentages:
+        print(f"  {count}: {cum_percentage}%")
+
+
 def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".") -> None:
     """Create a histogram of the number of mutations at half max effect.
 
@@ -723,6 +758,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # distribution_half_max_mutations("/home/gernot/ARCitect/ARCs/genRE/assays/Evolution/protocols/paper/analysis/GOF_LOF/GOF/GOF_single_mutation/stats_GOF_single_mutation.json")
     # result = calculate_loss_over_generations_single_gene(results_folder="/home/gernot/Code/PhD_Code/Evolution/results/diverse_genes_arabidopsis_250611_105634_010904", gene="1_AT1G09440_gene:3048006-3045258_250611_121447_109863")
     # result = [(k, v) for k, v in result.items()]
     # result = sorted(result, key=lambda x: x[0])
