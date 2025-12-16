@@ -22,7 +22,11 @@ from analysis.compare_methods import (
     rank_by_mutation_count, compare_diversity_methods, get_ranks_from_sorted,
     calculate_conservation_statistic_pareto_front, calculate_conservation_per_method,
     get_sampled_pareto_fronts, rank_by_conservation,
+    get_all_mutations, get_method_vectors,
+    pca_transform_single_method, plot_pca_single_method,
+    pca_visualization,
 )
+from analysis.compare_methods import pca_transform_all_methods, plot_pca_all_methods
 
 
 class TestCompareMethods(unittest.TestCase):
@@ -259,7 +263,7 @@ class TestCompareMethods(unittest.TestCase):
             "method2": [[(0.6, 10), (0.4, 20)], [(0.5, 12), (0.3, 22)]]
         }
         
-        plot_normalized_fronts(normalized_fronts, self.temp_dir)
+        plot_normalized_fronts(normalized_fronts, self.temp_dir, output_format="png")
         
         # Check that matplotlib functions were called
         self.assertEqual(mock_errorbar.call_count, 2)  # One call per method
@@ -277,7 +281,7 @@ class TestCompareMethods(unittest.TestCase):
         gene_name = "test_gene"
         tag = "test_tag"
         
-        plot_interesting_pareto_fronts_values(fronts, gene_name, tag, self.temp_dir)
+        plot_interesting_pareto_fronts_values(fronts, gene_name, tag, self.temp_dir, output_format="png")
         
         # Check that plot was called for each method
         self.assertEqual(mock_plot.call_count, 2)
@@ -319,7 +323,7 @@ class TestCompareMethods(unittest.TestCase):
         gene_name = "test_gene"
         tag = "test_tag"
         
-        plot_differences_between_fronts(fronts, gene_name, tag, self.temp_dir)
+        plot_differences_between_fronts(fronts, gene_name, tag, self.temp_dir, output_format="png")
         
         # Check that plot was called for each method
         self.assertEqual(mock_plot.call_count, 2)
@@ -337,11 +341,11 @@ class TestCompareMethods(unittest.TestCase):
         gene_name = "test_gene"
         tag = "test_tag"
         
-        plot_interesting_pareto_fronts(fronts, gene_name, tag, self.temp_dir)
+        plot_interesting_pareto_fronts(fronts, gene_name, tag, self.temp_dir, output_format="png")
         
         # Check that both plotting functions were called
-        mock_plot_values.assert_called_once_with(fronts, gene_name, tag, self.temp_dir)
-        mock_plot_differences.assert_called_once_with(fronts, gene_name, tag, self.temp_dir)
+        mock_plot_values.assert_called_once_with(fronts=fronts, gene_name=gene_name, tag=tag, output_dir=self.temp_dir, output_format="png")
+        mock_plot_differences.assert_called_once_with(fronts=fronts, gene_name=gene_name, tag=tag, output_dir=self.temp_dir, output_format="png")
     
     def test_compare_methods_progress(self):
         """Test compare_methods_progress function."""
@@ -368,7 +372,7 @@ class TestCompareMethods(unittest.TestCase):
             "method2": os.path.join(self.temp_dir, "method2")
         }
         
-        compare_methods_final(results_paths, self.temp_dir, max_mutations=90)
+        compare_methods_final(results_paths, self.temp_dir, max_mutations=90, output_format="png")
         
         # Check that plotting functions were called
         mock_plot_normalized.assert_called_once()
@@ -386,7 +390,7 @@ class TestCompareMethods(unittest.TestCase):
         }
         
         with self.assertRaises(FileNotFoundError):
-            compare_methods_final(results_paths, self.temp_dir)
+            compare_methods_final(results_paths, self.temp_dir, output_format="png")
     
     def test_update_ranks_and_areas(self):
         """Test updating ranks and areas aggregation."""
@@ -695,6 +699,129 @@ class TestCompareDiversity(unittest.TestCase):
         self.assertAlmostEqual(comparison["best"]["m1"], 0.5)
         self.assertAlmostEqual(comparison["best"]["m2"], 0.5)
 
+class TestMutationVectorsAndPCA(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.add_mutation_data()
+        # Prepare input_data mapping for pca_visualization
+        self.input_data = {
+            method: (f"/dummy/path/{method}_results", f"/dummy/path/{method}_mutations.json")
+            for method in self.method_dict.keys()
+        }
+    
+    def tearDown(self) -> None:
+        shutil.rmtree(self.temp_dir)
+    
+    def add_mutation_data(self):
+        """Create sample mutation data for two methods and one gene."""
+        self.method_dict = {
+            "m1": {
+                "g1": MutationsGene.from_dict({
+                    "reference_sequence": "AAAAAA",
+                    2000: ["1AT4AG|0.6", "3AC|0.5", "1AT|0.4", "|0.3"],
+                    1001: ["2AT|0.7"]
+                })
+            },
+            "m2": {
+                "g1": MutationsGene.from_dict({
+                    "reference_sequence": "AAAAAA",
+                    2000: ["1AT|0.4", "2AG|0.35", "|0.3"],
+                    1001: ["1AT|0.6"]
+                })
+            }
+        }
+
+    def test_get_all_mutations(self):
+        """Ensure all mutations union and vectors per element match membership in element.mutations."""
+        gene = "g1"
+        # get_all_mutations should return union across methods (expect 3 unique positions)
+        all_muts = get_all_mutations(self.method_dict, gene)
+        self.assertIsInstance(all_muts, set)
+        self.assertEqual(len(all_muts), 4)
+        for mut in [(1, "A", "T"), (4, "A", "G"), (3, "A", "C"), (2, "A", "G")]:
+            self.assertIn(mut, all_muts)
+
+    def test_get_method_vectors(self):
+        gene = "g1"
+        # Stable order for deterministic vectors
+        all_muts = [(1, "A", "T"), (2, "A", "G"), (3, "A", "C"), (4, "A", "G")]
+        vectors = get_method_vectors(self.method_dict, gene, all_muts)
+        self.assertIn("m1", vectors)
+        self.assertIn("m2", vectors)
+        # For each method, for each individual, sum(vector) equals len(element.mutations)
+        self.assertEqual(vectors["m1"], [[1, 0, 0, 1], [0, 0, 1, 0], [1, 0, 0, 0], [0, 0, 0, 0]])
+        self.assertEqual(vectors["m2"], [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0]])
+
+    def test_pca_transform_single_method(self):
+        """pca_transform_single_method should fit and transform and return expected shapes."""
+        vectors = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]
+        PCA_obj, transformed = pca_transform_single_method(vectors)
+        self.assertEqual(transformed.shape, (4, 2))
+        self.assertIsNotNone(PCA_obj)
+        # first two vectors should be represented by one principal component, same for last two
+        self.assertTrue((transformed[0, 0] == 0 and transformed[1, 0] == 0) or (transformed[0, 1] == 0 and transformed[1, 1] == 0))
+        self.assertTrue((transformed[2, 0] == 0 and transformed[3, 0] == 0) or (transformed[2, 1] == 0 and transformed[3, 1] == 0))
+    
+
+    def test_pca_transform_all_methods(self):
+        """pca_transform_all_methods should fit and transform and return expected shapes."""
+        method_vectors = {
+            "m1": [[1, 0, 0], [0, 1, 0], [1, 1, 0]],
+            "m2": [[0, 0, 1], [0, 0, 2]],
+        }
+        PCA_obj, transformed = pca_transform_all_methods(method_vectors)
+        self.assertIsNotNone(PCA_obj)
+        self.assertIn("m1", transformed)
+        self.assertIn("m2", transformed)
+        self.assertEqual(transformed["m1"].shape, (3, 2))
+        self.assertEqual(transformed["m2"].shape, (2, 2))
+
+    def test_plot_pca_single_method_writes_file(self):
+        """plot_pca_single_method should write a file."""
+        # Use the real function with simple vectors by mocking the transform function
+        with patch('analysis.compare_methods.pca_transform_single_method') as mock_tx:
+            mock_pca = MagicMock()
+            mock_pca.explained_variance_ratio_ = np.array([0.6, 0.4])
+            transformed = np.array([[0.1, 0.2], [0.3, 0.4]])
+            mock_tx.return_value = (mock_pca, transformed)
+            plot_pca_single_method([[0, 1], [1, 0]], gene="g1", method="m1", output_dir=self.temp_dir, output_format="png")
+        out = os.path.join(self.temp_dir, "pca_m1_g1.png")
+        self.assertTrue(os.path.exists(out))
+
+    def test_plot_pca_all_methods_writes_file(self):
+        """plot_pca_all_methods should write a file."""
+        with patch('analysis.compare_methods.pca_transform_all_methods') as mock_tx:
+            mock_pca = MagicMock()
+            mock_pca.explained_variance_ratio_ = np.array([0.55, 0.45])
+            mock_tx.return_value = (mock_pca, {
+                "m1": np.array([[0.1, 0.2], [0.3, 0.4]]),
+                "m2": np.array([[0.5, 0.6]]),
+            })
+            method_vectors = {"m1": [[0, 1], [1, 1]], "m2": [[1, 0]]}
+            plot_pca_all_methods(method_vectors, gene="g1", output_dir=self.temp_dir, output_format="png")
+        out = os.path.join(self.temp_dir, "pca_all_methods_g1.png")
+        self.assertTrue(os.path.exists(out))
+
+    @patch('analysis.compare_methods.plot_pca_single_method')
+    @patch('analysis.compare_methods.plot_pca_all_methods')
+    @patch('analysis.compare_methods.load_mutation_data')
+    @patch('analysis.compare_methods.random.sample')
+    def test_pca_visualization_calls_plots(self, mock_sample, mock_load, mock_plot_all, mock_plot_single):
+        """pca_visualization should call both plotting routines for sampled genes."""
+        # Mock load_mutation_data to return our pre-built method_dict
+        mock_load.return_value = (self.method_dict, ["g1"])
+        # Make sure we sample both genes
+        mock_sample.side_effect = lambda genes, k: list(genes)
+        
+        # Use dummy input_data since load_mutation_data is mocked
+        dummy_input = {"m1": ("/dummy/path", "/dummy/path/m1_mutations.json")}
+        pca_visualization(dummy_input, output_dir=self.temp_dir)
+        
+        # We have 2 genes; plot_all called once per gene
+        self.assertEqual(mock_plot_all.call_count, 1)
+        # plot_single called once per method per gene (2 methods * 2 genes)
+        self.assertEqual(mock_plot_single.call_count, 2)
+
 
 class TestCompareMethodsIntegration(unittest.TestCase):
     """Integration tests for compare_methods module."""
@@ -751,7 +878,7 @@ class TestCompareMethodsIntegration(unittest.TestCase):
         }
         
         # This should complete without errors
-        compare_methods_final(results_paths, self.temp_dir, max_mutations=15)
+        compare_methods_final(results_paths, self.temp_dir, max_mutations=15, output_format="png")
         
         # Check that output files were created
         expected_file = os.path.join(self.temp_dir, "normalized_pareto_fronts_comparison.png")

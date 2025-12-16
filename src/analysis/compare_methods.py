@@ -1,12 +1,14 @@
 import argparse
 import os
 import json
+import random
 import pandas as pd
 import re
 import numpy as np
 import math
 from typing import Any, List, Dict, Optional, Tuple
 from matplotlib import pyplot as plt
+import sklearn.decomposition as decomposition
 
 from analysis.simple_result_stats import expand_pareto_front
 from analysis.summarize_mutations import MutatedSequence, MutationsGene
@@ -362,6 +364,79 @@ def compare_diversity_methods(input_data: Dict[str, Tuple[str, str]], output_dir
     with open(os.path.join(output_dir, "diversity_comparison.json"), 'w') as f:
         json.dump(results_dict, f, indent=2)
 
+def get_all_mutations(method_dict, gene) -> set:
+    all_mutations = set()
+    for method, mutation_data in method_dict.items():
+        gene_data: MutationsGene = mutation_data[gene]
+        final_generation = max([int(gen) for gen in gene_data.generation_dict.keys()])
+        mutation_list = gene_data.get_all_mutations_generation(generation=final_generation)
+        all_mutations.update(mutation_list)
+    return all_mutations
+
+def get_method_vectors(method_dict, gene, all_mutations):
+    method_vectors = {}
+    for method, mutation_data in method_dict.items():
+        gene_data: MutationsGene = mutation_data[gene]
+        final_generation = max([int(gen) for gen in gene_data.generation_dict.keys()])
+        vectors = []
+        for element in gene_data.generation_dict[final_generation]:
+            vector_representation = [1 if (mutation in element.mutations) else 0 for mutation in all_mutations]
+            vectors.append(vector_representation)
+        method_vectors[method] = vectors
+    return method_vectors
+
+def pca_transform_all_methods(method_vectors: Dict[str, List[List[int]]]):
+    PCA_all_methods = decomposition.PCA(n_components=2)
+    all_methods_vectors = [vector for vectors in method_vectors.values() for vector in vectors]
+    all_methods_vectors = np.array(all_methods_vectors)
+    PCA_all_methods.fit(all_methods_vectors)
+    transformed_vectors = {}
+    for method, vectors in method_vectors.items():
+        vectors = np.array(vectors)
+        transformed = PCA_all_methods.transform(vectors)
+        transformed_vectors[method] = transformed
+    return PCA_all_methods, transformed_vectors
+
+def plot_pca_all_methods(method_vectors: Dict[str, List[List[int]]], gene: str, output_dir: str, output_format: str):
+    PCA_all_methods, transformed_vectors = pca_transform_all_methods(method_vectors)
+    plt.clf()
+    for method, transformed in transformed_vectors.items():
+        plt.scatter(transformed[:,0], transformed[:,1], label=method, alpha=0.5)
+    explained_variance = PCA_all_methods.explained_variance_ratio_
+    plt.xlabel(f"PCA Component 1 ({explained_variance[0] * 100:.1f}% variance)")
+    plt.ylabel(f"PCA Component 2 ({explained_variance[1] * 100:.1f}% variance)")
+    plt.title(f"PCA of Mutation Vectors for {gene} (All Methods)")
+    plt.legend()
+    plt.savefig(os.path.join(output_dir, f"pca_all_methods_{gene}.{output_format}"), dpi=300, bbox_inches='tight')
+    plt.close()
+
+def pca_transform_single_method(vectors: List[List[int]]):
+    PCA_method = decomposition.PCA(n_components=2)
+    np_vectors = np.array(vectors)
+    PCA_method.fit(np_vectors)
+    transformed = PCA_method.transform(np_vectors)
+    return PCA_method, transformed
+
+def plot_pca_single_method(vectors: List[List[int]], gene: str, method: str, output_dir: str, output_format: str):
+    PCA_method, transformed = pca_transform_single_method(vectors)
+    explained_variance = PCA_method.explained_variance_ratio_
+    plt.clf()
+    plt.scatter(transformed[:,0], transformed[:,1], alpha=0.5)
+    plt.xlabel(f"PCA Component 1 ({explained_variance[0] * 100:.1f}% variance)")
+    plt.ylabel(f"PCA Component 2 ({explained_variance[1] * 100:.1f}% variance)")
+    plt.title(f"PCA of Mutation Vectors for {gene} ({method})")
+    plt.savefig(os.path.join(output_dir, f"pca_{method}_{gene}.{output_format}"), dpi=300, bbox_inches='tight')
+    plt.close()
+
+def pca_visualization(input_data: Dict[str, Tuple[str, str]], output_dir: str) -> None:
+    method_dict, gene_names = load_mutation_data(input_data)
+    tested_genes = random.sample(gene_names, min(4, len(gene_names)))
+    for gene in tested_genes:
+        all_mutations = get_all_mutations(method_dict, gene)
+        method_vectors = get_method_vectors(method_dict, gene, all_mutations)
+        plot_pca_all_methods(method_vectors=method_vectors, gene=gene, output_dir=output_dir, output_format="png")
+        for method, vectors in method_vectors.items():
+            plot_pca_single_method(vectors=vectors, gene=gene, method=method, output_dir=output_dir, output_format="png")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Compare evolutionary methods based on their results.")
@@ -385,7 +460,7 @@ def parse_args():
     mutation_data = {}
     if parsed.mutation_data:
         mutation_data = {method: (results_path, mutation_path) for method, mutation_path, results_path in zip(parsed.methods, parsed.mutation_data, parsed.results_paths)}
-    results_paths = {method: path for method, path in zip(parser.parse_args().methods, parser.parse_args().results_paths)}
+    results_paths = {method: path for method, path in zip(parsed.methods, parsed.results_paths)}
     parsed.output_format = parsed.output_format.lower().strip('.').strip()
     if parsed.output_format not in ['png', 'pdf', 'jpg', 'jpeg', 'tiff', "svg"]:
         raise ValueError("Unsupported output format. Supported formats are: png, pdf, jpg, jpeg, tiff, svg.")
