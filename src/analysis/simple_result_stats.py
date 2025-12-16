@@ -68,7 +68,7 @@ def get_stats_per_gene(results_folder: str, name: str, output_folder: str = ".")
     print(f"creating stats for {name} in {output_folder}")
     output_path = os.path.join(output_folder, f'stats_{name}.json')
     if os.path.exists(output_path):
-        print(f"Stats file {output_path} already exists. If you dont want calculations to be redone, you can specify --stats_file next time.")
+        raise FileExistsError(f"Stats file {output_path} already exists. If you dont want calculations to be redone, you can specify --stats_file next time.")
 
     stats = {}
     print(f"Analyzing results in {results_folder}...")
