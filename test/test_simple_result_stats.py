@@ -453,7 +453,7 @@ class TestSimpleResultStats(unittest.TestCase):
         """Test start vs max fitness visualization."""
         stats = get_stats_per_gene(self.results_folder, "test", self.temp_dir)
         
-        visualize_start_vs_max_fitness(stats, "test", self.temp_dir)
+        visualize_start_vs_max_fitness(stats, "test", output_folder=self.temp_dir, output_format="pdf")
         
         # Check that output file was created
         output_file = os.path.join(self.temp_dir, "start_vs_final_fitness_test.pdf")
@@ -463,7 +463,7 @@ class TestSimpleResultStats(unittest.TestCase):
         """Test start vs max fitness by mutations visualization."""
         stats = get_stats_per_gene(self.results_folder, "test", self.temp_dir)
         
-        visualize_start_vs_max_fitness_by_mutations(stats, "test", self.temp_dir)
+        visualize_start_vs_max_fitness_by_mutations(stats, "test", output_folder=self.temp_dir, output_format="png")
         
         # Check that both output files were created
         absolute_file = os.path.join(self.temp_dir, "start_vs_final_fitness_by_mutations_test_absolute.png")
@@ -489,12 +489,12 @@ class TestSimpleResultStats(unittest.TestCase):
         }
         
         # Test absolute values
-        draw_visualize_start_vs_max_fitness_by_mutations(stats, "test_abs", relative=False, output_folder=self.temp_dir)
+        draw_visualize_start_vs_max_fitness_by_mutations(stats, "test_abs", relative=False, output_folder=self.temp_dir, output_format="png")
         output_file_abs = os.path.join(self.temp_dir, "start_vs_final_fitness_by_mutations_test_abs.png")
         self.assertTrue(os.path.exists(output_file_abs))
         
         # Test relative values
-        draw_visualize_start_vs_max_fitness_by_mutations(stats, "test_rel", relative=True, output_folder=self.temp_dir)
+        draw_visualize_start_vs_max_fitness_by_mutations(stats, "test_rel", relative=True, output_folder=self.temp_dir, output_format="png")
         output_file_rel = os.path.join(self.temp_dir, "start_vs_final_fitness_by_mutations_test_rel.png")
         self.assertTrue(os.path.exists(output_file_rel))
     
@@ -516,7 +516,7 @@ class TestSimpleResultStats(unittest.TestCase):
     
     def test_show_random_fronts(self):
         """Test showing random pareto fronts."""
-        show_random_fronts(self.results_folder, num_samples=2, output_folder=self.temp_dir)
+        show_random_fronts(self.results_folder, num_samples=2, output_folder=self.temp_dir, output_format="png")
         
         # Check that output folder and files were created
         output_folder = os.path.join(self.temp_dir, f"random_pareto_fronts_{os.path.basename(self.results_folder)}")
@@ -528,7 +528,7 @@ class TestSimpleResultStats(unittest.TestCase):
     
     def test_show_average_pareto_front(self):
         """Test showing average pareto front."""
-        show_average_pareto_front(self.results_folder, self.temp_dir, max_number_mutation=10)
+        show_average_pareto_front(self.results_folder, output_folder=self.temp_dir, max_number_mutation=10, output_format="pdf")
         
         # Check that output file was created
         run_name = os.path.basename(self.results_folder)
@@ -539,7 +539,7 @@ class TestSimpleResultStats(unittest.TestCase):
         """Test plotting loss over generations."""
         plot_loss_over_generations(
             self.results_loss_vis, "test", max_number_mutation=5, 
-            last_generation=1999, output_folder=self.temp_dir
+            last_generation=1999, output_folder=self.temp_dir, output_format="png"
         )
         
         # Check that output file was created
@@ -550,7 +550,7 @@ class TestSimpleResultStats(unittest.TestCase):
         """Test plotting half max mutations vs initial fitness."""
         stats = get_stats_per_gene(self.results_folder, "test", self.temp_dir)
         
-        plot_half_max_mutations_vs_initial_fitness(stats, "test", self.temp_dir)
+        plot_half_max_mutations_vs_initial_fitness(stats, "test", output_folder=self.temp_dir, output_format="png")
         
         # Check that output file was created
         output_file = os.path.join(self.temp_dir, "half_max_mutations_vs_initial_fitness_test.png")
@@ -558,9 +558,9 @@ class TestSimpleResultStats(unittest.TestCase):
     
     def test_hist_half_max_mutations(self):
         """Test histogram of half max mutations."""
-        stats = get_stats_per_gene(self.results_folder, "test", self.temp_dir)
+        stats = get_stats_per_gene(self.results_folder, "test", output_folder=self.temp_dir)
         
-        hist_half_max_mutations(stats, "test", self.temp_dir)
+        hist_half_max_mutations(stats, "test", output_folder=self.temp_dir, output_format="png")
         
         # Check that output file was created
         output_file = os.path.join(self.temp_dir, "hist_half_max_mutations_test.png")
@@ -574,7 +574,7 @@ class TestSimpleResultStats(unittest.TestCase):
             json.dump({}, f)
         
         with self.assertRaises(FileExistsError):
-            get_stats_per_gene(self.results_folder, "test_exists", self.temp_dir)
+            get_stats_per_gene(self.results_folder, "test_exists", output_folder=self.temp_dir)
     
     def test_get_stats_per_gene_skip_non_directory(self):
         """Test that get_stats_per_gene skips non-directory files."""
@@ -704,7 +704,7 @@ class TestSimpleResultStats(unittest.TestCase):
         }
         
         # Should not crash and should only plot gene1
-        plot_half_max_mutations_vs_initial_fitness(stats, "test_missing", self.temp_dir)
+        plot_half_max_mutations_vs_initial_fitness(stats, "test_missing", output_folder=self.temp_dir, output_format="png")
         
         # Check that output file was created
         output_file = os.path.join(self.temp_dir, "half_max_mutations_vs_initial_fitness_test_missing.png")
@@ -724,7 +724,7 @@ class TestSimpleResultStats(unittest.TestCase):
         }
         
         # Should not crash and should only use gene1
-        hist_half_max_mutations(stats, "test_missing", self.temp_dir)
+        hist_half_max_mutations(stats, "test_missing", output_folder=self.temp_dir, output_format="png")
         
         # Check that output file was created
         output_file = os.path.join(self.temp_dir, "hist_half_max_mutations_test_missing.png")
@@ -741,7 +741,7 @@ class TestSimpleResultStats(unittest.TestCase):
         }
         
         # Should not crash even with no valid data
-        hist_half_max_mutations(stats, "test_empty", self.temp_dir)
+        hist_half_max_mutations(stats, "test_empty", output_folder=self.temp_dir, output_format="png")
         
         # Check that output file was created (even if plot is empty)
         output_file = os.path.join(self.temp_dir, "hist_half_max_mutations_test_empty.png")
@@ -750,7 +750,7 @@ class TestSimpleResultStats(unittest.TestCase):
     def test_show_random_fronts_more_samples_than_genes(self):
         """Test show_random_fronts when requesting more samples than available genes."""
         # Request more samples than we have genes (3)
-        show_random_fronts(self.results_folder, num_samples=10, output_folder=self.temp_dir)
+        show_random_fronts(self.results_folder, num_samples=10, output_folder=self.temp_dir, output_format="png")
         
         # Should still work and show all available genes
         output_folder = os.path.join(self.temp_dir, f"random_pareto_fronts_{os.path.basename(self.results_folder)}")

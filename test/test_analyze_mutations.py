@@ -259,7 +259,7 @@ class TestAnalyzeMutations(unittest.TestCase):
                            "G": np.random.randint(0, 5), "T": np.random.randint(0, 5)}
         
         make_line_plot_rolling_window(
-            test_data, "test", window_size=11, output_folder=self.temp_dir
+            test_data, "test", window_size=11, output_folder=self.temp_dir, output_format="pdf"
         )
         
         # Check that the output file was created
@@ -284,7 +284,7 @@ class TestAnalyzeMutations(unittest.TestCase):
         mock_mutations_gene.from_dict.return_value = mock_gene_instance
         
         plot_hist_half_max_mutations_stacked(
-            self.mutation_file, "test", output_folder=self.temp_dir
+            self.mutation_file, "test", output_folder=self.temp_dir, output_format="pdf"
         )
         
         # Check that the output files were created
@@ -310,7 +310,7 @@ class TestAnalyzeMutations(unittest.TestCase):
         
         # Test with both plots enabled
         plot_mutations_location(
-            self.mutation_file, "test", window_size=11, 
+            self.mutation_file, "test", window_size=11, output_format="pdf",
             plot_stacked=True, plot_rolling=True, output_folder=self.temp_dir
         )
         
@@ -336,7 +336,7 @@ class TestAnalyzeMutations(unittest.TestCase):
         """Test error handling when no plot type is selected."""
         with self.assertRaises(ValueError) as context:
             plot_mutations_location(
-                self.mutation_file, "test", plot_stacked=False, plot_rolling=False
+                self.mutation_file, "test", plot_stacked=False, plot_rolling=False, output_format="pdf",
             )
         self.assertIn("At least one of plot_stacked or plot_rolling must be True", str(context.exception))
     
@@ -347,7 +347,7 @@ class TestAnalyzeMutations(unittest.TestCase):
         mock_calc_stats.return_value = mock_stats
         
         plot_hist_mutation_conservation(
-            self.mutation_file, "test", generation=1999, 
+            self.mutation_file, "test", generation=1999, output_format="pdf",
             mutable_positions=3000, output_folder=self.temp_dir
         )
         
@@ -366,7 +366,7 @@ class TestAnalyzeMutations(unittest.TestCase):
             json.dump(test_stats, f)
         
         plot_hist_mutation_conservation(
-            self.mutation_file, "test", generation=1999, 
+            self.mutation_file, "test", generation=1999, output_format="pdf",
             mutable_positions=3000, output_folder=self.temp_dir
         )
         
@@ -433,7 +433,7 @@ class TestAnalyzeMutations(unittest.TestCase):
         
         # Import the function for testing
         
-        plot_mutation_distances(self.mutation_file, "test", self.temp_dir)
+        plot_mutation_distances(self.mutation_file, "test", output_folder=self.temp_dir, output_format="pdf")
         
         # Verify that calculate_mutation_distances was called
         mock_calc_distances.assert_called_once()
@@ -549,7 +549,7 @@ class TestAnalyzeMutations(unittest.TestCase):
         distances = [1, 2, 3, 4, 5]
         counts = [10, 8, 6, 4, 2]
         
-        plot_dist_hist("test", self.temp_dir, distances, counts)
+        plot_dist_hist("test", self.temp_dir, distances, counts, output_format="pdf")
         
         # Check that matplotlib functions were called
         mock_figure.assert_called_once()
@@ -565,7 +565,7 @@ class TestAnalyzeMutations(unittest.TestCase):
         counts = [10, 8, 6, 4, 2]
         random_dist = Counter({1: 5, 2: 4, 3: 3, 4: 2, 5: 1})
         
-        plot_dist_hist("test", self.temp_dir, distances, counts, random_dist)
+        plot_dist_hist("test", output_folder=self.temp_dir, distances=distances, counts=counts, random_distribution=random_dist, output_format="pdf")
         
         # Check that matplotlib functions were called
         mock_figure.assert_called_once()
@@ -725,7 +725,7 @@ class TestAnalyzeMutationsIntegration(unittest.TestCase):
         
         # Test histogram plotting
         plot_hist_mutation_conservation(
-            test_file, "histogram_test", generation=1999, 
+            test_file, "histogram_test", generation=1999, output_format="pdf",
             mutable_positions=3000, output_folder=self.temp_dir
         )
         
