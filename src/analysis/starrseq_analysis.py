@@ -85,7 +85,7 @@ def visualize_simple_2():
 
     # --- Plot ---
     plt.figure(figsize=(7, 5*7/8))
-    sns.set_context("poster", font_scale=1.0)  # slightly larger, nice for presentations
+    sns.set_context("poster", font_scale=0.8)  # slightly larger, nice for presentations
 
     ax = sns.boxplot(
         x="TF", y="enrichment", hue="binding", data=data,
@@ -122,7 +122,7 @@ def visualize_simple_2():
             )
 
     # Legend (explicit title)
-    plt.legend(title="Binding status", loc="lower center", bbox_to_anchor=(1.3, 0.57), fontsize=20, title_fontsize=20)
+    plt.legend(title="Binding status", loc="lower center", bbox_to_anchor=(1.2, 0.67), fontsize=15, title_fontsize=15)
 
     # Title
     plt.title("Enrichment Binding vs Non-binding")
@@ -726,8 +726,8 @@ if __name__ == "__main__":
     # make_deepCIS_predictions()
     # find_motifs()
     # add_starrseq_results()
-    # starrseq_analysis_deep()
-    visualize_simple_2()
+    starrseq_analysis_deep()
+    # visualize_simple_2()
 
 # TODO: do changes in flanking sites influence which TFs bind?
 #     TODO: More general: how do ALL positions influence which TFs bind?
