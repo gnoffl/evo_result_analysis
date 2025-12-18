@@ -465,7 +465,12 @@ def visualize_progress(generation_losses: Dict[str, Dict[int, List[float]]], out
     for method, gen_losses in generation_losses.items():
         generations = sorted(gen_losses.keys())
         avg_losses = [np.mean(gen_losses[gen]) for gen in generations]
-        plt.scatter(generations, avg_losses, label=method)
+        std_losses = [np.std(gen_losses[gen]) for gen in generations]
+        std_losses = np.array(std_losses)
+        for i in range(len(std_losses)):
+            if i % 1000 != 10:
+                std_losses[i] = np.nan
+        plt.errorbar(generations, avg_losses, yerr=std_losses, label=method)
     plt.xlabel("Generation")
     plt.ylabel("Average Loss to Best Front")
     plt.title("Method Progress Over Generations")
