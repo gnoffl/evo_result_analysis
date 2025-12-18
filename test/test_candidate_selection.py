@@ -657,6 +657,7 @@ class TestCandidateSelection(unittest.TestCase):
             data[f"best_sequence_for_{mutation}_mutations"] = ["SEQ1", "SEQ2", "SEQ3"]
             data[f"reference_sequence_single"] = ["REF1", "REF2", "REF3"]
             data[f"start_fitness_single"] = [0.1, 0.2, 0.0]
+            data["final_fitness_single"] = [0.6, 0.5, 0.8]
         merged = pd.DataFrame(data, index=["gene1", "gene2", "gene3"])
         
         result = selected_per_mutation(merged, n_candidates=2)
@@ -682,7 +683,8 @@ class TestCandidateSelection(unittest.TestCase):
             "best_sequence_for_1_mutations": ["SEQ1", "SEQ3"],
             "best_sequence_for_2_mutations": ["SEQ2", "SEQ4"],
             "reference_sequence_single": ["REF1", "REF2"],
-            "start_fitness_single": [0.1, 0.2]
+            "start_fitness_single": [0.1, 0.2],
+            "final_fitness_single": [0.6, 0.8]
         }
         merged = pd.DataFrame(data, index=["gene1", "gene2"])
         
@@ -704,8 +706,6 @@ class TestCandidateSelection(unittest.TestCase):
     def test_final_selection(self, mock_load):
         """Test final selection process."""
         # Mock loaded data
-        single_data = {}
-        multi_data = {}
         single_data = pd.DataFrame({
             "fitness_delta_for_1_mutations": [0.1, 0.2],
             "fitness_delta_for_2_mutations": [0.3, 0.2],
@@ -724,7 +724,8 @@ class TestCandidateSelection(unittest.TestCase):
             "sequence_for_15_mutations": ["SEQ7", "SEQ15"],
             "sequence_for_20_mutations": ["SEQ8", "SEQ16"],
             "reference_sequence": ["REF1", "REF2"],
-            "start_fitness": [0.1, 0.1]
+            "start_fitness": [0.1, 0.1],
+            "final_fitness": [0.6, 0.95]
         }, index=["gene1", "gene2"])
         
         multi_data = pd.DataFrame({
@@ -745,7 +746,8 @@ class TestCandidateSelection(unittest.TestCase):
             "sequence_for_15_mutations": ["SEQ27", "SEQ215"],
             "sequence_for_20_mutations": ["SEQ28", "SEQ216"],
             "reference_sequence": ["REF1", "REF2"],
-            "start_fitness": [0.1, 0.1]
+            "start_fitness": [0.1, 0.1],
+            "final_fitness": [0.65, 0.9]
         }, index=["gene1", "gene2"])
 
         mock_load.side_effect = [single_data, multi_data]
