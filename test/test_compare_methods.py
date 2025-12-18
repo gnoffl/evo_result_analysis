@@ -12,7 +12,7 @@ from unittest.mock import patch, MagicMock
 from typing import Dict, List, Tuple
 
 from analysis.compare_methods import (
-    compare_methods_progress, check_genes_present, get_gene_paths,
+    compare_method_progress, check_genes_present, get_area, get_best_area, get_gene_paths,
     calculate_differences_between_fronts, add_normalized_fronts,
     get_plot_vals_normalized_fronts, plot_normalized_fronts,
     plot_interesting_pareto_fronts_values, get_differences_and_mutations,
@@ -24,7 +24,7 @@ from analysis.compare_methods import (
     get_sampled_pareto_fronts, rank_by_conservation,
     get_all_mutations, get_method_vectors,
     pca_transform_single_method, plot_pca_single_method,
-    pca_visualization,
+    pca_visualization, visualize_progress,
 )
 from analysis.compare_methods import pca_transform_all_methods, plot_pca_all_methods
 
@@ -346,16 +346,6 @@ class TestCompareMethods(unittest.TestCase):
         # Check that both plotting functions were called
         mock_plot_values.assert_called_once_with(fronts=fronts, gene_name=gene_name, tag=tag, output_dir=self.temp_dir, output_format="png")
         mock_plot_differences.assert_called_once_with(fronts=fronts, gene_name=gene_name, tag=tag, output_dir=self.temp_dir, output_format="png")
-    
-    def test_compare_methods_progress(self):
-        """Test compare_methods_progress function."""
-        # This function is currently a pass, so just test that it doesn't crash
-        results_paths = ["path1", "path2", "path3"]
-        
-        try:
-            compare_methods_progress(results_paths)
-        except Exception as e:
-            self.fail(f"compare_methods_progress raised an exception: {e}")
     
     @patch('analysis.compare_methods.plot_interesting_pareto_fronts')
     @patch('analysis.compare_methods.plot_normalized_fronts')
@@ -785,7 +775,7 @@ class TestMutationVectorsAndPCA(unittest.TestCase):
             transformed = np.array([[0.1, 0.2], [0.3, 0.4]])
             mock_tx.return_value = (mock_pca, transformed)
             plot_pca_single_method([[0, 1], [1, 0]], gene="g1", method="m1", output_dir=self.temp_dir, output_format="png")
-        out = os.path.join(self.temp_dir, "pca_m1_g1.png")
+        out = os.path.join(self.temp_dir, "pca_results", "pca_g1_m1.png")
         self.assertTrue(os.path.exists(out))
 
     def test_plot_pca_all_methods_writes_file(self):
@@ -799,7 +789,7 @@ class TestMutationVectorsAndPCA(unittest.TestCase):
             })
             method_vectors = {"m1": [[0, 1], [1, 1]], "m2": [[1, 0]]}
             plot_pca_all_methods(method_vectors, gene="g1", output_dir=self.temp_dir, output_format="png")
-        out = os.path.join(self.temp_dir, "pca_all_methods_g1.png")
+        out = os.path.join(self.temp_dir, "pca_results", "pca_g1_all_methods.png")
         self.assertTrue(os.path.exists(out))
 
     @patch('analysis.compare_methods.plot_pca_single_method')
@@ -975,6 +965,233 @@ class TestCompareMethodsIntegration(unittest.TestCase):
         for expected, actual in zip(expected_moead_normal, normalized_fronts_all["moead"][0]):
             self.assertAlmostEqual(expected[0], actual[0])
             self.assertEqual(expected[1], actual[1])
+
+
+class TestProgressFunctions(unittest.TestCase):
+    """Test cases for progress comparison functions."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.create_test_structure_with_generations()
+    
+    def tearDown(self):
+        """Clean up test fixtures."""
+        shutil.rmtree(self.temp_dir)
+    
+    def create_test_structure_with_generations(self):
+        """Create test structure with generation-based pareto fronts."""
+        methods = ["method1", "method2"]
+        genes = ["gene1_variant1", "gene2_variant2"]
+        
+        for method in methods:
+            method_dir = os.path.join(self.temp_dir, method)
+            os.makedirs(method_dir)
+            
+            for gene in genes:
+                gene_dir = os.path.join(method_dir, gene)
+                populations_dir = os.path.join(gene_dir, "saved_populations")
+                os.makedirs(populations_dir)
+                
+                # Create final pareto front
+                final_pareto = [
+                    ("seq1", 0.9, 0),
+                    ("seq2", 0.8, 5),
+                    ("seq3", 0.6, 10)
+                ]
+                with open(os.path.join(populations_dir, "pareto_front.json"), 'w') as f:
+                    json.dump(final_pareto, f)
+                
+                # Create generation-based pareto fronts
+                for gen in [100, 500, 1000]:
+                    # Simulate progressive improvement
+                    improvement = gen / 1000.0
+                    gen_pareto = [
+                        ("seq1", 0.5 + 0.4 * improvement, 0),
+                        ("seq2", 0.4 + 0.4 * improvement, 5),
+                        ("seq3", 0.3 + 0.3 * improvement, 10)
+                    ]
+                    with open(os.path.join(populations_dir, f"pareto_front_gen_{gen}.json"), 'w') as f:
+                        json.dump(gen_pareto, f)
+    
+    def test_get_area(self):
+        """Test calculating area under pareto front curve."""
+        # Create a simple pareto front file
+        test_front = [("seq1", 0.9, 0), ("seq2", 0.6, 5), ("seq3", 0.3, 10)]
+        test_file = os.path.join(self.temp_dir, "test_front.json")
+        with open(test_file, 'w') as f:
+            json.dump(test_front, f)
+        
+        area = get_area(test_file, max_mutations=10)
+        
+        # Area should be sum of fitness values from expanded front
+        self.assertIsInstance(area, float)
+        self.assertGreater(area, 0)
+        # With expansion, we should have 11 points (0-10 mutations)
+        # expected sum: (5 * 0.9) + (5 * 0.6) + (1 * 0.3) = 4.5 + 3.0 + 0.3 = 7.8
+        self.assertAlmostEqual(area, 7.8)
+    
+    def test_get_best_area_maximization(self):
+        """Test finding best area with maximization objective."""
+        # Create method paths with different fitness values
+        method_paths = {}
+        for i, method in enumerate(["method1", "method2", "method3"]):
+            test_file = os.path.join(self.temp_dir, f"{method}_front.json")
+            # Create fronts with increasing quality
+            base_fitness = 0.7 + i * 0.1
+            test_front = [
+                ("seq1", base_fitness - 0.4, 0),
+                ("seq2", base_fitness - 0.2, 5),
+                ("seq3", base_fitness - 0.0, 10)
+            ]
+            with open(test_file, 'w') as f:
+                json.dump(test_front, f)
+            method_paths[method] = test_file
+        
+        best_area, is_maximization = get_best_area(method_paths, max_mutations=10)
+        
+        self.assertIsInstance(best_area, float)
+        self.assertTrue(is_maximization)
+        # Best area should be from method3 (highest fitness values)
+        self.assertGreater(best_area, 0)
+        self.assertAlmostEqual(best_area, 6.9)
+    
+    def test_get_best_area_minimization(self):
+        """Test finding best area with minimization objective."""
+        # Create fronts where fitness decreases (minimization)
+        method_paths = {}
+        for i, method in enumerate(["method1", "method2"]):
+            test_file = os.path.join(self.temp_dir, f"{method}_min_front.json")
+            # First point high, last point low (minimization)
+            base_fitness = 0.7 + i * 0.1
+            test_front = [
+                ("seq1", base_fitness - 0.0, 0),
+                ("seq2", base_fitness - 0.2, 5),
+                ("seq3", base_fitness - 0.4, 10)
+            ]
+            with open(test_file, 'w') as f:
+                json.dump(test_front, f)
+            method_paths[method] = test_file
+        
+        best_area, is_maximization = get_best_area(method_paths, max_mutations=10)
+        
+        self.assertIsInstance(best_area, float)
+        self.assertFalse(is_maximization)
+        # Best area should be from method2 (lowest values)
+        self.assertGreater(best_area, 0)
+        self.assertAlmostEqual(best_area, 6.3)
+    
+    @patch('matplotlib.pyplot.savefig')
+    @patch('matplotlib.pyplot.errorbar')
+    def test_visualize_progress_linear(self, mock_errorbar, mock_savefig):
+        """Test visualizing progress with linear scale."""
+        generation_losses = {
+            "method1": {
+                100: [1.5, 1.6, 1.4],
+                500: [0.8, 0.9, 0.7],
+                1000: [0.3, 0.4, 0.2]
+            },
+            "method2": {
+                100: [2.0, 2.1, 1.9],
+                500: [1.2, 1.3, 1.1],
+                1000: [0.5, 0.6, 0.4]
+            }
+        }
+        
+        visualize_progress(generation_losses, self.temp_dir, "png", logarithmic=False)
+        
+        # Check that errorbar was called for each method
+        self.assertEqual(mock_errorbar.call_count, 2)
+        
+        # Check that file was saved
+        mock_savefig.assert_called_once()
+        expected_path = os.path.join(self.temp_dir, "method_progress_over_generations_linear.png")
+        mock_savefig.assert_called_with(expected_path, dpi=300, bbox_inches='tight')
+    
+    @patch('matplotlib.pyplot.savefig')
+    @patch('matplotlib.pyplot.yscale')
+    @patch('matplotlib.pyplot.errorbar')
+    def test_visualize_progress_logarithmic(self, mock_errorbar, mock_yscale, mock_savefig):
+        """Test visualizing progress with logarithmic scale."""
+        generation_losses = {
+            "method1": {100: [10.0], 500: [1.0], 1000: [0.1]}
+        }
+        
+        visualize_progress(generation_losses, self.temp_dir, "png", logarithmic=True)
+        
+        # Check that logarithmic scale was set
+        mock_yscale.assert_called_once_with("log")
+        
+        # Check that file was saved with correct name
+        expected_path = os.path.join(self.temp_dir, "method_progress_over_generations_log.png")
+        mock_savefig.assert_called_with(expected_path, dpi=300, bbox_inches='tight')
+    
+    @patch('analysis.compare_methods.visualize_progress')
+    @patch('analysis.compare_methods.get_area')
+    @patch('analysis.compare_methods.get_best_area')
+    @patch('analysis.compare_methods.check_genes_present')
+    @patch('analysis.compare_methods.get_gene_paths')
+    def test_compare_method_progress(self, mock_get_paths, mock_check_genes, 
+                                    mock_best_area, mock_get_area, mock_visualize):
+        """Test comparing method progress over generations."""
+        # Setup mocks
+        gene_paths = {
+            "gene1_variant1": {
+                "method1": os.path.join(self.temp_dir, "method1", "gene1_variant1", "saved_populations", "pareto_front.json"),
+                "method2": os.path.join(self.temp_dir, "method2", "gene1_variant1", "saved_populations", "pareto_front.json")
+            }
+        }
+        mock_get_paths.return_value = gene_paths
+        mock_best_area.return_value = (10.0, True)  # best_area, is_maximization
+        
+        # Mock get_area to return different values per generation
+        def area_side_effect(path, max_mutations):
+            if "gen_100" in path:
+                return 5.0
+            elif "gen_500" in path:
+                return 7.0
+            elif "gen_1000" in path:
+                return 9.0
+            return 8.0
+        mock_get_area.side_effect = area_side_effect
+        
+        results_paths = {
+            "method1": os.path.join(self.temp_dir, "method1"),
+            "method2": os.path.join(self.temp_dir, "method2")
+        }
+        
+        compare_method_progress(results_paths, max_mutations=15, output_format="png", output_dir=self.temp_dir)
+        
+        # Check that key functions were called
+        mock_get_paths.assert_called_once()
+        mock_check_genes.assert_called_once()
+        mock_best_area.assert_called()
+        
+        # Check that visualize_progress was called twice (linear and log)
+        self.assertEqual(mock_visualize.call_count, 2)
+        
+        # Verify both logarithmic True and False were used
+        calls = mock_visualize.call_args_list
+        log_flags = [call[1]['logarithmic'] for call in calls]
+        self.assertIn(True, log_flags)
+        self.assertIn(False, log_flags)
+    
+    def test_compare_method_progress_integration(self):
+        """Integration test for compare_method_progress with real file structure."""
+        results_paths = {
+            "method1": os.path.join(self.temp_dir, "method1"),
+            "method2": os.path.join(self.temp_dir, "method2")
+        }
+        
+        # This should complete without errors
+        compare_method_progress(results_paths, max_mutations=10, output_format="png", output_dir=self.temp_dir)
+        
+        # Check that output files were created
+        linear_file = os.path.join(self.temp_dir, "method_progress_over_generations_linear.png")
+        log_file = os.path.join(self.temp_dir, "method_progress_over_generations_log.png")
+        
+        self.assertTrue(os.path.exists(linear_file))
+        self.assertTrue(os.path.exists(log_file))
 
 
 if __name__ == '__main__':

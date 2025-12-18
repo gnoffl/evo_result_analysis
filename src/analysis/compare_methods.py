@@ -13,10 +13,8 @@ import sklearn.decomposition as decomposition
 from analysis.simple_result_stats import expand_pareto_front
 from analysis.summarize_mutations import MutatedSequence, MutationsGene
 from analysis.analyze_mutations import count_mutations_single_gene, calculate_conservation_statistic
+import tqdm
 
-
-def compare_methods_progress(results_paths: List[str]) -> None:
-    pass
 
 def check_genes_present(gene_paths: Dict[str, Dict[str, str]], methods: List[str]) -> None:
     missing = []
@@ -407,7 +405,9 @@ def plot_pca_all_methods(method_vectors: Dict[str, List[List[int]]], gene: str, 
     plt.ylabel(f"PCA Component 2 ({explained_variance[1] * 100:.1f}% variance)")
     plt.title(f"PCA of Mutation Vectors for {gene} (All Methods)")
     plt.legend()
-    plt.savefig(os.path.join(output_dir, f"pca_all_methods_{gene}.{output_format}"), dpi=300, bbox_inches='tight')
+    output_folder = os.path.join(output_dir, "pca_results")
+    os.makedirs(output_folder, exist_ok=True)
+    plt.savefig(os.path.join(output_folder, f"pca_{gene}_all_methods.{output_format}"), dpi=300, bbox_inches='tight')
     plt.close()
 
 def pca_transform_single_method(vectors: List[List[int]]):
@@ -425,7 +425,9 @@ def plot_pca_single_method(vectors: List[List[int]], gene: str, method: str, out
     plt.xlabel(f"PCA Component 1 ({explained_variance[0] * 100:.1f}% variance)")
     plt.ylabel(f"PCA Component 2 ({explained_variance[1] * 100:.1f}% variance)")
     plt.title(f"PCA of Mutation Vectors for {gene} ({method})")
-    plt.savefig(os.path.join(output_dir, f"pca_{method}_{gene}.{output_format}"), dpi=300, bbox_inches='tight')
+    output_folder = os.path.join(output_dir, "pca_results")
+    os.makedirs(output_folder, exist_ok=True)
+    plt.savefig(os.path.join(output_folder, f"pca_{gene}_{method}.{output_format}"), dpi=300, bbox_inches='tight')
     plt.close()
 
 def pca_visualization(input_data: Dict[str, Tuple[str, str]], output_dir: str) -> None:
@@ -438,6 +440,63 @@ def pca_visualization(input_data: Dict[str, Tuple[str, str]], output_dir: str) -
         for method, vectors in method_vectors.items():
             plot_pca_single_method(vectors=vectors, gene=gene, method=method, output_dir=output_dir, output_format="png")
 
+def get_best_area(method_paths: Dict[str, str], max_mutations: int) -> Tuple[float, bool]:
+    fronts = {}
+    for method, path in method_paths.items():
+        with open(path, 'r') as f:
+            fronts[method] = expand_pareto_front(json.load(f), max_number_mutation=max_mutations)
+    areas = {method: sum([item[1] for item in front]) for method, front in fronts.items()}
+    maximization = fronts[list(fronts.keys())[0]][0][1] < fronts[list(fronts.keys())[0]][-1][1]
+    if maximization:
+        reference = max(areas.values())   #type: ignore
+    else:
+        reference = min(areas.values())   #type: ignore
+    return reference, maximization
+
+def get_area(pareto_front_path: str, max_mutations: int) -> float:
+    expanded_pareto_front = expand_pareto_front(json.load(open(pareto_front_path, 'r')), max_number_mutation=max_mutations)
+    area = sum([item[1] for item in expanded_pareto_front])
+    return area
+
+def visualize_progress(generation_losses: Dict[str, Dict[int, List[float]]], output_dir: str, output_format: str, logarithmic: bool = True) -> None:
+    plt.clf()
+    if logarithmic:
+        plt.yscale("log")
+    for method, gen_losses in generation_losses.items():
+        generations = sorted(gen_losses.keys())
+        avg_losses = [np.mean(gen_losses[gen]) for gen in generations]
+        std_losses = [np.std(gen_losses[gen]) for gen in generations]
+        plt.errorbar(generations, avg_losses, yerr=std_losses, label=method)
+    plt.xlabel("Generation")
+    plt.ylabel("Average Loss to Best Front")
+    plt.title("Method Progress Over Generations")
+    plt.legend()
+    name = "method_progress_over_generations_log" if logarithmic else "method_progress_over_generations_linear"
+    plt.savefig(os.path.join(output_dir, f"{name}.{output_format}"), dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+def compare_method_progress(results_paths: Dict[str, str], max_mutations: int, output_format: str, output_dir: str) -> None:
+    gene_folder_paths = {}
+    for method, path in results_paths.items():
+        gene_folder_paths[method] = [os.path.join(path, folder) for folder in os.listdir(path) if os.path.isdir(os.path.join(path, folder))]
+    gene_paths = get_gene_paths(gene_folder_paths)
+    check_genes_present(gene_paths, methods=list(results_paths.keys()))
+    generation_losses_dict = {}
+    for gene, method_paths in tqdm.tqdm(gene_paths.items()):
+        best_area, maximization = get_best_area(method_paths=method_paths, max_mutations=max_mutations)
+        for method, path in method_paths.items():
+            fronts_folder = os.path.dirname(path)
+            generation_fronts = [os.path.join(fronts_folder, f) for f in os.listdir(fronts_folder) if f.startswith("pareto_front_gen_") and f.endswith(".json")]
+            generation_fronts = {int(f.split("_")[-1].split(".")[0]): f for f in generation_fronts}
+            generation_areas = {gen: get_area(path, max_mutations=max_mutations) for gen, path in generation_fronts.items()}
+            generation_losses_curr = {gen: (best_area - area) if maximization else (area - best_area) for gen, area in generation_areas.items()}
+            for gen, loss in generation_losses_curr.items():
+                generation_losses_dict.setdefault(method, {}).setdefault(gen, []).append(loss)
+    visualize_progress(generation_losses=generation_losses_dict, output_dir=output_dir, output_format=output_format, logarithmic=True)
+    visualize_progress(generation_losses=generation_losses_dict, output_dir=output_dir, output_format=output_format, logarithmic=False)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Compare evolutionary methods based on their results.")
     parser.add_argument("--results_paths", "-r", type=str, nargs='+', required=True, help="Paths to the results of different methods.")
@@ -446,10 +505,12 @@ def parse_args():
     parser.add_argument("--output_dir", "-o", type=str, required=True, help="Directory to save the output plots.")
     parser.add_argument("--max_bootstrap", "-mb", type=int, default=100, help="Maximum number of bootstrap samples for diversity calculation.")
     parser.add_argument("--mutable_positions", "-mp", type=int, default=3000, help="Number of mutable positions for diversity calculation.")
-    parser.add_argument("--output_format", "-f", type=str, default="png", help="Output format for plots (e.g., png, pdf). Default is png.")
+    parser.add_argument("--output_format", "-fmt", type=str, default="png", help="Output format for plots (e.g., png, pdf). Default is png.")
+    parser.add_argument("--max_mutations", "-mm", type=int, default=90, help="Maximum number of mutations to consider in pareto fronts.")
 
     parser.add_argument("--final", "-f", action='store_true', help="Compare final results of methods.")
     parser.add_argument("--diversity", "-d", action='store_true', help="Compare diversity of methods based on mutation data.")
+    parser.add_argument("--mutation_pca", "-pca", action='store_true', help="Perform PCA visualization of mutation data.")
     parser.add_argument("--progress", "-p", action='store_true', help="Compare progress of methods over generations.")
     parser.add_argument("--all", "-a", action='store_true', help="Compare all aspects of methods.")
     parsed = parser.parse_args()
@@ -476,13 +537,17 @@ if __name__ == "__main__":
     run_final = args.final or args.all
     run_diversity = args.diversity or args.all
     run_progress = args.progress or args.all
-    if not (run_final or run_diversity or run_progress):
-        raise ValueError("At least one of --final, --diversity, --progress, or --all must be specified.")
-    # compare_methods_progress(results_paths=results_paths)
+    run_pca = args.mutation_pca or args.all
+    if not (run_final or run_diversity or run_progress or run_pca):
+        raise ValueError("At least one of --final, --diversity, --progress, --mutation_pca, or --all must be specified.")
+    
+    os.makedirs(args.output_dir, exist_ok=True)
+    
     if run_final:
-        compare_methods_final(results_paths=results_paths, output_dir=args.output_dir, output_format=args.output_format)
+        compare_methods_final(results_paths=results_paths, output_dir=args.output_dir, output_format=args.output_format, max_mutations=args.max_mutations)
     if run_diversity:
         compare_diversity_methods(input_data=mutation_data, output_dir=args.output_dir, max_bootstrap=args.max_bootstrap, mutable_positions=args.mutable_positions)
+    if run_pca:
+        pca_visualization(input_data=mutation_data, output_dir=args.output_dir)
     if run_progress:
-        raise NotImplementedError("Progress comparison not yet implemented.")
-        compare_methods_progress(results_paths=results_paths)
+        compare_method_progress(results_paths=results_paths, max_mutations=args.max_mutations, output_format=args.output_format, output_dir=args.output_dir)
