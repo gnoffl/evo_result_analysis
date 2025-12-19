@@ -468,7 +468,7 @@ def visualize_progress(generation_losses: Dict[str, Dict[int, List[float]]], out
         std_losses = [np.std(gen_losses[gen]) for gen in generations]
         std_losses = np.array(std_losses)
         for i in range(len(std_losses)):
-            if i % 1000 != 10:
+            if i % 1000 != -10:
                 std_losses[i] = np.nan
         plt.errorbar(generations, avg_losses, yerr=std_losses, label=method)
     plt.xlabel("Generation")
