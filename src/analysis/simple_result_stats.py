@@ -413,6 +413,7 @@ def calculate_loss_pareto_front(current_front: List[Tuple[str, float, int]], tar
         loss += target[1] - curr[1]
     return abs(loss)
 
+
 def calculate_loss_over_generations_single_gene(results_folder: str, gene: str, max_number_mutation: int, last_generation: int) -> Dict[int, float]:
     """Calculate the loss over generations for a single gene.
 
@@ -430,6 +431,7 @@ def calculate_loss_over_generations_single_gene(results_folder: str, gene: str, 
     last_front = os.path.join(results_folder, gene, 'saved_populations', "pareto_front.json")
     with open(last_front, 'r') as f:
         last_front = json.load(f)
+        last_front = deduplicate_pareto_front(last_front)
 
     for generation in pareto_fronts:
         gen_num = int(generation.split('_')[-1].split('.')[0])
@@ -439,6 +441,7 @@ def calculate_loss_over_generations_single_gene(results_folder: str, gene: str, 
         current_front_path = os.path.join(results_folder, gene, 'saved_populations', generation)
         with open(current_front_path, 'r') as f:
             current_front = json.load(f)
+        current_front = deduplicate_pareto_front(current_front)
         
         loss = calculate_loss_pareto_front(current_front, last_front, max_number_mutation=max_number_mutation)
         loss_over_generations[gen_num] = loss
@@ -451,7 +454,7 @@ def calculate_loss_over_generations(results_folder: str, max_number_mutation: in
 
     Args:
         results_folder (str): Path to the results folder.
-        last_generation (int, optional): The last generation to consider. Defaults to 2000.
+        last_generation (int): Generation of the "pareto_front.json" file.
 
     Returns:
         Dict[str, Dict[int, float]]: A dictionary mapping gene names to dictionaries of generation numbers and loss values.

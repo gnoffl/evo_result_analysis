@@ -432,6 +432,56 @@ class TestSimpleResultStats(unittest.TestCase):
         self.assertAlmostEqual(loss_dict[1999], 0)  # Final generation should have 0 loss
         self.assertAlmostEqual(loss_dict[100], .8)  # Earlier generation should have some loss
     
+    def test_calculate_loss_over_generations_single_gene_with_duplicates(self):
+        """Test calculating loss over generations with pareto front containing duplicates.
+        
+        The pareto front should exceed target_length before deduplication,
+        and be within bounds after deduplication.
+        """
+        # Create a new gene folder for this test
+        gene_name = "1_gene_duplicates"
+        gene_folder = os.path.join(self.results_folder, gene_name)
+        os.makedirs(os.path.join(gene_folder, "saved_populations"))
+
+        max_number_mutation = 3
+        final_pareto_with_duplicates = [
+            ["AAAAA", 0.0, 0],      # 0 mutations
+            ["ATAAA", 0.3, 1],      # 1 mutation (first)
+            ["AAATA", 0.3, 1],      # 1 mutation (duplicate - different sequence, same fitness and mutations)
+            ["ATTAA", 0.6, 2],      # 2 mutations (first)
+            ["TTAAA", 0.6, 2],      # 2 mutations (duplicate)
+            ["ATTTA", 0.9, 3],      # 3 mutations (first)
+            ["TTTAA", 0.9, 3],      # 3 mutations (duplicate)
+        ]
+        
+        gen_100_pareto_with_duplicates = [
+            ["AAAAA", 0.0, 0],      # 0 mutations
+            ["ATAAA", 0.2, 1],      # 1 mutation (first)
+            ["GAAAA", 0.2, 1],      # 1 mutation (duplicate)
+            ["ATTAA", 0.4, 2],      # 2 mutations
+            ["ATTTA", 0.7, 3],      # 3 mutations
+        ]
+        
+        with open(os.path.join(gene_folder, "saved_populations", "pareto_front.json"), 'w') as f:
+            json.dump(final_pareto_with_duplicates, f)
+        with open(os.path.join(gene_folder, "saved_populations", "pareto_front_gen_100.json"), 'w') as f:
+            json.dump(gen_100_pareto_with_duplicates, f)
+        
+        loss_dict = calculate_loss_over_generations_single_gene(
+            self.results_folder, gene_name, max_number_mutation=max_number_mutation, last_generation=1999
+        )
+        
+        self.assertIn(100, loss_dict)
+        self.assertIn(1999, loss_dict)
+        self.assertAlmostEqual(loss_dict[1999], 0)  # Final generation should have 0 loss
+        # Expected loss at gen 100: sum of |target_fitness - current_fitness| for each mutation count
+        # 0 mutations: |0.0 - 0.0| = 0.0
+        # 1 mutation:  |0.3 - 0.2| = 0.1
+        # 2 mutations: |0.6 - 0.4| = 0.2
+        # 3 mutations: |0.9 - 0.7| = 0.2
+        # Total loss = 0.0 + 0.1 + 0.2 + 0.2 = 0.5
+        self.assertAlmostEqual(loss_dict[100], 0.5, places=5)
+    
     def test_calculate_loss_over_generations(self):
         """Test calculating loss over generations for all genes."""
         loss_data = calculate_loss_over_generations(
@@ -764,7 +814,7 @@ class TestSimpleResultStats(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-    # test_obj = TestSimpleResultStats()
-    # test_obj.setUp()
-    # test_obj.test_show_random_fronts_more_samples_than_genes()
-    # test_obj.tearDown()
+    # suite = unittest.TestSuite()
+    # suite.addTest(TestSimpleResultStats("test_calculate_loss_over_generations_single_gene_with_duplicates"))
+    # runner = unittest.TextTestRunner()
+    # runner.run(suite)
