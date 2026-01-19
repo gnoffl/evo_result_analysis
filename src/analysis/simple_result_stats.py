@@ -413,7 +413,7 @@ def calculate_loss_pareto_front(current_front: List[Tuple[str, float, int]], tar
         loss += target[1] - curr[1]
     return abs(loss)
 
-def calculate_loss_over_generations_single_gene(results_folder: str, gene: str, max_number_mutation: int, last_generation: int = 1999) -> Dict[int, float]:
+def calculate_loss_over_generations_single_gene(results_folder: str, gene: str, max_number_mutation: int, last_generation: int) -> Dict[int, float]:
     """Calculate the loss over generations for a single gene.
 
     Args:
@@ -446,7 +446,7 @@ def calculate_loss_over_generations_single_gene(results_folder: str, gene: str, 
     return loss_over_generations
 
 
-def calculate_loss_over_generations(results_folder: str, max_number_mutation: int, last_generation: int = 1999) -> Dict[str, Dict[int, float]]:
+def calculate_loss_over_generations(results_folder: str, max_number_mutation: int, last_generation: int) -> Dict[str, Dict[int, float]]:
     """Calculate the loss over generations for all genes in the results folder.
 
     Args:
@@ -483,13 +483,13 @@ def join_losses_for_visualization(loss_data: Dict[str, Dict[int, float]]) -> Tup
     return generations, loss_averages, [float(x) for x in loss_stds]
 
 
-def plot_loss_over_generations(results_folder: str, name: str, max_number_mutation: int, output_format: str, last_generation: int = 1999, output_folder: str = ".") -> None:
+def plot_loss_over_generations(results_folder: str, name: str, max_number_mutation: int, output_format: str, last_generation: int, output_folder: str = ".") -> None:
     """Plot the average loss over generations for all genes.
 
     Args:
         results_folder (str): Path to the results folder.
         name (str): Name to distinguish the output file.
-        last_generation (int, optional): The last generation to consider. Defaults to 1999.
+        last_generation (int): Generation number of the "pareto_front.json" file.
         output_folder (str): Path to the output folder for saving results. Defaults to ".".
     """
     loss_data = calculate_loss_over_generations(results_folder=results_folder, last_generation=last_generation, max_number_mutation=max_number_mutation)
@@ -630,6 +630,7 @@ def parse_args():
     parser.add_argument("--number", "-N", type=int, default=4, help="Number of random pareto fronts to draw from the results folder. Default is 4.")
     parser.add_argument("--max_number_mutation", "-m", type=int, default=90, help="Maximum number of mutations to consider when expanding the pareto front. Default is 90.")
     parser.add_argument("--output_format", "-f", type=str, default="png", help="Output format for plots (e.g., pdf, png). Default is png.")
+    parser.add_argument("--last_generation", "-l", type=int, default=1999, help="Last generation to consider for analysis. Default is None (consider all generations).")
     
     # Analysis control flags - explicit inclusion
     parser.add_argument('--summary', action='store_true', help='Generate and print summary statistics')
@@ -749,7 +750,7 @@ def main():
             print("Plotting average loss...")
             if not args.results_folder:
                 raise ValueError("You must provide a results folder to draw the average loss.")
-            plot_loss_over_generations(results_folder=args.results_folder, name=args.name, output_folder=args.output_folder, max_number_mutation=args.max_number_mutation, output_format=args.output_format)
+            plot_loss_over_generations(results_folder=args.results_folder, name=args.name, output_folder=args.output_folder, max_number_mutation=args.max_number_mutation, output_format=args.output_format, last_generation=args.last_generation)
             print("Average loss plot completed successfully.")
         except Exception as e:
             print("failed to plot average loss.")
