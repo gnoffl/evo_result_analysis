@@ -33,7 +33,10 @@ from analysis.candidate_selection import (
     process_single_gene,
     filter_and_sort_results,
     combine_selections,
-    get_sorted_values
+    get_sorted_values,
+    get_restriction_regexes,
+    get_sequences_with_restriction_sites,
+    reverse_complement
 )
 
 
@@ -874,6 +877,251 @@ class TestCandidateSelection(unittest.TestCase):
         for i in range(2, 4):
             self.assertTrue(np.isnan(result[i][1]) or result[i][1] == -np.inf)
         self.assertTrue(all(col in [r[0] for r in result] for col in per_mutation_columns))
+
+
+class TestRestrictionSites(unittest.TestCase):
+    """Test restriction site related functions."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        
+        # Create restriction site FASTA file
+        self.restriction_site_path = os.path.join(self.temp_dir, "restriction_sites.fasta")
+        with open(self.restriction_site_path, 'w') as f:
+            f.write(">EcoRI\n")
+            f.write("GAATTC\n")
+            f.write(">BamHI\n")
+            f.write("GGATCC\n")
+            f.write(">PstI\n")
+            f.write("CTGCAG\n")
+            f.write(">SiteWithN\n")
+            f.write("GCNNNGC\n")
+            f.write(">NonPalindrome\n")
+            f.write("GAATTG\n")  # Non-palindromic site for testing
+        
+        # Create sequence FASTA file without restriction sites
+        self.sequence_path_clean = os.path.join(self.temp_dir, "sequences_clean.fasta")
+        with open(self.sequence_path_clean, 'w') as f:
+            f.write(">seq1\n")
+            f.write("AAAAAAAAAAAAAAAA\n")
+            f.write(">seq2\n")
+            f.write("TTTTTTTTTTTTTTTT\n")
+            f.write(">seq3\n")
+            f.write("TTTTAAAACCCCGGGG\n")
+        
+        # Create sequence FASTA file with restriction sites
+        self.sequence_path_with_sites = os.path.join(self.temp_dir, "sequences_with_sites.fasta")
+        with open(self.sequence_path_with_sites, 'w') as f:
+            f.write(">seq1_clean\n")
+            f.write("AAAAAAAAAAAAAAAA\n")
+            f.write(">seq2_has_EcoRI\n")
+            f.write("AAAGGAATTCAAAAAA\n")  # Contains EcoRI site
+            f.write(">seq3_has_BamHI\n")
+            f.write("GGATCCCCCCCC\n")  # Contains BamHI site
+            f.write(">seq4_has_multiple\n")
+            f.write("GAATTCGGATCCCTGCAG\n")  # Contains all three sites
+            f.write(">seq5_has_N_site\n")
+            f.write("ATCGGCATCGCTAGCT\n")  # Contains SiteWithN (GCNNNGC)
+            f.write(">seq6_has_revcomp_NonPalindrome\n")
+            f.write("ATCGCAATTCGATCGA\n")  # Contains reverse complement of NonPalindrome (GAATTG -> CAATTC)
+            f.write(">seq7_has_NonPalindrome\n")
+            f.write("AAAACAATTCAAAAAA\n")  # Contains NonPalindrome reverse (CAATTC)
+        
+        self.output_path = os.path.join(self.temp_dir, "output.fasta")
+    
+    def tearDown(self):
+        """Clean up test fixtures."""
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+    
+    def test_reverse_complement(self):
+        """Test reverse complement function."""
+        self.assertEqual(reverse_complement("GAATTC"), "GAATTC")  # Palindrome
+        self.assertEqual(reverse_complement("GGATCC"), "GGATCC")  # Palindrome
+        self.assertEqual(reverse_complement("GAATTG"), "CAATTC")  # Non-palindrome
+        self.assertEqual(reverse_complement("ATCG"), "CGAT")
+        self.assertEqual(reverse_complement("GCNNNGC"), "GCNNNGC")  # Palindrome with N
+    
+    def test_get_restriction_regexes(self):
+        """Test that restriction regexes are correctly generated."""
+        regexes = get_restriction_regexes(self.restriction_site_path)
+        
+        # Check that all sites are loaded (forward and reverse)
+        self.assertIn("EcoRI", regexes)
+        self.assertIn("EcoRI_reverse", regexes)
+        self.assertIn("BamHI", regexes)
+        self.assertIn("BamHI_reverse", regexes)
+        self.assertIn("PstI", regexes)
+        self.assertIn("PstI_reverse", regexes)
+        self.assertIn("SiteWithN", regexes)
+        self.assertIn("SiteWithN_reverse", regexes)
+        self.assertIn("NonPalindrome", regexes)
+        self.assertIn("NonPalindrome_reverse", regexes)
+        
+        # Check that patterns match correctly
+        self.assertIsNotNone(regexes["EcoRI"].search("GAATTC"))
+        self.assertIsNotNone(regexes["BamHI"].search("GGATCC"))
+        self.assertIsNotNone(regexes["PstI"].search("CTGCAG"))
+        
+        # Check reverse complement patterns
+        # EcoRI (GAATTC) -> reverse complement is GAATTC (palindrome)
+        # BamHI (GGATCC) -> reverse complement is GGATCC (palindrome)
+        # PstI (CTGCAG) -> reverse complement is CTGCAG (palindrome)
+        # These are palindromes, so they match themselves
+        self.assertIsNotNone(regexes["EcoRI_reverse"].search("GAATTC"))
+        self.assertIsNotNone(regexes["BamHI_reverse"].search("GGATCC"))
+        self.assertIsNotNone(regexes["PstI_reverse"].search("CTGCAG"))
+        
+        # Check that N is converted to wildcard
+        self.assertIsNotNone(regexes["SiteWithN"].search("GCATCGC"))
+        self.assertIsNotNone(regexes["SiteWithN"].search("GCGGGGC"))
+        self.assertIsNotNone(regexes["SiteWithN"].search("GCTTTGC"))
+        
+        # Check reverse complement with N (GCNNNGC -> reverse complement GCNNNGC, also palindrome)
+        self.assertIsNotNone(regexes["SiteWithN_reverse"].search("GCAAAGC"))
+        self.assertIsNotNone(regexes["SiteWithN_reverse"].search("GCTTTGC"))
+
+        # check non palindrome forward and reverse
+        self.assertIsNotNone(regexes["NonPalindrome"].search("GAATTG"))
+        self.assertIsNotNone(regexes["NonPalindrome_reverse"].search("CAATTC"))
+    
+    def test_get_sequences_with_restriction_sites_all_clean(self):
+        """Test filtering when no sequences have restriction sites."""
+        get_sequences_with_restriction_sites(
+            self.sequence_path_clean,
+            self.restriction_site_path,
+            self.output_path
+        )
+        
+        # All sequences should be kept
+        with open(self.output_path, 'r') as f:
+            content_new = f.read()
+
+        # All sequences should be kept
+        with open(self.sequence_path_clean, 'r') as f:
+            tested_sequences = f.read()
+        
+        self.assertIn(">seq1", content_new)
+        self.assertIn(">seq2", content_new)
+        self.assertIn(">seq3", content_new)
+        self.assertEqual(content_new, tested_sequences)
+    
+    def test_get_sequences_with_restriction_sites_filtering(self):
+        """Test filtering sequences with restriction sites."""
+        get_sequences_with_restriction_sites(
+            self.sequence_path_with_sites,
+            self.restriction_site_path,
+            self.output_path
+        )
+        
+        # Read output
+        with open(self.output_path, 'r') as f:
+            content = f.read()
+        
+        # Only seq1_clean should be kept
+        self.assertIn(">seq1_clean", content)
+        self.assertIn("AAAAAAAAAAAAAAAA", content)
+        
+        # Others should be filtered out (forward sites)
+        self.assertNotIn(">seq2_has_EcoRI", content)
+        self.assertNotIn(">seq3_has_BamHI", content)
+        self.assertNotIn(">seq4_has_multiple", content)
+        self.assertNotIn(">seq5_has_N_site", content)
+        
+        # Reverse complement sites should also be filtered out
+        self.assertNotIn(">seq6_has_revcomp_NonPalindrome", content)
+        self.assertNotIn(">seq7_has_NonPalindrome", content)
+    
+    def test_get_sequences_with_restriction_sites_with_prefixes(self):
+        """Test that prefixes are added before checking for restriction sites."""
+        # Create a sequence that will have a restriction site only after prefix
+        seq_path = os.path.join(self.temp_dir, "seq_with_prefix.fasta")
+        with open(seq_path, 'w') as f:
+            f.write(">seq1\n")
+            f.write("ATTC\n")  # This becomes GAATTC with prefix "GA"
+            f.write(">seq2\n")
+            f.write("ATCGATCG\n")  # This stays clean even with prefix
+        
+        prefixes = {
+            "seq1": "GA",
+            "seq2": "AAAA"
+        }
+        
+        get_sequences_with_restriction_sites(
+            seq_path,
+            self.restriction_site_path,
+            self.output_path,
+            prefixes=prefixes
+        )
+        
+        with open(self.output_path, 'r') as f:
+            content = f.read()
+        
+        # seq1 should be filtered (GA + ATTC = GAATTC = EcoRI)
+        self.assertNotIn(">seq1", content)
+        
+        # seq2 should be kept
+        self.assertIn(">seq2", content)
+    
+    def test_get_sequences_with_restriction_sites_with_postfixes(self):
+        """Test that postfixes are added before checking for restriction sites."""
+        seq_path = os.path.join(self.temp_dir, "seq_with_postfix.fasta")
+        with open(seq_path, 'w') as f:
+            f.write(">seq1\n")
+            f.write("GAAT\n")  # This becomes GAATTC with postfix "TC"
+            f.write(">seq2\n")
+            f.write("ATCGATCG\n")
+        
+        postfixes = {
+            "seq1": "TC",
+            "seq2": "GGGG"
+        }
+        
+        get_sequences_with_restriction_sites(
+            seq_path,
+            self.restriction_site_path,
+            self.output_path,
+            postfixes=postfixes
+        )
+        
+        with open(self.output_path, 'r') as f:
+            content = f.read()
+        
+        # seq1 should be filtered (GAAT + TC = GAATTC = EcoRI)
+        self.assertNotIn(">seq1", content)
+        
+        # seq2 should be kept
+        self.assertIn(">seq2", content)
+    
+    def test_get_sequences_with_restriction_sites_combined_affixes(self):
+        """Test with both prefixes and postfixes."""
+        seq_path = os.path.join(self.temp_dir, "seq_combined.fasta")
+        with open(seq_path, 'w') as f:
+            f.write(">seq1\n")
+            f.write("AATT\n")  # G + AATT + C = GAATTC
+            f.write(">seq2\n")
+            f.write("ATCG\n")
+        
+        prefixes = {"seq1": "G", "seq2": "AA"}
+        postfixes = {"seq1": "C", "seq2": "GG"}
+        
+        get_sequences_with_restriction_sites(
+            seq_path,
+            self.restriction_site_path,
+            self.output_path,
+            prefixes=prefixes,
+            postfixes=postfixes
+        )
+        
+        with open(self.output_path, 'r') as f:
+            content = f.read()
+        
+        # seq1 should be filtered
+        self.assertNotIn(">seq1", content)
+        
+        # seq2 should be kept
+        self.assertIn(">seq2", content)
+
 
 if __name__ == '__main__':
     unittest.main()

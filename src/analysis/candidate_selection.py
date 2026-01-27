@@ -2,12 +2,60 @@ import os
 import argparse
 import json
 import bisect
+import numpy as np
+import pandas as pd
+from pyfaidx import Fasta
+import re
 import matplotlib.pyplot as plt
 from typing import Dict, List, Optional, Tuple, Union
 
 from analysis.simple_result_stats import calculate_half_max_mutations, get_min_mutation_count_for_fitness
-import numpy as np
-import pandas as pd
+
+def reverse_complement(seq: str) -> str:
+    """Return the reverse complement of a DNA sequence."""
+    complement = {'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G', 'N': 'N'}
+    return ''.join(complement[base] for base in reversed(seq))
+
+def get_restriction_regexes(restriction_site_path: str) -> Dict[str, re.Pattern]:
+    restriction_sites = Fasta(restriction_site_path)
+    restriction_regexes = {}
+    for record in restriction_sites:
+        site_name = record.name
+        site_seq = str(record).upper()
+        site_regex = site_seq.replace('N', '[ACGTN]')
+        restriction_regexes[site_name] = re.compile(site_regex)
+        
+        # Also add reverse complement
+        site_seq_revcomp = reverse_complement(site_seq)
+        site_regex_revcomp = site_seq_revcomp.replace('N', '[ACGTN]')
+        restriction_regexes[f"{site_name}_reverse"] = re.compile(site_regex_revcomp)
+    return restriction_regexes
+
+def get_sequences_with_restriction_sites(sequence_path: str, restriction_site_path: str, output_path: str,
+                                         prefixes: Optional[Dict[str, str]] = None, postfixes: Optional[Dict[str, str]] = None) -> None:
+    restriction_regexes = get_restriction_regexes(restriction_site_path)
+    sequences = Fasta(sequence_path)
+    keepers = {}
+    for sequence in sequences:
+        seq_str = str(sequence).upper()
+        seq_name = sequence.name
+        if prefixes is not None and seq_name in prefixes:
+            seq_str = prefixes[seq_name] + seq_str
+        if postfixes is not None and seq_name in postfixes:
+            seq_str = seq_str + postfixes[seq_name]
+        found_sites = []
+        for site_name, site_regex in restriction_regexes.items():
+            match = site_regex.search(seq_str)
+            if match:
+                found_sites.append((site_name, match.start() + 1, match.group(0)))
+        if found_sites:
+            print(f"restriction sites found in sequence {seq_name}: {found_sites}")
+        else:
+            keepers[seq_name] = seq_str
+    with open(output_path, 'w') as outfile:
+        print(f"Writing {len(keepers)} sequences without restriction sites out of {len(sequences)} sequences to {output_path}")
+        for name, seq in keepers.items():
+            outfile.write(f">{name}\n{seq}\n")
 
 def get_data_at_mutation_count(pareto_front: List[Tuple[str, float, float]], target_mutation_count: int) -> Tuple[str, float, float]:
     # implement binary search for the mutation count
