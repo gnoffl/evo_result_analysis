@@ -1,0 +1,9 @@
+Summary for results_260121_131042_661310_organelle_scaffold:
+  final_fitness_mean: 0.5118368764718374
+  final_fitness_std: 0.15570988046597817
+  start_fitness_mean: 0.4576459626356761
+  start_fitness_std: 0.14068053982275405
+  max_mutations_mean: 3.3333333333333335
+  max_mutations_std: 0.4714045207910317
+  num_mutations_half_max_mean: 2.0
+  num_mutations_half_max_std: 0.0
