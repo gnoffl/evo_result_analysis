@@ -35,7 +35,7 @@ from analysis.candidate_selection import (
     combine_selections,
     get_sorted_values,
     get_restriction_regexes,
-    get_sequences_with_restriction_sites,
+    get_sequences_without_restriction_sites,
     reverse_complement
 )
 
@@ -987,7 +987,7 @@ class TestRestrictionSites(unittest.TestCase):
     
     def test_get_sequences_with_restriction_sites_all_clean(self):
         """Test filtering when no sequences have restriction sites."""
-        get_sequences_with_restriction_sites(
+        get_sequences_without_restriction_sites(
             self.sequence_path_clean,
             self.restriction_site_path,
             self.output_path
@@ -1008,7 +1008,7 @@ class TestRestrictionSites(unittest.TestCase):
     
     def test_get_sequences_with_restriction_sites_filtering(self):
         """Test filtering sequences with restriction sites."""
-        get_sequences_with_restriction_sites(
+        get_sequences_without_restriction_sites(
             self.sequence_path_with_sites,
             self.restriction_site_path,
             self.output_path
@@ -1047,7 +1047,7 @@ class TestRestrictionSites(unittest.TestCase):
             "seq2": "AAAA"
         }
         
-        get_sequences_with_restriction_sites(
+        get_sequences_without_restriction_sites(
             seq_path,
             self.restriction_site_path,
             self.output_path,
@@ -1077,7 +1077,7 @@ class TestRestrictionSites(unittest.TestCase):
             "seq2": "GGGG"
         }
         
-        get_sequences_with_restriction_sites(
+        get_sequences_without_restriction_sites(
             seq_path,
             self.restriction_site_path,
             self.output_path,
@@ -1105,7 +1105,7 @@ class TestRestrictionSites(unittest.TestCase):
         prefixes = {"seq1": "G", "seq2": "AA"}
         postfixes = {"seq1": "C", "seq2": "GG"}
         
-        get_sequences_with_restriction_sites(
+        get_sequences_without_restriction_sites(
             seq_path,
             self.restriction_site_path,
             self.output_path,
