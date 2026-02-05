@@ -6,6 +6,7 @@ __pycache__/
 data/*
 visualization/*
 run_mutations_analysis.sh
+*.fai
 
 # C extensions
 *.so
