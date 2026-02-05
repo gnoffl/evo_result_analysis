@@ -98,7 +98,7 @@ class MutationsGene:
 
     def __init__(self, gene_folder_path: str, final_generation: int = 1999, generation: Optional[int] = None) -> None:
         ref_seq = Fasta(os.path.join(gene_folder_path, "reference_sequence.fa"))
-        ref_seq = ref_seq[0][:].seq # type:ignore
+        ref_seq = ref_seq[1][:].seq # type:ignore
         populations = [os.path.join(gene_folder_path, "saved_populations", file) for file in os.listdir(os.path.join(gene_folder_path, "saved_populations")) if file.startswith("pareto_front_gen")]
         results = {}
         # if generation is final generation, we can directly take the final pareto front without searching
