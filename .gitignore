@@ -7,6 +7,7 @@ data/*
 visualization/*
 run_mutations_analysis.sh
 *.fai
+src/workflows/hoffie/data/*
 
 # C extensions
 *.so
