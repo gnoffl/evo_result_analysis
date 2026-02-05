@@ -31,7 +31,7 @@ def get_restriction_regexes(restriction_site_path: str) -> Dict[str, re.Pattern]
         restriction_regexes[f"{site_name}_reverse"] = re.compile(site_regex_revcomp)
     return restriction_regexes
 
-def get_sequences_with_restriction_sites(sequence_path: str, restriction_site_path: str, output_path: str,
+def get_sequences_without_restriction_sites(sequence_path: str, restriction_site_path: str, output_path: str,
                                          prefixes: Optional[Dict[str, str]] = None, postfixes: Optional[Dict[str, str]] = None) -> None:
     restriction_regexes = get_restriction_regexes(restriction_site_path)
     sequences = Fasta(sequence_path)
@@ -53,7 +53,7 @@ def get_sequences_with_restriction_sites(sequence_path: str, restriction_site_pa
         else:
             keepers[seq_name] = seq_str
     with open(output_path, 'w') as outfile:
-        print(f"Writing {len(keepers)} sequences without restriction sites out of {len(sequences)} sequences to {output_path}")
+        print(f"Writing {len(keepers)} sequences without restriction sites out of {len(sequences.keys())} sequences to {output_path}")
         for name, seq in keepers.items():
             outfile.write(f">{name}\n{seq}\n")
 
