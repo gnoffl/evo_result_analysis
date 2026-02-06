@@ -256,6 +256,26 @@ class MutationsGene:
         total_mutations = set([mut for seq in mutations for mut in seq.mutations])
         return list(total_mutations)
 
+
+def load_mutations_from_json(json_file: str) -> Dict[str, MutationsGene]:
+    """Load mutations from a JSON file with multiple sequences.
+    
+    Args:
+        json_file: Path to JSON file containing multiple sequence entries
+        
+    Returns:
+        Dictionary mapping sequence names to MutationsGene objects
+    """
+    with open(json_file, 'r') as f:
+        data = json.load(f)
+    
+    results = {}
+    for seq_name, seq_data in data.items():
+        results[seq_name] = MutationsGene.from_dict(seq_data)
+    
+    return results
+
+
 def summarize_mutations_all_folders(base_folder_path: str, name: str, final_generation: int, generation: Optional[int] = None, output_folder: str = ".") -> Dict[str, MutationsGene]:
     output_name = f"all_mutated_sequences_{name}"
     if generation is not None:

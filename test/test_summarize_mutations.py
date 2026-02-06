@@ -3,7 +3,7 @@ import shutil
 import unittest
 import os
 import tempfile
-from analysis.summarize_mutations import MutatedSequence, MutationsGene, summarize_mutations_all_folders
+from analysis.summarize_mutations import MutatedSequence, MutationsGene, summarize_mutations_all_folders, load_mutations_from_json
 import sys
 from unittest import mock
 # ...existing code...
@@ -275,8 +275,10 @@ class TestMutationsGene(unittest.TestCase):
         self.ref_seq = "AAAAAATTTTTTT"
         with open(os.path.join(self.gene_folder_min, "reference_sequence.fa"), 'w') as f:
             f.write(">test_sequence\n" + self.ref_seq + "\n")
+            f.write(">test_sequence_window\n" + self.ref_seq + "\n")
         with open(os.path.join(self.gene_folder_max, "reference_sequence.fa"), 'w') as f:
             f.write(">test_sequence\n" + self.ref_seq + "\n")
+            f.write(">test_sequence_window\n" + self.ref_seq + "\n")
         
         # Create test pareto front data - minimization case (lower fitness is better, fewer mutations is better)
         self.min_pareto_data = [
@@ -472,6 +474,7 @@ class TestSummarizeMutations(unittest.TestCase):
             ref_seq = "A" * 10
             with open(os.path.join(gene_folder, "reference_sequence.fa"), 'w') as f:
                 f.write(f">{gene_name}\n{ref_seq}\n")
+                f.write(f">{gene_name}_window\n{ref_seq}\n")
             
             # Create pareto front data
             pareto_data = [
@@ -519,6 +522,57 @@ class TestSummarizeMutations(unittest.TestCase):
             self.assertEqual(len(two_mut_seq), 1)
             self.assertEqual(two_mut_seq[1999][0].mutated_sequence, "ATAAACAAAA")       # type: ignore
             self.assertIn(two_mut_seq[1999][0].fitness, [0.6, 0.7]) # type: ignore  
+
+class TestLoadMutationsFromJson(unittest.TestCase):
+    """Test cases for loading mutations from JSON files."""
+
+    def setUp(self):
+        """Create a temporary JSON file."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.json_file = os.path.join(self.temp_dir, "test_mutations.json")
+        
+        # Create test data
+        test_data = {
+            "1_TESTGENE1_gene:10000-12000_timestamp": {
+                "reference_sequence": "A" * 3020,
+                "100": ["0AC|0.95", "100AT|0.90"]
+            },
+            "2_TESTGENE2_gene:20000-22000_timestamp": {
+                "reference_sequence": "T" * 3020,
+                "100": ["0TG|0.85"]
+            }
+        }
+        
+        with open(self.json_file, 'w') as f:
+            json.dump(test_data, f)
+
+    def tearDown(self):
+        """Clean up temporary files."""
+        import shutil
+        shutil.rmtree(self.temp_dir)
+
+    def test_load_mutations_from_json(self):
+        """Test loading mutations from JSON file."""
+        mutations_dict = load_mutations_from_json(self.json_file)
+        
+        self.assertEqual(len(mutations_dict), 2)
+        self.assertIn("1_TESTGENE1_gene:10000-12000_timestamp", mutations_dict)
+        self.assertIn("2_TESTGENE2_gene:20000-22000_timestamp", mutations_dict)
+        
+        gene1 = mutations_dict["1_TESTGENE1_gene:10000-12000_timestamp"]
+        self.assertIsInstance(gene1, MutationsGene)
+        self.assertEqual(len(gene1.generation_dict[100]), 2)
+
+        #compare actual instance of objects
+        expected_gene1 = MutationsGene.__new__(MutationsGene)
+        expected_gene1.reference_sequence = "A" * 3020
+        expected_gene1.generation_dict = {
+            100: [
+                MutatedSequence.from_string(expected_gene1.reference_sequence, "0AC|0.95"),
+                MutatedSequence.from_string(expected_gene1.reference_sequence, "100AT|0.90")
+            ]
+        }
+        self.assertEqual(gene1, expected_gene1)
 
 
 if __name__ == "__main__":
