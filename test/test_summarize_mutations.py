@@ -493,14 +493,17 @@ class TestSummarizeMutations(unittest.TestCase):
         """Test summarizing mutations from all folders."""
         output_file = os.path.join(self.temp_dir, "all_mutated_sequences_test.json")
         
-        data_direct = summarize_mutations_all_folders(
+        data_dict, save_path = summarize_mutations_all_folders(
             self.base_folder, 
             "test", 
             final_generation=1999,
             output_folder=self.temp_dir
         )
         
+        # Check that the save_path is returned correctly
+        self.assertEqual(save_path, output_file)
         self.assertTrue(os.path.exists(output_file))
+        self.assertTrue(os.path.exists(save_path))
         
         with open(output_file, 'r') as f:
             data_direct = json.load(f)

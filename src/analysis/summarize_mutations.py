@@ -279,7 +279,7 @@ def load_mutations_from_json(json_file: str) -> Dict[str, MutationsGene]:
     return results
 
 
-def summarize_mutations_all_folders(base_folder_path: str, name: str, final_generation: int, generation: Optional[int] = None, output_folder: str = ".") -> Dict[str, MutationsGene]:
+def summarize_mutations_all_folders(base_folder_path: str, name: str, final_generation: int, generation: Optional[int] = None, output_folder: str = ".") -> Tuple[Dict[str, MutationsGene], str]:
     print_subsection("Processing Mutations")
     output_name = f"all_mutated_sequences_{name}"
     if generation is not None:
@@ -307,7 +307,7 @@ def summarize_mutations_all_folders(base_folder_path: str, name: str, final_gene
     with open(save_path, "w") as f:
         json.dump({gene: gene_info.to_dict() for gene, gene_info in all_results.items()}, f, indent=2)
     print_status(f"Successfully processed {len(all_results)} genes", "SUCCESS")
-    return all_results
+    return all_results, save_path
 
 
 def parse_args():
@@ -340,10 +340,11 @@ def main():
         print(f"  Specific generation: {args.generation}")
     
     try:
-        summarize_mutations_all_folders(args.results_folder, args.name, args.final_generation, args.generation, output_folder=args.output_folder)
+        all_results, save_path = summarize_mutations_all_folders(args.results_folder, args.name, args.final_generation, args.generation, output_folder=args.output_folder)
         print_section_header("ANALYSIS COMPLETE", "=")
         print_status(f"Finished at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print_status("Mutation summarization completed successfully", "SUCCESS")
+        print(f"\nOUTPUT_FILE={save_path}")
         print()
     except Exception as e:
         print_section_header("ANALYSIS FAILED", "=")
