@@ -10,8 +10,10 @@ import json
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import argparse
+from datetime import datetime
 
 from analysis.summarize_mutations import MutatedSequence
+from analysis.io import print_section_header, print_subsection, print_status
 
 
 COLORS = {"A": "green", "C": "blue", "G": "orange", "T": "red", "Sum": "black"}
@@ -522,7 +524,17 @@ def parse_args():
 
 
 def main():
+    print_section_header("ANALYZE MUTATIONS", "=")
+    print_status(f"Started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
     args = parse_args()
+    
+    print_subsection("Configuration")
+    print(f"  Mutation data: {args.mutation_data}")
+    print(f"  Name: {args.name}")
+    print(f"  Output folder: {args.output_folder}")
+    print(f"  Window size: {args.window_size}")
+    print(f"  Generation: {args.generation}")
     
     # Determine which functions to run based on explicit flags
     run_half_max_stacked = args.plot_half_max_stacked or args.all
@@ -538,15 +550,21 @@ def main():
 
     if run_half_max_stacked:
         try:
+            print_subsection("Plotting Half Max Mutations Stacked")
             plot_hist_half_max_mutations_stacked(mutation_data_path=args.mutation_data, name=args.name, output_format=args.output_format, output_folder=args.output_folder)
+            print_status("Half max mutations stacked plot completed", "SUCCESS")
         except Exception as e:
-            print(f"Error while plotting half max mutations stacked: {e}")
+            print_status("Failed to plot half max mutations stacked", "ERROR")
+            print(f"  Error details: {e}")
     
     if run_mutation_distances:
         try:
+            print_subsection("Plotting Mutation Distances")
             plot_mutation_distances(mutation_data_path=args.mutation_data, name=args.name, output_format=args.output_format, output_folder=args.output_folder)
+            print_status("Mutation distances plot completed", "SUCCESS")
         except Exception as e:
-            print(f"Error while calculating mutation distances: {e}")
+            print_status("Failed to calculate mutation distances", "ERROR")
+            print(f"  Error details: {e}")
     
     if run_mutations_location:
         # Determine plot types based on specific flags
@@ -559,21 +577,32 @@ def main():
             plot_stacked, plot_rolling = True, True
 
         try:
+            print_subsection("Plotting Mutations Location")
             plot_mutations_location(mutation_data_path=args.mutation_data, name=args.name, 
                                   window_size=args.window_size,
                                   plot_stacked=plot_stacked,
                                   plot_rolling=plot_rolling,
                                   output_folder=args.output_folder,
                                   output_format=args.output_format)
+            print_status("Mutations location plots completed", "SUCCESS")
         except Exception as e:
-            print(f"Error while plotting mutations location: {e}")
+            print_status("Failed to plot mutations location", "ERROR")
+            print(f"  Error details: {e}")
         
     if run_mutation_conservation:
         try:
+            print_subsection("Plotting Mutation Conservation")
             plot_hist_mutation_conservation(mutation_data_path=args.mutation_data, name=args.name, output_format=args.output_format, generation=args.generation,
                                              mutable_positions=args.mutable_positions, output_folder=args.output_folder)
+            print_status("Mutation conservation plot completed", "SUCCESS")
         except Exception as e:
-            print(f"Error while plotting mutation conservation: {e}")
+            print_status("Failed to plot mutation conservation", "ERROR")
+            print(f"  Error details: {e}")
+    
+    print_section_header("ANALYSIS COMPLETE", "=")
+    print_status(f"Finished at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print_status("All selected analyses completed successfully", "SUCCESS")
+    print()
 
 if __name__ == "__main__":
     main()

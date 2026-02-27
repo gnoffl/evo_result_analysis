@@ -5,6 +5,9 @@ from typing import Dict, List, Optional, Tuple
 from pyfaidx import Fasta
 import re
 from tqdm import tqdm
+from datetime import datetime
+
+from analysis.io import print_section_header, print_subsection, print_status
 
 
 class MutatedSequence:
@@ -277,6 +280,7 @@ def load_mutations_from_json(json_file: str) -> Dict[str, MutationsGene]:
 
 
 def summarize_mutations_all_folders(base_folder_path: str, name: str, final_generation: int, generation: Optional[int] = None, output_folder: str = ".") -> Dict[str, MutationsGene]:
+    print_subsection("Processing Mutations")
     output_name = f"all_mutated_sequences_{name}"
     if generation is not None:
         output_name += f"_gen{generation}"
@@ -286,7 +290,9 @@ def summarize_mutations_all_folders(base_folder_path: str, name: str, final_gene
     if os.path.exists(save_path):
         raise FileExistsError(f"Output file {save_path} already exists. Please choose a different name or delete the existing file.")
 
+    print_status(f"Reading gene folders from {base_folder_path}")
     gene_folders = [os.path.join(base_folder_path, folder) for folder in os.listdir(base_folder_path) if os.path.isdir(os.path.join(base_folder_path, folder))]
+    print_status(f"Found {len(gene_folders)} gene folders to process")
     all_results = {}
     
     for gene_folder in tqdm(gene_folders, desc="Processing genes"):
@@ -295,9 +301,12 @@ def summarize_mutations_all_folders(base_folder_path: str, name: str, final_gene
             gene_info = MutationsGene(gene_folder, final_generation=final_generation, generation=generation)
             all_results[gene_name] = gene_info
         except Exception as e:
-            print(f"Error processing {gene_name}: {e}")
+            print_status(f"Error processing {gene_name}: {e}", "WARNING")
+    
+    print_status(f"Saving results to {save_path}")
     with open(save_path, "w") as f:
         json.dump({gene: gene_info.to_dict() for gene, gene_info in all_results.items()}, f, indent=2)
+    print_status(f"Successfully processed {len(all_results)} genes", "SUCCESS")
     return all_results
 
 
@@ -317,8 +326,30 @@ def parse_args():
 
 
 def main():
+    print_section_header("SUMMARIZE MUTATIONS ANALYSIS", "=")
+    print_status(f"Started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
     args = parse_args()
-    summarize_mutations_all_folders(args.results_folder, args.name, args.final_generation, args.generation, output_folder=args.output_folder)
+    
+    print_subsection("Configuration")
+    print(f"  Results folder: {args.results_folder}")
+    print(f"  Name: {args.name}")
+    print(f"  Output folder: {args.output_folder}")
+    print(f"  Final generation: {args.final_generation}")
+    if args.generation is not None:
+        print(f"  Specific generation: {args.generation}")
+    
+    try:
+        summarize_mutations_all_folders(args.results_folder, args.name, args.final_generation, args.generation, output_folder=args.output_folder)
+        print_section_header("ANALYSIS COMPLETE", "=")
+        print_status(f"Finished at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print_status("Mutation summarization completed successfully", "SUCCESS")
+        print()
+    except Exception as e:
+        print_section_header("ANALYSIS FAILED", "=")
+        print_status(f"Error: {e}", "ERROR")
+        print()
+        raise
 
 
 if __name__ == "__main__":

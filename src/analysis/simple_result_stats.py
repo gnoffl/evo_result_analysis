@@ -5,6 +5,9 @@ import numpy as np
 import argparse
 from typing import Dict, Any, List, Optional, Tuple
 from tqdm import tqdm
+from datetime import datetime
+
+from analysis.io import print_section_header, print_subsection, print_status
 
 
 def get_pareto_front(gene_path: str) -> Optional[List[Tuple[str, float, int]]]:
@@ -656,7 +659,16 @@ def parse_args():
 
 
 def main():
+    print_section_header("SIMPLE RESULT STATS ANALYSIS", "=")
+    print_status(f"Started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
     args = parse_args()
+    
+    print_subsection("Configuration")
+    print(f"  Results folder: {args.results_folder or 'Using stats file'}")
+    print(f"  Stats file: {args.stats_file or 'Will generate'}")
+    print(f"  Name: {args.name}")
+    print(f"  Output folder: {args.output_folder}")
     
     # Determine which functions to run based on explicit flags
     run_summary = args.summary or args.all
@@ -683,81 +695,86 @@ def main():
 
     if run_summary:
         try:
-            print("Summarizing stats...")
+            print_subsection("Summarizing Statistics")
             summarize_stats(stats=stats, name=args.name, output_folder=args.output_folder)
-            print("Stats summarized successfully.")
+            print_status("Stats summarized successfully", "SUCCESS")
         except Exception as e:
-            print("failed to summarize stats.")
-            print(f"Error summarizing stats: {e}")
+            print_status("Failed to summarize stats", "ERROR")
+            print(f"  Error details: {e}")
 
     if run_fitness_plot:
         try:
-            print("Visualizing start vs max fitness...")
+            print_subsection("Visualizing Start vs Max Fitness")
             visualize_start_vs_max_fitness(stats=stats, name=args.name, output_folder=args.output_folder, output_format=args.output_format)
-            print("Start vs max fitness visualization completed successfully.")
+            print_status("Start vs max fitness visualization completed", "SUCCESS")
         except Exception as e:
-            print("failed to visualize start vs max fitness.")
-            print(f"Error while plotting fitness: {e}")
+            print_status("Failed to visualize start vs max fitness", "ERROR")
+            print(f"  Error details: {e}")
 
     if run_mutations_plot:
         try:
-            print("Visualizing start vs max fitness by mutations...")
+            print_subsection("Visualizing Start vs Max Fitness by Mutations")
             visualize_start_vs_max_fitness_by_mutations(stats=stats, name=args.name, output_folder=args.output_folder, output_format=args.output_format)
-            print("Start vs max fitness by mutations visualization completed successfully.")
+            print_status("Start vs max fitness by mutations visualization completed", "SUCCESS")
         except Exception as e:
-            print("failed to visualize start vs max fitness by mutations.")
-            print(f"Error while plotting mutations: {e}")
+            print_status("Failed to visualize start vs max fitness by mutations", "ERROR")
+            print(f"  Error details: {e}")
 
     if run_half_max_mutations:
         try:
-            print("Plotting half max mutations vs initial fitness...")
+            print_subsection("Plotting Half Max Mutations vs Initial Fitness")
             plot_half_max_mutations_vs_initial_fitness(stats=stats, name=args.name, output_format=args.output_format, output_folder=args.output_folder)
-            print("Half max mutations vs initial fitness plot completed successfully.")
+            print_status("Half max mutations vs initial fitness plot completed", "SUCCESS")
         except Exception as e:
-            print("failed to plot half max mutations vs initial fitness.")
-            print(f"Error while plotting half max mutations: {e}")
+            print_status("Failed to plot half max mutations vs initial fitness", "ERROR")
+            print(f"  Error details: {e}")
 
     if run_hist_half_max_mutations:
         try:
-            print("Plotting histogram of half max mutations...")
+            print_subsection("Plotting Histogram of Half Max Mutations")
             hist_half_max_mutations(stats=stats, name=args.name, output_format=args.output_format, output_folder=args.output_folder)
-            print("Histogram of half max mutations plot completed successfully.")
+            print_status("Histogram of half max mutations plot completed", "SUCCESS")
         except Exception as e:
-            print("failed to plot histogram of half max mutations.")
-            print(f"Error while plotting histogram of half max mutations: {e}")
+            print_status("Failed to plot histogram of half max mutations", "ERROR")
+            print(f"  Error details: {e}")
 
     if run_random_pareto:
         try:
-            print("Drawing random pareto fronts...")
+            print_subsection("Drawing Random Pareto Fronts")
             if not args.results_folder:
                 raise ValueError("You must provide a results folder to draw random pareto fronts.")
             show_random_fronts(results_folder=args.results_folder, num_samples=args.number, output_folder=args.output_folder, output_format=args.output_format)
-            print("Random pareto fronts drawn successfully.")
+            print_status("Random pareto fronts drawn successfully", "SUCCESS")
         except Exception as e:
-            print("failed to draw random pareto fronts.")
-            print(f"Error while plotting random pareto fronts: {e}")
+            print_status("Failed to draw random pareto fronts", "ERROR")
+            print(f"  Error details: {e}")
     
     if run_average_pareto:
         try:
-            print("Drawing average pareto front...")
+            print_subsection("Drawing Average Pareto Front")
             if not args.results_folder:
                 raise ValueError("You must provide a results folder to draw the average pareto front.")
             show_average_pareto_front(results_folder=args.results_folder, output_format=args.output_format, output_folder=args.output_folder, max_number_mutation=args.max_number_mutation)
-            print("Average pareto front drawn successfully.")
+            print_status("Average pareto front drawn successfully", "SUCCESS")
         except Exception as e:
-            print("failed to draw average pareto front.")
-            print(f"Error while plotting average pareto front: {e}")
+            print_status("Failed to draw average pareto front", "ERROR")
+            print(f"  Error details: {e}")
 
     if plot_average_loss:
         try:
-            print("Plotting average loss...")
+            print_subsection("Plotting Average Loss")
             if not args.results_folder:
                 raise ValueError("You must provide a results folder to draw the average loss.")
             plot_loss_over_generations(results_folder=args.results_folder, name=args.name, output_folder=args.output_folder, max_number_mutation=args.max_number_mutation, output_format=args.output_format, last_generation=args.last_generation)
-            print("Average loss plot completed successfully.")
+            print_status("Average loss plot completed successfully", "SUCCESS")
         except Exception as e:
-            print("failed to plot average loss.")
-            print(f"Error while plotting average loss: {e}")
+            print_status("Failed to plot average loss", "ERROR")
+            print(f"  Error details: {e}")
+    
+    print_section_header("ANALYSIS COMPLETE", "=")
+    print_status(f"Finished at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print_status("All selected analyses completed successfully", "SUCCESS")
+    print()
 
 
 if __name__ == "__main__":
