@@ -34,7 +34,7 @@ usage() {
     echo ""
     echo "Optional Arguments (All steps):"
     echo "  --output-format <format>        Output format for plots (default: png)"
-    echo "  --last-generation <int>         Last generation for simple_result_stats (default: 1999)"
+    echo "  -l, --last-generation <int>         Last generation for simple_result_stats (default: 1999)"
     echo ""
     echo "Example:"
     echo "  $0 ./results/GOF_run1 GOF_analysis ./outputs"
@@ -83,7 +83,7 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_FORMAT="$2"
             shift 2
             ;;
-        --last-generation)
+        -l|--last-generation)
             LAST_GENERATION="$2"
             shift 2
             ;;
