@@ -30,10 +30,10 @@ usage() {
     echo ""
     echo "Optional Arguments (Step 3: analyze_mutations):"
     echo "  -w, --window-size <int>         Window size for rolling mean plots (default: 31)"
-    echo "  --mutable-positions <int>       Number of mutable positions (default: 3000)"
+    echo "  -m, --mutable-positions <int>       Number of mutable positions (default: 3000)"
     echo ""
     echo "Optional Arguments (All steps):"
-    echo "  --output-format <format>        Output format for plots (default: png)"
+    echo "  -o, --output-format <format>        Output format for plots (default: png)"
     echo "  -l, --last-generation <int>         Last generation for simple_result_stats (default: 1999)"
     echo ""
     echo "Example:"
@@ -75,11 +75,11 @@ while [[ $# -gt 0 ]]; do
             WINDOW_SIZE="$2"
             shift 2
             ;;
-        --mutable-positions)
+        -m|--mutable-positions)
             MUTABLE_POSITIONS="$2"
             shift 2
             ;;
-        --output-format)
+        -o|--output-format)
             OUTPUT_FORMAT="$2"
             shift 2
             ;;
