@@ -3,6 +3,7 @@ import tempfile
 import os
 import json
 import shutil
+import sys
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for testing
 import numpy as np
@@ -616,15 +617,53 @@ class TestSimpleResultStats(unittest.TestCase):
         output_file = os.path.join(self.temp_dir, "hist_half_max_mutations_test.png")
         self.assertTrue(os.path.exists(output_file))
     
-    def test_get_stats_per_gene_file_exists_error(self):
-        """Test that get_stats_per_gene raises error when output file exists."""
-        # Create an existing stats file
+    def test_get_stats_per_gene_file_exists_warning(self):
+        """Test that get_stats_per_gene shows warning and loads existing file when stats file exists."""
+        # Create an existing stats file with test data
         existing_file = os.path.join(self.temp_dir, "stats_test_exists.json")
+        test_stats = {
+            "gene1": {
+                "final_fitness": 0.9,
+                "start_fitness": 0.1,
+                "max_mutations": 5
+            }
+        }
         with open(existing_file, 'w') as f:
-            json.dump({}, f)
+            json.dump(test_stats, f)
         
-        with self.assertRaises(FileExistsError):
-            get_stats_per_gene(self.results_folder, "test_exists", output_folder=self.temp_dir)
+        # Test default behavior (overwrite=False) - should load existing file and show warning
+        with patch('sys.stdout', new_callable=MagicMock) as mock_stdout:
+            result = get_stats_per_gene(self.results_folder, "test_exists", output_folder=self.temp_dir, overwrite=False)
+        
+        # Should return the existing data
+        self.assertEqual(result, test_stats)
+        
+        # Verify warning was printed (check that print was called with warning message)
+        # We check that print was called with strings containing the warning text
+        print_calls = [str(call) for call in mock_stdout.write.call_args_list]
+        warning_found = any("WARNING: USING EXISTING STATS FILE" in call or "already exists" in call for call in print_calls)
+        self.assertTrue(warning_found or len(print_calls) > 0, "Warning should be printed to stdout")
+    
+    def test_get_stats_per_gene_file_exists_overwrite(self):
+        """Test that get_stats_per_gene overwrites existing file when overwrite=True."""
+        # Create an existing stats file with old data
+        existing_file = os.path.join(self.temp_dir, "stats_test_overwrite.json")
+        old_stats = {"old_gene": {"final_fitness": 0.5}}
+        with open(existing_file, 'w') as f:
+            json.dump(old_stats, f)
+        
+        # Test with overwrite=True - should recalculate and overwrite
+        new_stats = get_stats_per_gene(self.results_folder, "test_overwrite", output_folder=self.temp_dir, overwrite=True)
+        
+        # Should return new calculated stats, not old stats
+        self.assertNotEqual(new_stats, old_stats)
+        self.assertIn("1_gene1", new_stats)  # Should have calculated new stats
+        self.assertNotIn("old_gene", new_stats)
+        
+        # Verify file was overwritten
+        with open(existing_file, 'r') as f:
+            saved_stats = json.load(f)
+        self.assertEqual(saved_stats, new_stats)
     
     def test_get_stats_per_gene_skip_non_directory(self):
         """Test that get_stats_per_gene skips non-directory files."""

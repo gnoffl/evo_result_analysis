@@ -57,13 +57,14 @@ def calculate_half_max_mutations(pareto_front: List[Tuple[str, float, float]]) -
 # [[sequence_as_string, fitness, number_of_mutations], ...]
 # calculate the average and std of the maximal fitness and number of mutations
 
-def get_stats_per_gene(results_folder: str, name: str, output_folder: str = ".") -> Dict[str, Dict[str, Any]]:
+def get_stats_per_gene(results_folder: str, name: str, output_folder: str = ".", overwrite: bool = False) -> Dict[str, Dict[str, Any]]:
     """Calculate statistics for each gene in the results folder.
 
     Args:
         results_folder (str): Path to the results folder containing gene directories.
         name (str): Name to distinguish output files.
         output_folder (str): Path to the output folder for saving results. Defaults to ".".
+        overwrite (bool): If True, overwrite existing stats file. If False and file exists, use existing file.
 
     Returns:
         Dict[str, Dict[str, Any]]: Dictionary containing statistics for each gene.
@@ -71,7 +72,18 @@ def get_stats_per_gene(results_folder: str, name: str, output_folder: str = ".")
     print(f"creating stats for {name} in {output_folder}")
     output_path = os.path.join(output_folder, f'stats_{name}.json')
     if os.path.exists(output_path):
-        raise FileExistsError(f"Stats file {output_path} already exists. If you dont want calculations to be redone, you can specify --stats_file next time.")
+        if not overwrite:
+            print("\n" + "="*80)
+            print("WARNING: USING EXISTING STATS FILE".center(80))
+            print("="*80)
+            print(f"Stats file already exists: {output_path}")
+            print("Loading existing file instead of recalculating.")
+            print("Use --overwrite flag to force recalculation.")
+            print("="*80 + "\n")
+            with open(output_path, 'r') as f:
+                return json.load(f)
+        else:
+            print(f"Overwriting existing stats file: {output_path}")
 
     stats = {}
     print(f"Analyzing results in {results_folder}...")
@@ -648,6 +660,7 @@ def parse_args():
     parser.add_argument('--plot_half_max_mutations', action='store_true', help='Draw half max mutations vs initial fitness from the results folder')
     parser.add_argument('--plot_half_max_mutations_hist', action='store_true', help='Draw histogram of half max mutations from the results folder')
     parser.add_argument('--all', action='store_true', help='Run all analysis steps')
+    parser.add_argument('--overwrite', action='store_true', help='Overwrite existing stats file if it exists')
     
     args = parser.parse_args()
     if args.results_folder is None and args.stats_file is None:
@@ -691,7 +704,7 @@ def main():
             with open(args.stats_file, 'r') as f:
                 stats = json.load(f)
         else:
-            stats = get_stats_per_gene(args.results_folder, args.name, args.output_folder)
+            stats = get_stats_per_gene(args.results_folder, args.name, args.output_folder, overwrite=args.overwrite)
 
     if run_summary:
         try:

@@ -288,7 +288,14 @@ def summarize_mutations_all_folders(base_folder_path: str, name: str, final_gene
     os.makedirs(output_folder, exist_ok=True)
     save_path = os.path.join(output_folder, output_name)
     if os.path.exists(save_path):
-        raise FileExistsError(f"Output file {save_path} already exists. Please choose a different name or delete the existing file.")
+        print_status(f"Output file already exists: {save_path}", "WARNING")
+        print_status("Skipping mutation extraction - using existing file", "INFO")
+        # Load and return the existing data
+        with open(save_path, 'r') as f:
+            existing_data = json.load(f)
+        # Convert back to MutationsGene objects
+        all_results = {gene: MutationsGene.from_dict(data) for gene, data in existing_data.items()}
+        return all_results, save_path
 
     print_status(f"Reading gene folders from {base_folder_path}")
     gene_folders = [os.path.join(base_folder_path, folder) for folder in os.listdir(base_folder_path) if os.path.isdir(os.path.join(base_folder_path, folder))]
