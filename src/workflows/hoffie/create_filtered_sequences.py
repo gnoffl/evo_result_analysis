@@ -132,6 +132,7 @@ def parse_args():
     )
     parser.add_argument(
         "--data-dir",
+        "-d",
         type=Path,
         default=Path(__file__).parent / "data",
         help="Directory containing input FASTA files (default: ./data)"

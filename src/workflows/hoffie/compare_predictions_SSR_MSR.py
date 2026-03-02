@@ -64,6 +64,13 @@ def plot_goi_pareto_comparison(genes_of_interest: List[str], output_path: str, r
         })
         plot_single_run(data = frame, output_path=output_path)
 
+def parse_single_name(name: str) -> Tuple[str, float, int]:
+    name_parts = name.split('_')
+    version_number_appended = name_parts[-2] != "mutations"
+    pred = float(name_parts[-4]) if version_number_appended else float(name_parts[-3])
+    mutation = int(name_parts[-2]) if version_number_appended else int(name_parts[-1])
+    base_name = '_'.join(name_parts[:-4]) if version_number_appended else '_'.join(name_parts[:-3])
+    return base_name, pred, mutation
 
 def parse_fasta(fasta_path: str, genes: List[str]) -> Tuple[List[float], List[str], List[int], List[str]]:
     fasta = Fasta(fasta_path)
@@ -73,11 +80,7 @@ def parse_fasta(fasta_path: str, genes: List[str]) -> Tuple[List[float], List[st
         name = record.name
         if genes and not any(gene in name for gene in genes):
             continue
-        name_parts = name.split('_')
-        version_number_appended = name_parts[-2] != "mutations"
-        pred = float(name_parts[-4]) if version_number_appended else float(name_parts[-3])
-        mutation = float(name_parts[-2]) if version_number_appended else float(name_parts[-1])
-        base_name = '_'.join(name_parts[:-4]) if version_number_appended else '_'.join(name_parts[:-3])
+        base_name, pred, mutation = parse_single_name(name)
         mutations.append(mutation)
         sequences.append(seq)
         predictions.append(pred)

@@ -1,6 +1,7 @@
 import os
 import json
 from pyfaidx import Fasta
+from workflows.hoffie.compare_predictions_SSR_MSR import parse_single_name
 
 def get_run_paths():
     data_path = os.path.join(os.path.dirname(__file__), "data", "ubi", "run_results")
@@ -24,7 +25,7 @@ def find_best_sequence():
         print(f"  Gene: {gene}, Total Difference: {total_diff}")
 
 
-def merge_sequences_into_plasmid(selected_sequence: str = "T03"):
+def merge_sequences_into_plasmid_ubi(selected_sequence: str = "T03"):
     plasmid = Fasta(os.path.join(os.path.dirname(__file__), "data", "ubi", "pIK74.fa"))
     sequence = plasmid["PLASMID"]
     plasmid_start = sequence[:1900]
@@ -64,6 +65,42 @@ def merge_sequences_into_plasmid(selected_sequence: str = "T03"):
             print(len(seq))
             out.write(f"{header}\n{seq}\n")
 
+
+def merge_sequences_into_plasmid_zea():
+    plasmid = Fasta(os.path.join(os.path.dirname(__file__), "data", "zea", "pIK74.fa"))
+    sequence = plasmid["PLASMID"]
+    plasmid_start = sequence[:1900]
+    plasmid_end = sequence[3890:]
+    reference_seq = Fasta("src/workflows/hoffie/data/zea/Zm00001eb002590_longer_intragenic_extracted.fa")["1_Zm00001eb002590_gene:7300989-7298971"]
+    missing_reference = str(reference_seq[1500:1581])
+    content = {}
+    reference_head = ">1_Zm00001eb002590_gene:7300989-7298971_reference_fitness_0.13099_mutations_000"
+    sequences = ["ssr_natural_3_260205_120047_028383__1_Zm00001eb002590_gene:7300989-7298971_260205_120109_614422_fitness_0.25229_mutations_045", "ssr_3_260205_120046_995542__1_Zm00001eb002590_gene:7300989-7298971_260205_120109_617394_fitness_0.99391_mutations_045"]
+    run_files = ["src/workflows/hoffie/data/zea/ssr_3_260205_120046_995542_pareto_fronts_no_restriction_sites.fa", "src/workflows/hoffie/data/zea/ssr_natural_3_260205_120047_028383_pareto_fronts_no_restriction_sites.fa"]
+    content[reference_head] = str(plasmid_start) + str(reference_seq[:1500]) + missing_reference + str(plasmid_end)
+
+
+    for run_file in run_files:
+        fasta = Fasta(run_file)
+        for seq in sequences:
+            if seq in fasta:
+                optimized_sequence = str(fasta[seq])
+                optimized_sequence = optimized_sequence.rstrip('N')
+                merged_sequence = str(plasmid_start) + optimized_sequence + missing_reference + str(plasmid_end)
+                content[f">{seq}"] = merged_sequence
+            else:
+                print(f"Warning: Sequence {seq} not found in {run_file}")
+    
+    output_file = os.path.join(os.path.dirname(__file__), "data", "zea", "merged_plasmids.fa")
+    with open(output_file, 'w') as out:
+        seq = content.pop(reference_head)
+        print(len(seq))
+        out.write(f"{reference_head}\n{seq}\n")
+        for header, seq in content.items():
+            print(len(seq))
+            out.write(f"{header}\n{seq}\n")
+
 if __name__ == "__main__":
-    # find_best_sequence()
-    merge_sequences_into_plasmid()
+    find_best_sequence()
+    # merge_sequences_into_plasmid_ubi()
+    # merge_sequences_into_plasmid_zea()
