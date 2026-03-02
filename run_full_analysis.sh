@@ -35,10 +35,12 @@ usage() {
     echo "Optional Arguments (All steps):"
     echo "  -o, --output-format <format>        Output format for plots (default: png)"
     echo "  -l, --last-generation <int>         Last generation for simple_result_stats (default: 1999)"
+    echo "      --overwrite                     Force overwrite of existing stats files (default: false)"
     echo ""
     echo "Example:"
     echo "  $0 ./results/GOF_run1 GOF_analysis ./outputs"
     echo "  $0 ./results/GOF_run1 GOF_analysis ./outputs -f 1500 -g 1000 -w 51"
+    echo "  $0 ./results/GOF_run1 GOF_analysis ./outputs --overwrite"
     exit 1
 }
 
@@ -59,6 +61,7 @@ WINDOW_SIZE=31
 MUTABLE_POSITIONS=3000
 OUTPUT_FORMAT="png"
 LAST_GENERATION=1999
+OVERWRITE_FLAG=""
 
 # Parse optional arguments
 while [[ $# -gt 0 ]]; do
@@ -86,6 +89,10 @@ while [[ $# -gt 0 ]]; do
         -l|--last-generation)
             LAST_GENERATION="$2"
             shift 2
+            ;;
+        --overwrite)
+            OVERWRITE_FLAG="--overwrite"
+            shift
             ;;
         *)
             echo -e "${RED}Unknown option: $1${NC}"
@@ -139,6 +146,7 @@ if python -m src.analysis.simple_result_stats \
     --output_folder "$OUTPUT_FOLDER" \
     --output_format "$OUTPUT_FORMAT" \
     --last_generation $LAST_GENERATION \
+    $OVERWRITE_FLAG \
     --all; then
     echo -e "${GREEN}✓ simple_result_stats.py completed successfully${NC}"
 else
