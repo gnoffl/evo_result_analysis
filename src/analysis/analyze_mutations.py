@@ -503,7 +503,7 @@ def parse_args():
 
     # Analysis control flags - explicit inclusion
     parser.add_argument('--plot_half_max_stacked', action='store_true', help='Generate stacked histogram of mutations at half max fitness')
-    parser.add_argument('--pllsation', action='store_true', help='Generate mutation location plots (both stacked and rolling by default)')
+    parser.add_argument('--plot_mutations_location', action='store_true', help='Generate mutation location plots (both stacked and rolling by default)')
     parser.add_argument('--plot_stacked_only', action='store_true', help='Generate only stacked bar plots for mutation locations')
     parser.add_argument('--plot_rolling_only', action='store_true', help='Generate only rolling window plots for mutation locations')
     parser.add_argument("--plot_mutation_conservation", action='store_true', help='Calculate conservation statistics for mutations in each gene')
