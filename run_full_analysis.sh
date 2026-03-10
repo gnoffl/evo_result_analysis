@@ -36,6 +36,7 @@ usage() {
     echo "  -o, --output-format <format>        Output format for plots (default: png)"
     echo "  -l, --last-generation <int>         Last generation for simple_result_stats (default: 1999)"
     echo "      --overwrite                     Force overwrite of existing stats files (default: false)"
+    echo "      --no-titles                     Omit titles from all generated figures (default: false)"
     echo ""
     echo "Example:"
     echo "  $0 ./results/GOF_run1 GOF_analysis ./outputs"
@@ -62,6 +63,7 @@ MUTABLE_POSITIONS=3000
 OUTPUT_FORMAT="png"
 LAST_GENERATION=1999
 OVERWRITE_FLAG=""
+NO_TITLES_FLAG=""
 
 # Parse optional arguments
 while [[ $# -gt 0 ]]; do
@@ -92,6 +94,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --overwrite)
             OVERWRITE_FLAG="--overwrite"
+            shift
+            ;;
+        --no-titles)
+            NO_TITLES_FLAG="--no_titles"
             shift
             ;;
         *)
@@ -130,6 +136,12 @@ echo "  Last Generation (stats): $LAST_GENERATION"
 echo "  Window Size: $WINDOW_SIZE"
 echo "  Mutable Positions: $MUTABLE_POSITIONS"
 echo "  Output Format: $OUTPUT_FORMAT"
+if [ -n "$OVERWRITE_FLAG" ]; then
+    echo "  Overwrite Existing Stats: true"
+fi
+if [ -n "$NO_TITLES_FLAG" ]; then
+    echo "  No Titles: true"
+fi
 echo ""
 echo "Started at: $(date '+%Y-%m-%d %H:%M:%S')"
 echo "=========================================="
@@ -147,6 +159,7 @@ if python -m src.analysis.simple_result_stats \
     --output_format "$OUTPUT_FORMAT" \
     --last_generation $LAST_GENERATION \
     $OVERWRITE_FLAG \
+    $NO_TITLES_FLAG \
     --all; then
     echo -e "${GREEN}✓ simple_result_stats.py completed successfully${NC}"
 else
@@ -203,6 +216,7 @@ else
         --window_size $WINDOW_SIZE \
         --mutable_positions $MUTABLE_POSITIONS \
         --output_format "$OUTPUT_FORMAT" \
+        $NO_TITLES_FLAG \
         --all; then
         echo -e "${GREEN}✓ analyze_mutations.py completed successfully${NC}"
     else

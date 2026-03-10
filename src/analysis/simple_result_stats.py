@@ -169,7 +169,7 @@ def summarize_stats(stats: Dict[str, Dict[str, Any]], name: str, output_folder: 
     return result
 
 
-def visualize_start_vs_max_fitness(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".") -> None:
+def visualize_start_vs_max_fitness(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True) -> None:
     """create a scatter plot of the start fitness vs max fitness
 
     Args:
@@ -201,7 +201,8 @@ def visualize_start_vs_max_fitness(stats: Dict[str, Dict[str, Any]], name: str, 
     
     plt.xlabel('Start Fitness', fontsize=13)
     plt.ylabel('Final Fitness', fontsize=13)
-    plt.title('Start Fitness vs Final Fitness', fontsize=15)
+    if titles:
+        plt.title('Start Fitness vs Final Fitness', fontsize=15)
     # make axis tick labels size 12
     plt.xticks(fontsize=12)
     plt.yticks(fontsize=12)
@@ -209,7 +210,7 @@ def visualize_start_vs_max_fitness(stats: Dict[str, Dict[str, Any]], name: str, 
     plt.savefig(os.path.join(output_folder, f'start_vs_final_fitness_{name}.{output_format}'), bbox_inches='tight')
 
 
-def visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".") -> None:
+def visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True) -> None:
     """create a scatter plot of the start fitness vs max fitness colored by mutations at half max fitness
 
     Args:
@@ -217,11 +218,11 @@ def visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]]
         name (str): Name to distinguish the output file.
         output_folder (str): Path to the output folder for saving results. Defaults to ".".
     """
-    draw_visualize_start_vs_max_fitness_by_mutations(stats, f"{name}_absolute", relative=False, output_folder=output_folder, output_format=output_format)
-    draw_visualize_start_vs_max_fitness_by_mutations(stats, f"{name}_relative", relative=True, output_folder=output_folder, output_format=output_format)
+    draw_visualize_start_vs_max_fitness_by_mutations(stats, f"{name}_absolute", relative=False, output_folder=output_folder, output_format=output_format, titles=titles)
+    draw_visualize_start_vs_max_fitness_by_mutations(stats, f"{name}_relative", relative=True, output_folder=output_folder, output_format=output_format, titles=titles)
 
 
-def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, relative: bool = False, output_folder: str = ".") -> None:
+def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, relative: bool = False, output_folder: str = ".", titles: bool = True) -> None:
     """create a scatter plot of the start fitness vs max fitness colored by mutations at half max fitness
 
     Args:
@@ -253,12 +254,13 @@ def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, 
     
     plt.xlabel('Start Fitness')
     plt.ylabel('Final Fitness')
-    plt.title('Start Fitness vs Final Fitness (Colored by Mutations at Half Max)')
+    if titles:
+        plt.title('Start Fitness vs Final Fitness (Colored by Mutations at Half Max)')
     plt.colorbar(scatter, label='Mutations at Half Max Effect')
     plt.savefig(os.path.join(output_folder, f'start_vs_final_fitness_by_mutations_{name}.{output_format}'), bbox_inches='tight')
 
 
-def plot_pareto_front(pareto_path: str, out_path: str) -> None:
+def plot_pareto_front(pareto_path: str, out_path: str, titles: bool = True) -> None:
     """Show the pareto front from the results folder.
 
     Args:
@@ -281,11 +283,12 @@ def plot_pareto_front(pareto_path: str, out_path: str) -> None:
     plt.ylabel('Fitness')
     gene_folder_name = os.path.basename(os.path.dirname(os.path.dirname(pareto_path)))
     gene_name = "_".join(gene_folder_name.split("_")[:2])
-    plt.title(f'Pareto Front for {gene_name}')
+    if titles:
+        plt.title(f'Pareto Front for {gene_name}')
     plt.savefig(out_path, bbox_inches='tight')
 
 
-def show_random_fronts(results_folder: str, output_format: str, num_samples: int = 4, output_folder: str = "."):
+def show_random_fronts(results_folder: str, output_format: str, num_samples: int = 4, output_folder: str = ".", titles: bool = True):
     """Show random pareto fronts from the results folder.
 
     Args:
@@ -299,7 +302,7 @@ def show_random_fronts(results_folder: str, output_format: str, num_samples: int
     os.makedirs(out_folder, exist_ok=True)
     print(f"Selected genes: {selected_genes}")
     for gene in selected_genes:
-        plot_pareto_front(os.path.join(results_folder, gene, 'saved_populations', 'pareto_front.json'), os.path.join(out_folder, f'pareto_front_{gene}.{output_format}'))
+        plot_pareto_front(os.path.join(results_folder, gene, 'saved_populations', 'pareto_front.json'), os.path.join(out_folder, f'pareto_front_{gene}.{output_format}'), titles=titles)
 
 
 def deduplicate_pareto_front(pareto_front: List[Tuple[str, float, int]]) -> List[Tuple[str, float, int]]:
@@ -358,7 +361,7 @@ def normalize_front(pareto_front: List[Tuple[str, float, int]]) -> List[Tuple[st
     return normalized_front
 
 
-def show_average_pareto_front(results_folder: str, output_format: str, output_folder: str = ".", max_number_mutation: int = 90) -> None:
+def show_average_pareto_front(results_folder: str, output_format: str, output_folder: str = ".", max_number_mutation: int = 90, titles: bool = True) -> None:
     """Show the average pareto front from the results folder.
 
     Args:
@@ -400,7 +403,8 @@ def show_average_pareto_front(results_folder: str, output_format: str, output_fo
     plt.ylabel('Normalized DeepCRE Output', fontsize=15)
     plt.xticks(fontsize=15)
     plt.yticks(fontsize=15)
-    plt.title('Average Pareto Front', fontsize=17)
+    if titles:
+        plt.title('Average Pareto Front', fontsize=17)
     run_name = os.path.basename(results_folder)
     plt.savefig(os.path.join(output_folder, f'average_pareto_front_{run_name}.{output_format}'), bbox_inches='tight', dpi=1000)
 
@@ -501,7 +505,7 @@ def join_losses_for_visualization(loss_data: Dict[str, Dict[int, float]]) -> Tup
     return generations, loss_averages, [float(x) for x in loss_stds]
 
 
-def plot_loss_over_generations(results_folder: str, name: str, max_number_mutation: int, output_format: str, last_generation: int, output_folder: str = ".") -> None:
+def plot_loss_over_generations(results_folder: str, name: str, max_number_mutation: int, output_format: str, last_generation: int, output_folder: str = ".", titles: bool = True) -> None:
     """Plot the average loss over generations for all genes.
 
     Args:
@@ -539,14 +543,15 @@ def plot_loss_over_generations(results_folder: str, name: str, max_number_mutati
                  yerr=loss_stds, capsize=3, label='Average Loss', ecolor='black')
     plt.xlabel("Generation")
     plt.ylabel("Loss")
-    plt.title("Average Loss Over Generations")
+    if titles:
+        plt.title("Average Loss Over Generations")
     plt.grid()
     plt.legend()
     plt.savefig(os.path.join(output_folder, f"loss_over_generations_{name}.{output_format}"), bbox_inches='tight')
     plt.close()
 
 
-def plot_half_max_mutations_vs_initial_fitness(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".") -> None:
+def plot_half_max_mutations_vs_initial_fitness(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True) -> None:
     """Plot the number of mutations at half max fitness against the initial fitness.
 
     Args:
@@ -569,7 +574,8 @@ def plot_half_max_mutations_vs_initial_fitness(stats: Dict[str, Dict[str, Any]],
     plt.scatter(initial_fitness, half_max_mutations, alpha=0.6)
     plt.xlabel('Initial Fitness')
     plt.ylabel('Mutations at Half Max Effect')
-    plt.title('Initial Fitness vs Mutations at Half Max Effect')
+    if titles:
+        plt.title('Initial Fitness vs Mutations at Half Max Effect')
     plt.savefig(os.path.join(output_folder, f'half_max_mutations_vs_initial_fitness_{name}.{output_format}'), bbox_inches='tight')
 
 
@@ -608,7 +614,7 @@ def distribution_half_max_mutations(stats_path: str) -> None:
         print(f"  {count}: {cum_percentage}%")
 
 
-def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".") -> None:
+def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True) -> None:
     """Create a histogram of the number of mutations at half max effect.
 
     Args:
@@ -635,7 +641,8 @@ def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_
     plt.xticks([0, 3, 6, 9, 12, 15, 18], fontsize=15)
     plt.yticks(fontsize=15)
     plt.ylabel('Frequency', fontsize=15)
-    plt.title('Histogram of Mutations at Half Max Effect', fontsize=17)
+    if titles:
+        plt.title('Histogram of Mutations at Half Max Effect', fontsize=17)
     plt.savefig(os.path.join(output_folder, f'hist_half_max_mutations_{name}.{output_format}'), bbox_inches='tight', dpi=1000)
 
 
@@ -661,6 +668,7 @@ def parse_args():
     parser.add_argument('--plot_half_max_mutations_hist', action='store_true', help='Draw histogram of half max mutations from the results folder')
     parser.add_argument('--all', action='store_true', help='Run all analysis steps')
     parser.add_argument('--overwrite', action='store_true', help='Overwrite existing stats file if it exists')
+    parser.add_argument('--no_titles', action='store_false', dest='titles', help='Omit titles from all generated figures')
     
     args = parser.parse_args()
     if args.results_folder is None and args.stats_file is None:
@@ -718,7 +726,7 @@ def main():
     if run_fitness_plot:
         try:
             print_subsection("Visualizing Start vs Max Fitness")
-            visualize_start_vs_max_fitness(stats=stats, name=args.name, output_folder=args.output_folder, output_format=args.output_format)
+            visualize_start_vs_max_fitness(stats=stats, name=args.name, output_folder=args.output_folder, output_format=args.output_format, titles=args.titles)
             print_status("Start vs max fitness visualization completed", "SUCCESS")
         except Exception as e:
             print_status("Failed to visualize start vs max fitness", "ERROR")
@@ -727,7 +735,7 @@ def main():
     if run_mutations_plot:
         try:
             print_subsection("Visualizing Start vs Max Fitness by Mutations")
-            visualize_start_vs_max_fitness_by_mutations(stats=stats, name=args.name, output_folder=args.output_folder, output_format=args.output_format)
+            visualize_start_vs_max_fitness_by_mutations(stats=stats, name=args.name, output_folder=args.output_folder, output_format=args.output_format, titles=args.titles)
             print_status("Start vs max fitness by mutations visualization completed", "SUCCESS")
         except Exception as e:
             print_status("Failed to visualize start vs max fitness by mutations", "ERROR")
@@ -736,7 +744,7 @@ def main():
     if run_half_max_mutations:
         try:
             print_subsection("Plotting Half Max Mutations vs Initial Fitness")
-            plot_half_max_mutations_vs_initial_fitness(stats=stats, name=args.name, output_format=args.output_format, output_folder=args.output_folder)
+            plot_half_max_mutations_vs_initial_fitness(stats=stats, name=args.name, output_format=args.output_format, output_folder=args.output_folder, titles=args.titles)
             print_status("Half max mutations vs initial fitness plot completed", "SUCCESS")
         except Exception as e:
             print_status("Failed to plot half max mutations vs initial fitness", "ERROR")
@@ -745,7 +753,7 @@ def main():
     if run_hist_half_max_mutations:
         try:
             print_subsection("Plotting Histogram of Half Max Mutations")
-            hist_half_max_mutations(stats=stats, name=args.name, output_format=args.output_format, output_folder=args.output_folder)
+            hist_half_max_mutations(stats=stats, name=args.name, output_format=args.output_format, output_folder=args.output_folder, titles=args.titles)
             print_status("Histogram of half max mutations plot completed", "SUCCESS")
         except Exception as e:
             print_status("Failed to plot histogram of half max mutations", "ERROR")
@@ -756,7 +764,7 @@ def main():
             print_subsection("Drawing Random Pareto Fronts")
             if not args.results_folder:
                 raise ValueError("You must provide a results folder to draw random pareto fronts.")
-            show_random_fronts(results_folder=args.results_folder, num_samples=args.number, output_folder=args.output_folder, output_format=args.output_format)
+            show_random_fronts(results_folder=args.results_folder, num_samples=args.number, output_folder=args.output_folder, output_format=args.output_format, titles=args.titles)
             print_status("Random pareto fronts drawn successfully", "SUCCESS")
         except Exception as e:
             print_status("Failed to draw random pareto fronts", "ERROR")
@@ -767,7 +775,7 @@ def main():
             print_subsection("Drawing Average Pareto Front")
             if not args.results_folder:
                 raise ValueError("You must provide a results folder to draw the average pareto front.")
-            show_average_pareto_front(results_folder=args.results_folder, output_format=args.output_format, output_folder=args.output_folder, max_number_mutation=args.max_number_mutation)
+            show_average_pareto_front(results_folder=args.results_folder, output_format=args.output_format, output_folder=args.output_folder, max_number_mutation=args.max_number_mutation, titles=args.titles)
             print_status("Average pareto front drawn successfully", "SUCCESS")
         except Exception as e:
             print_status("Failed to draw average pareto front", "ERROR")
@@ -778,7 +786,7 @@ def main():
             print_subsection("Plotting Average Loss")
             if not args.results_folder:
                 raise ValueError("You must provide a results folder to draw the average loss.")
-            plot_loss_over_generations(results_folder=args.results_folder, name=args.name, output_folder=args.output_folder, max_number_mutation=args.max_number_mutation, output_format=args.output_format, last_generation=args.last_generation)
+            plot_loss_over_generations(results_folder=args.results_folder, name=args.name, output_folder=args.output_folder, max_number_mutation=args.max_number_mutation, output_format=args.output_format, last_generation=args.last_generation, titles=args.titles)
             print_status("Average loss plot completed successfully", "SUCCESS")
         except Exception as e:
             print_status("Failed to plot average loss", "ERROR")
