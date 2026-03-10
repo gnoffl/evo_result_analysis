@@ -14,7 +14,7 @@ from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 
-from analysis.summarize_mutations import MutatedSequence, MutationsGene
+from analysis.summarize_mutations import MutatedSequence, MutationsGene, load_mutations_from_json
 
 
 @dataclass
@@ -288,13 +288,31 @@ def annotate_all_genes(
     return {}
 
 
+def annotate_from_json(json_path: str, gff_file: str, generation: Optional[int] = None) -> Dict[str, Dict[int, List[AnnotatedMutatedSequence]]]:
+    genes_dict = load_mutations_from_json(json_path)
+    annotated_results = {}
+    for gene_id, mutations_gene in genes_dict.items():
+        annotated_results[gene_id] = AnnotatedMutatedSequence.from_mutations_gene(seq_name=gene_id, mutations_gene=mutations_gene, generation=generation)
+    return annotated_results
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Annotate mutations with genomic features from GFF/GTF files.")
+    parser.add_argument("--mutations_json", "-m", type=str, required=True, help="Path to JSON file containing mutations data")
     return parser.parse_args()
 
 
 def main():
-    pass
+    args = parse_args()
+    # Example usage: annotate mutations from JSON and print results
+    annotated_data = annotate_from_json(args.mutations_json, gff_file="path/to/annotation.gff3", generation=None)
+    for gene_id, gen_dict in annotated_data.items():
+        for gen, annotated_list in gen_dict.items():
+            print(f"Gene: {gene_id}, Generation: {gen}")
+            # print(annotated_list[0])
+            for annotation in annotated_list[0].annotations:
+                print(annotation.genomic_position)
+            print("-" * 40)
 
 
 if __name__ == "__main__":
