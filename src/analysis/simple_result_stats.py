@@ -638,7 +638,7 @@ def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_
     plt.figure(figsize=(8, 5))
     plt.hist(half_max_mutations, bins=bins, alpha=0.7) #type:ignore
     plt.xlabel('Mutations at Half Max Effect', fontsize=15)
-    plt.xticks([0, 3, 6, 9, 12, 15, 18], fontsize=15)
+    plt.xticks(fontsize=15)
     plt.yticks(fontsize=15)
     plt.ylabel('Frequency', fontsize=15)
     if titles:
