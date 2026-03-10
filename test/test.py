@@ -2,6 +2,24 @@ from typing import List
 from unittest.mock import patch, mock_open
 from matplotlib import pyplot as plt
 import numpy as np
+from pyfaidx import Fasta
+
+
+def reverse_complement(seq: str) -> str:
+    complement = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C'}
+    return ''.join(complement.get(base, base) for base in reversed(seq))
+
+
+def extract_ubi_gene():
+    fasta = Fasta("/home/gernot/ARCitect/ARCs/genRE/assays/Gene_Data/dataset/genomes/Zea_mays.Zm-B73-REFERENCE-NAM-5.0.dna.toplevel.fa")
+    for record in fasta:
+        print(record.name)
+        if "5" in record.name:
+            gene = record[84400792:84403652]
+            gene = reverse_complement(str(gene))
+            print(gene)
+            break
+
 
 
 def concept_mutation_conservation():
@@ -21,4 +39,5 @@ def concept_mutation_conservation():
 
 
 if __name__ == '__main__':
-    concept_mutation_conservation()
+    # concept_mutation_conservation()
+    extract_ubi_gene()
