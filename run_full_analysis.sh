@@ -216,6 +216,7 @@ else
         --window_size $WINDOW_SIZE \
         --mutable_positions $MUTABLE_POSITIONS \
         --output_format "$OUTPUT_FORMAT" \
+        --generation "$GENERATION" \
         $NO_TITLES_FLAG \
         --all; then
         echo -e "${GREEN}✓ analyze_mutations.py completed successfully${NC}"
