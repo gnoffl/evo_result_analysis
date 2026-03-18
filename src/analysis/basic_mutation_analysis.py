@@ -19,12 +19,38 @@ import os
 import json
 import argparse
 import csv
+from datetime import datetime
 from collections import Counter, defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 from analysis.summarize_mutations import MutationsGene
+
+
+def create_run_output_dir(base_output: str, input_path: str) -> str:
+    """
+    Create a unique per-run output directory based on the input name.
+
+    The resulting directory is:
+        <base_output>/<input_name>_<timestamp>
+    """
+    input_name = os.path.basename(os.path.normpath(input_path))
+    if os.path.isfile(input_path):
+        input_name = os.path.splitext(input_name)[0]
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    run_dir = os.path.join(base_output, f"{input_name}_{timestamp}")
+
+    # Avoid rare collisions (e.g., repeated runs within the same second).
+    suffix = 1
+    unique_dir = run_dir
+    while os.path.exists(unique_dir):
+        unique_dir = f"{run_dir}_{suffix}"
+        suffix += 1
+
+    os.makedirs(unique_dir, exist_ok=False)
+    return unique_dir
 
 def analyze_gene(mg: MutationsGene, gene_name: str, file_label: str):
     """
@@ -741,7 +767,7 @@ def main():
     group.add_argument('--results_dir', help='Evolution results directory (each gene in a subfolder)')
     
     p.add_argument('--output', '-o', default='basic_analysis_out', 
-                   help='Output directory for plots and CSV (default: basic_analysis_out)')
+                   help='Base output directory for run folders (default: basic_analysis_out)')
     p.add_argument('--window', '-w', type=int, default=31, 
                    help='Rolling window size for smoothing (default: 31)')
     p.add_argument('--format', '-f', default='png', choices=['png','pdf','svg','jpg'], 
@@ -749,15 +775,19 @@ def main():
     
     args = p.parse_args()
 
-    # Create output directory
+    # Create a unique folder for this run using the selected input name.
+    selected_input = args.input or args.input_dir or args.results_dir
     os.makedirs(args.output, exist_ok=True)
+    run_output = create_run_output_dir(args.output, selected_input)
+    print(f"Run output directory: {run_output}")
+
     all_rows = []
 
     # Process input based on mode
     if args.input:
         # Mode 1: Single JSON file
         print(f"Processing single file: {args.input}")
-        rows = process_file(args.input, window=args.window, outdir=args.output, fmt=args.format)
+        rows = process_file(args.input, window=args.window, outdir=run_output, fmt=args.format)
         all_rows.extend(rows)
         
     elif args.input_dir:
@@ -768,18 +798,18 @@ def main():
         
         for fp in files:
             print(f"Processing: {fp}")
-            rows = process_file(fp, window=args.window, outdir=args.output, fmt=args.format)
+            rows = process_file(fp, window=args.window, outdir=run_output, fmt=args.format)
             all_rows.extend(rows)
             
     elif args.results_dir:
         # Mode 3: Evolution results folder structure
         print(f"Processing Evolution results folder: {args.results_dir}")
         rows = process_results_folder(args.results_dir, window=args.window, 
-                                     outdir=args.output, fmt=args.format)
+                                     outdir=run_output, fmt=args.format)
         all_rows.extend(rows)
 
     # Write summary CSV with per-gene statistics
-    csv_path = os.path.join(args.output, 'summary.csv')
+    csv_path = os.path.join(run_output, 'summary.csv')
     if all_rows:
         with open(csv_path, 'w', newline='') as csvfile:
             fieldnames = list(all_rows[0].keys())

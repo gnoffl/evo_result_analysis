@@ -1,0 +1,20 @@
+[
+  {
+    "sequence_name": "1_AT1G73360_gene:27582685-27578420",
+    "population_size": 100,
+    "number_of_generations": 5000,
+    "mutation_strategy": "mutate_only_one_base",
+    "initial_mutation_strategy": "single_mutation",
+    "reference_sequence": "/mnt/data/project/2024_deep_phy/25K_JD/Evo_alg_gernot/Evolution/Extracted_genes/Extracted_genes_arabido_700-800",
+    "models": [
+      {
+        "path": "models/MSR_atha_bvul_bole_csat_cqui_ccum_dcar_gmax_osat_slyc_sbic_zmay_M0X0.75dP7K25f_A_thaliana_msr_train_models_250705_070641.h5",
+        "model_type": "tensorflow"
+      }
+    ],
+    "weights": [
+      1.0,
+      -1.0
+    ]
+  }
+]
