@@ -2,12 +2,12 @@ import unittest
 import json
 import tempfile
 import os
-from analysis.genomic_annotation import (
+from analysis.mutations.genomic_annotation import (
     AnnotatedMutatedSequence,
     MutationAnnotation,
     GenomicFeature
 )
-from analysis.summarize_mutations import MutatedSequence, MutationsGene
+from analysis.mutations.summarize_mutations import MutatedSequence, MutationsGene
 
 
 class TestParseSequenceName(unittest.TestCase):

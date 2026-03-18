@@ -14,7 +14,7 @@ from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 
-from analysis.summarize_mutations import MutatedSequence, MutationsGene, load_mutations_from_json
+from analysis.mutations.summarize_mutations import MutatedSequence, MutationsGene, load_mutations_from_json
 
 
 @dataclass

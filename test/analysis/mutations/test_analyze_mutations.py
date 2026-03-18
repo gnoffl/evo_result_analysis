@@ -9,8 +9,8 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for testing
 from unittest.mock import patch, MagicMock, mock_open
 from typing import List
-from analysis.summarize_mutations import MutationsGene
-from analysis.analyze_mutations import (
+from analysis.mutations.summarize_mutations import MutationsGene
+from analysis.mutations.analyze_mutations import (
     count_mutations_single_gene, count_mutations_all_genes, print_mutation_stats, calculate_mutation_stats,
     create_ideal_distribution, create_worst_case_distribution, calculate_conservation_statistic,
     calculate_conservation_statistics, calc_conservation_stat_stats, plot_dict_as_stacked_bars, make_line_plot_rolling_window,
@@ -19,7 +19,7 @@ from analysis.analyze_mutations import (
     load_mutation_data, analyze_mutation_distances, get_random_mutation_distributions, analyze_range_single_gene,
     plot_dist_hist,
 )
-from analysis.summarize_mutations import MutatedSequence
+from analysis.mutations.summarize_mutations import MutatedSequence
 import numpy as np
 
 
@@ -266,7 +266,7 @@ class TestAnalyzeMutations(unittest.TestCase):
         expected_file = os.path.join(self.temp_dir, "rolling_mean_mutations_test_11.pdf")
         self.assertTrue(os.path.exists(expected_file))
     
-    @patch('analysis.analyze_mutations.MutationsGene')
+    @patch('analysis.mutations.analyze_mutations.MutationsGene')
     @patch('tqdm.tqdm')
     def test_plot_hist_half_max_mutations_stacked(self, mock_tqdm, mock_mutations_gene):
         """Test plotting histogram of half max mutations."""
@@ -293,7 +293,7 @@ class TestAnalyzeMutations(unittest.TestCase):
         self.assertTrue(os.path.exists(expected_from_file))
         self.assertTrue(os.path.exists(expected_to_file))
     
-    @patch('analysis.analyze_mutations.MutationsGene')
+    @patch('analysis.mutations.analyze_mutations.MutationsGene')
     @patch('tqdm.tqdm')
     def test_plot_mutations_location(self, mock_tqdm, mock_mutations_gene):
         """Test plotting mutation locations."""
@@ -340,7 +340,7 @@ class TestAnalyzeMutations(unittest.TestCase):
             )
         self.assertIn("At least one of plot_stacked or plot_rolling must be True", str(context.exception))
     
-    @patch('analysis.analyze_mutations.calculate_conservation_statistics')
+    @patch('analysis.mutations.analyze_mutations.calculate_conservation_statistics')
     def test_plot_hist_mutation_conservation_new_calculation(self, mock_calc_stats):
         """Test plotting mutation conservation histogram with new calculation."""
         mock_stats = {"gene1": 0.8, "gene2": 0.6, "gene3": 0.9}
@@ -425,7 +425,7 @@ class TestAnalyzeMutations(unittest.TestCase):
         
         # Verify that MutationsGene.from_dict was called for each gene in test data
     
-    @patch('analysis.analyze_mutations.calculate_mutation_distances')
+    @patch('analysis.mutations.analyze_mutations.calculate_mutation_distances')
     def test_plot_mutation_distances(self, mock_calc_distances):
         """Test plotting mutation distances."""
         mock_distances = Counter({1: 5, 2: 8, 3: 3, 5: 2, 10: 1})
@@ -458,8 +458,8 @@ class TestAnalyzeMutations(unittest.TestCase):
             self.assertIsInstance(mutations_gene, MutationsGene)
             self.assertIn(1999, mutations_gene.generation_dict)
 
-    @patch('analysis.analyze_mutations.load_mutation_data')
-    @patch('analysis.analyze_mutations.analyze_range_single_gene')
+    @patch('analysis.mutations.analyze_mutations.load_mutation_data')
+    @patch('analysis.mutations.analyze_mutations.analyze_range_single_gene')
     def test_analyze_mutation_distances(self, mock_analyze_range, mock_load_data):
         """Test analyzing mutation distances."""
         # Mock load_mutation_data

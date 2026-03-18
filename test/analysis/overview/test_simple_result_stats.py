@@ -8,7 +8,7 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for testing
 import numpy as np
 from unittest.mock import patch, MagicMock
-from analysis.simple_result_stats import (
+from analysis.overview.simple_result_stats import (
     get_pareto_front, add_basic_stats, calculate_half_max_mutations,
     get_stats_per_gene, summary_stat_calculation, split_stats, summarize_stats, 
     visualize_start_vs_max_fitness, visualize_start_vs_max_fitness_by_mutations,

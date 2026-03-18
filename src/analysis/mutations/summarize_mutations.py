@@ -7,7 +7,7 @@ import re
 from tqdm import tqdm
 from datetime import datetime
 
-from analysis.io import print_section_header, print_subsection, print_status
+from analysis.utils.io import print_section_header, print_subsection, print_status
 
 
 class MutatedSequence:

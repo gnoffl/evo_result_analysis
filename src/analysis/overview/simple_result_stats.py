@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from tqdm import tqdm
 from datetime import datetime
 
-from analysis.io import print_section_header, print_subsection, print_status
+from analysis.utils.io import print_section_header, print_subsection, print_status
 
 
 def get_pareto_front(gene_path: str) -> Optional[List[Tuple[str, float, int]]]:

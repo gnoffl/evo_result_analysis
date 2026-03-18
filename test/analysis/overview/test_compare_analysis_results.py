@@ -1,5 +1,5 @@
 import unittest
-from analysis.compare_analysis_results import get_accuracy, compare_conditions, compare_all_results
+from analysis.overview.compare_analysis_results import get_accuracy, compare_conditions, compare_all_results
 
 # Add your test cases for compare_analysis_results here
 class TestCompareAnalysisResults(unittest.TestCase):

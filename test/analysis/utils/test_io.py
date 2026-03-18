@@ -10,7 +10,7 @@ from io import StringIO
 import sys
 from datetime import datetime
 
-from src.analysis.io import print_section_header, print_subsection, print_status
+from analysis.utils.io import print_section_header, print_subsection, print_status
 
 
 class TestPrintSectionHeader(unittest.TestCase):
@@ -146,7 +146,7 @@ class TestPrintStatus(unittest.TestCase):
         """Restore stdout."""
         sys.stdout = sys.__stdout__
     
-    @patch('src.analysis.io.datetime')
+    @patch('analysis.utils.io.datetime')
     def test_info_status(self, mock_datetime):
         """Test status message with INFO status."""
         mock_datetime.now.return_value = datetime(2026, 2, 27, 14, 30, 45)
@@ -156,7 +156,7 @@ class TestPrintStatus(unittest.TestCase):
         
         self.assertEqual(output, "[14:30:45] ℹ Processing data")
     
-    @patch('src.analysis.io.datetime')
+    @patch('analysis.utils.io.datetime')
     def test_success_status(self, mock_datetime):
         """Test status message with SUCCESS status."""
         mock_datetime.now.return_value = datetime(2026, 2, 27, 14, 30, 45)
@@ -166,7 +166,7 @@ class TestPrintStatus(unittest.TestCase):
         
         self.assertEqual(output, "[14:30:45] ✓ Operation completed")
     
-    @patch('src.analysis.io.datetime')
+    @patch('analysis.utils.io.datetime')
     def test_error_status(self, mock_datetime):
         """Test status message with ERROR status."""
         mock_datetime.now.return_value = datetime(2026, 2, 27, 14, 30, 45)
@@ -176,7 +176,7 @@ class TestPrintStatus(unittest.TestCase):
         
         self.assertEqual(output, "[14:30:45] ✗ Operation failed")
     
-    @patch('src.analysis.io.datetime')
+    @patch('analysis.utils.io.datetime')
     def test_warning_status(self, mock_datetime):
         """Test status message with WARNING status."""
         mock_datetime.now.return_value = datetime(2026, 2, 27, 14, 30, 45)
@@ -186,7 +186,7 @@ class TestPrintStatus(unittest.TestCase):
         
         self.assertEqual(output, "[14:30:45] ⚠ Potential issue detected")
     
-    @patch('src.analysis.io.datetime')
+    @patch('analysis.utils.io.datetime')
     def test_unknown_status(self, mock_datetime):
         """Test status message with unknown status type."""
         mock_datetime.now.return_value = datetime(2026, 2, 27, 14, 30, 45)
@@ -197,7 +197,7 @@ class TestPrintStatus(unittest.TestCase):
         # Should use default bullet symbol
         self.assertEqual(output, "[14:30:45] • Custom message")
     
-    @patch('src.analysis.io.datetime')
+    @patch('analysis.utils.io.datetime')
     def test_default_status(self, mock_datetime):
         """Test status message with default status (no status parameter)."""
         mock_datetime.now.return_value = datetime(2026, 2, 27, 14, 30, 45)
@@ -208,7 +208,7 @@ class TestPrintStatus(unittest.TestCase):
         # Should use INFO symbol by default
         self.assertEqual(output, "[14:30:45] ℹ Default message")
     
-    @patch('src.analysis.io.datetime')
+    @patch('analysis.utils.io.datetime')
     def test_empty_message(self, mock_datetime):
         """Test status with empty message."""
         mock_datetime.now.return_value = datetime(2026, 2, 27, 14, 30, 45)
@@ -219,7 +219,7 @@ class TestPrintStatus(unittest.TestCase):
         # Empty message still has trailing space after symbol
         self.assertEqual(output, "[14:30:45] ℹ")
     
-    @patch('src.analysis.io.datetime')
+    @patch('analysis.utils.io.datetime')
     def test_multiline_message(self, mock_datetime):
         """Test status with multiline message."""
         mock_datetime.now.return_value = datetime(2026, 2, 27, 14, 30, 45)
@@ -230,7 +230,7 @@ class TestPrintStatus(unittest.TestCase):
         # Should print as-is with newlines
         self.assertEqual(output, "[14:30:45] ℹ Line 1\nLine 2\nLine 3")
     
-    @patch('src.analysis.io.datetime')
+    @patch('analysis.utils.io.datetime')
     def test_case_sensitivity(self, mock_datetime):
         """Test that status is case-sensitive."""
         mock_datetime.now.return_value = datetime(2026, 2, 27, 14, 30, 45)
@@ -242,7 +242,7 @@ class TestPrintStatus(unittest.TestCase):
         # Should use default bullet (not INFO symbol)
         self.assertEqual(output, "[14:30:45] • Test")
     
-    @patch('src.analysis.io.datetime')
+    @patch('analysis.utils.io.datetime')
     def test_midnight_time(self, mock_datetime):
         """Test status at midnight."""
         mock_datetime.now.return_value = datetime(2026, 2, 27, 0, 0, 0)
@@ -252,7 +252,7 @@ class TestPrintStatus(unittest.TestCase):
         
         self.assertEqual(output, "[00:00:00] ℹ Midnight test")
     
-    @patch('src.analysis.io.datetime')
+    @patch('analysis.utils.io.datetime')
     def test_time_formatting(self, mock_datetime):
         """Test that time is properly zero-padded."""
         mock_datetime.now.return_value = datetime(2026, 2, 27, 9, 5, 3)
@@ -275,7 +275,7 @@ class TestOutputIntegration(unittest.TestCase):
         """Restore stdout."""
         sys.stdout = sys.__stdout__
     
-    @patch('src.analysis.io.datetime')
+    @patch('analysis.utils.io.datetime')
     def test_typical_usage_pattern(self, mock_datetime):
         """Test a typical usage pattern as seen in analysis scripts."""
         mock_datetime.now.return_value = datetime(2026, 2, 27, 14, 30, 45)

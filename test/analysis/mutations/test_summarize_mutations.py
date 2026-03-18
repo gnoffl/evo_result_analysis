@@ -3,7 +3,8 @@ import shutil
 import unittest
 import os
 import tempfile
-from analysis.summarize_mutations import MutatedSequence, MutationsGene, summarize_mutations_all_folders, load_mutations_from_json
+from analysis.mutations.summarize_mutations import MutatedSequence, MutationsGene, summarize_mutations_all_folders, load_mutations_from_json
+from analysis.mutations import summarize_mutations
 import sys
 from unittest import mock
 # ...existing code...
@@ -30,7 +31,6 @@ class TestCLI(unittest.TestCase):
             "--generation", "42"
         ]
         with mock.patch.object(sys, 'argv', test_args):
-            from analysis import summarize_mutations
             args = summarize_mutations.parse_args()
             self.assertEqual(args.results_folder, self.results_folder)
             self.assertEqual(args.name, "testname")
@@ -42,7 +42,6 @@ class TestCLI(unittest.TestCase):
         """Test parse_args with missing results_folder argument."""
         test_args = ["prog", "--name", "testname"]
         with mock.patch.object(sys, 'argv', test_args):
-            from analysis import summarize_mutations
             with self.assertRaises(Exception):
                 summarize_mutations.parse_args()
 
@@ -54,7 +53,6 @@ class TestCLI(unittest.TestCase):
             "--name", "testname"
         ]
         with mock.patch.object(sys, 'argv', test_args):
-            from analysis import summarize_mutations
             with self.assertRaises(ValueError):
                 summarize_mutations.parse_args()
 
@@ -66,7 +64,6 @@ class TestCLI(unittest.TestCase):
             "--name", ""
         ]
         with mock.patch.object(sys, 'argv', test_args):
-            from analysis import summarize_mutations
             with self.assertRaises(ValueError):
                 summarize_mutations.parse_args()
 

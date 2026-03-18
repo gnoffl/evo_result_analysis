@@ -11,7 +11,7 @@ from unittest.mock import patch, mock_open, MagicMock
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from analysis.analyze_mapping import (
+from analysis.motives.analyze_mapping import (
     get_epm_tfbs_mapping_old,
     get_epm_tfbs_mapping_new,
     add_epm,
@@ -232,8 +232,8 @@ class TestCompareInitialAndFinalDistribution(unittest.TestCase):
             'tf_name': ['AraC', 'CRP']
         })
     
-    @patch('analysis.analyze_mapping.get_epm_count_table')
-    @patch('analysis.analyze_mapping.statistics_epm_before_after')
+    @patch('analysis.motives.analyze_mapping.get_epm_count_table')
+    @patch('analysis.motives.analyze_mapping.statistics_epm_before_after')
     def test_compare_initial_and_final_distribution(self, mock_statistics, mock_get_epm_count_table):
         epm_counts = pd.DataFrame({
             'sequence': ['gene1_mutations_0', 'gene1_mutations_5', "gene2_mutations_0", "gene2_mutations_3"],
@@ -482,7 +482,7 @@ class TestAnalyzeMutationsEffect(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.rundir_max.name)
     
-    @patch('analysis.analyze_mapping.get_epm_count_table')
+    @patch('analysis.motives.analyze_mapping.get_epm_count_table')
     def test_analyze_mutations_effect(self, mock_get_epm_count_table):
         # Setup mock return values
         mock_epm_counts = pd.DataFrame({

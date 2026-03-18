@@ -11,7 +11,7 @@ from typing import List, Tuple
 # import sys
 # sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from analysis.candidate_selection import (
+from workflows.candidate_selection import (
     get_data_at_mutation_count,
     preliminary_selection,
     load_selected_genes,
@@ -114,7 +114,7 @@ class TestCandidateSelection(unittest.TestCase):
         with self.assertRaises(ValueError):
             get_data_at_mutation_count(self.sample_pareto_front_max, -1)
 
-    @patch('analysis.candidate_selection.os.path.exists')
+    @patch('workflows.candidate_selection.os.path.exists')
     def test_preliminary_selection_folder_not_exists(self, mock_exists):
         """Test error when results folder doesn't exist."""
         mock_exists.return_value = False
@@ -440,9 +440,9 @@ class TestCandidateSelection(unittest.TestCase):
         self.assertEqual(list(result["gene"]), expected_genes)
 
 
-    @patch('analysis.candidate_selection.filter_and_sort_results')
-    @patch('analysis.candidate_selection.process_single_gene')
-    @patch('analysis.candidate_selection.get_pareto_front_paths')
+    @patch('workflows.candidate_selection.filter_and_sort_results')
+    @patch('workflows.candidate_selection.process_single_gene')
+    @patch('workflows.candidate_selection.get_pareto_front_paths')
     @patch('pandas.DataFrame.to_csv')
     def test_preliminary_selection_success(self, mock_to_csv, mock_get_paths, 
                                          mock_process_gene, mock_filter_sort):
@@ -527,7 +527,7 @@ class TestCandidateSelection(unittest.TestCase):
         self.assertEqual(single_points, expected_single)
         self.assertEqual(multi_points, expected_multi)
 
-    @patch('analysis.candidate_selection.draw_line_plot')
+    @patch('workflows.candidate_selection.draw_line_plot')
     @patch('os.makedirs')
     def test_compare_trajectories_mutations(self, mock_makedirs, mock_draw):
         """Test trajectory comparison functionality."""
@@ -705,7 +705,7 @@ class TestCandidateSelection(unittest.TestCase):
         pd.testing.assert_frame_equal(result, expected)
         
 
-    @patch('analysis.candidate_selection.load_selected_genes')
+    @patch('workflows.candidate_selection.load_selected_genes')
     def test_final_selection(self, mock_load):
         """Test final selection process."""
         # Mock loaded data

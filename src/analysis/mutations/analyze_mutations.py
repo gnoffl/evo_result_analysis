@@ -4,7 +4,7 @@ from collections import Counter
 from matplotlib import colors
 from itertools import accumulate
 import numpy as np
-from analysis.summarize_mutations import MutationsGene
+from analysis.mutations.summarize_mutations import MutationsGene
 import os
 import json
 import matplotlib.pyplot as plt
@@ -12,8 +12,8 @@ from tqdm import tqdm
 import argparse
 from datetime import datetime
 
-from analysis.summarize_mutations import MutatedSequence
-from analysis.io import print_section_header, print_subsection, print_status
+from analysis.mutations.summarize_mutations import MutatedSequence
+from analysis.utils.io import print_section_header, print_subsection, print_status
 
 
 COLORS = {"A": "green", "C": "blue", "G": "orange", "T": "red", "Sum": "black"}

@@ -129,5 +129,77 @@ def fig2():
         label_fontsize=14.0,
     )
 
+
+def fig3():
+    images = [
+        "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/paper_runs/single_mutation/ara_msr_max_single/rolling_mean_mutations_ara_msr_max_single_diff_31.svg",
+        "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/paper_runs/single_mutation/ara_msr_max_single/mutation_distances_ara_msr_max_single_smaller_distances.svg",
+        "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/paper_runs/single_mutation/zea_msr_max_single/rolling_mean_mutations_zea_msr_max_single_diff_31.svg",
+        "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/paper_runs/single_mutation/zea_msr_max_single/mutation_distances_zea_msr_max_single_smaller_distances.svg",
+    ]
+    panels = [
+        {
+            "path": images[0],
+            "rect": (0, 0, 0.4, 0.25)
+        },
+        {
+            "path": images[1],
+            "rect": (0.4, 0, 1, 0.25)
+        },
+        {
+            "path": images[2],
+            "rect": (0, 0.25, 0.4, 0.5)
+        },
+        {
+            "path": images[3],
+            "rect": (0.4, 0.25, 1, 0.5)
+        },
+    ]
+    FIGSIZE = (6, 8)
+    compose_figures(
+        panels=panels,
+        output_path="src/workflows/paper_plots/figures/fig3_composed.svg",
+        figsize=FIGSIZE,
+        labels=True,
+        label_fontsize=14.0,
+    )
+
+def fig4():
+    images = [
+        "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/GOF_LOF/GOF/GOF_single/average_pareto_front_GOF_single_mutation_251009_121226_109368.svg",
+        "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/GOF_LOF/GOF/GOF_single/hist_half_max_mutations_GOF_single.svg",
+        "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/GOF_LOF/LOF/LOF_single/average_pareto_front_LOF_single_mutation_251020_180028_564570.svg",
+        "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/GOF_LOF/LOF/LOF_single/hist_half_max_mutations_LOF_single.svg",
+        ""
+    ]
+    panels = [
+        {
+            "path": images[0],
+            "rect": (0, 0, 0.4, 0.25)
+        },
+        {
+            "path": images[1],
+            "rect": (0.4, 0, 1, 0.25)
+        },
+        {
+            "path": images[2],
+            "rect": (0, 0.25, 0.4, 0.5)
+        },
+        {
+            "path": images[3],
+            "rect": (0.4, 0.25, 1, 0.5)
+        },
+    ]
+    FIGSIZE = (6, 8)
+    compose_figures(
+        panels=panels,
+        output_path="src/workflows/paper_plots/figures/fig4_composed.svg",
+        figsize=FIGSIZE,
+        labels=True,
+        label_fontsize=14.0,
+    )
+
 if __name__ == "__main__":
     fig2()
+    fig3()
+    fig4()

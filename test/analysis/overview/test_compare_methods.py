@@ -3,15 +3,15 @@ import unittest
 import tempfile
 import json
 import shutil
-from analysis.simple_result_stats import expand_pareto_front
-from analysis.summarize_mutations import MutatedSequence, MutationsGene
+from analysis.overview.simple_result_stats import expand_pareto_front
+from analysis.mutations.summarize_mutations import MutatedSequence, MutationsGene
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for testing
 from unittest.mock import patch, MagicMock
 from typing import Dict, List, Tuple
 
-from analysis.compare_methods import (
+from analysis.overview.compare_methods import (
     compare_method_progress, check_genes_present, get_area, get_best_area, get_gene_paths,
     calculate_differences_between_fronts, add_normalized_fronts,
     get_plot_vals_normalized_fronts, plot_normalized_fronts,
@@ -26,7 +26,7 @@ from analysis.compare_methods import (
     pca_transform_single_method, plot_pca_single_method,
     pca_visualization, visualize_progress,
 )
-from analysis.compare_methods import pca_transform_all_methods, plot_pca_all_methods
+from analysis.overview.compare_methods import pca_transform_all_methods, plot_pca_all_methods
 
 
 class TestCompareMethods(unittest.TestCase):
@@ -333,8 +333,8 @@ class TestCompareMethods(unittest.TestCase):
         expected_path = os.path.join(self.temp_dir, expected_filename)
         self.assertTrue(os.path.isfile(expected_path))
     
-    @patch('analysis.compare_methods.plot_differences_between_fronts')
-    @patch('analysis.compare_methods.plot_interesting_pareto_fronts_values')
+    @patch('analysis.overview.compare_methods.plot_differences_between_fronts')
+    @patch('analysis.overview.compare_methods.plot_interesting_pareto_fronts_values')
     def test_plot_interesting_pareto_fronts(self, mock_plot_values, mock_plot_differences):
         """Test plotting interesting pareto fronts (calls both sub-functions)."""
         fronts = self.sample_fronts
@@ -347,9 +347,9 @@ class TestCompareMethods(unittest.TestCase):
         mock_plot_values.assert_called_once_with(fronts=fronts, gene_name=gene_name, tag=tag, output_dir=self.temp_dir, output_format="png")
         mock_plot_differences.assert_called_once_with(fronts=fronts, gene_name=gene_name, tag=tag, output_dir=self.temp_dir, output_format="png")
     
-    @patch('analysis.compare_methods.plot_interesting_pareto_fronts')
-    @patch('analysis.compare_methods.plot_normalized_fronts')
-    @patch('analysis.compare_methods.expand_pareto_front')
+    @patch('analysis.overview.compare_methods.plot_interesting_pareto_fronts')
+    @patch('analysis.overview.compare_methods.plot_normalized_fronts')
+    @patch('analysis.overview.compare_methods.expand_pareto_front')
     def test_compare_methods_final(self, mock_expand, mock_plot_normalized, mock_plot_interesting):
         """Test compare_methods_final function."""
         # Mock expand_pareto_front to return our sample data
@@ -644,7 +644,7 @@ class TestCompareDiversity(unittest.TestCase):
         self.assertGreater(cons, 0.6)
         self.assertLessEqual(cons, 1)
 
-    @patch('analysis.compare_methods.calculate_conservation_statistic_pareto_front')
+    @patch('analysis.overview.compare_methods.calculate_conservation_statistic_pareto_front')
     def test_calculate_diversity_per_method(self, mock_cons_pf):
         """calculate_diversity_per_method should call conservation function for each method and return mapping."""
         # Build dummy MutationsGene-like object with generation_dict holding a pareto front
@@ -664,7 +664,7 @@ class TestCompareDiversity(unittest.TestCase):
         self.assertAlmostEqual(out["method2"], 0.66)
         self.assertEqual(mock_cons_pf.call_count, 2)
 
-    @patch('analysis.compare_methods.calculate_conservation_per_method')
+    @patch('analysis.overview.compare_methods.calculate_conservation_per_method')
     def test_rank_by_conservation_aggregates_and_normalizes(self, mock_calc_div):
         """rank_by_conservation should aggregate conservation measures across genes, compute ranks and normalize them."""
         # Two genes, two methods. Prepare per-gene conservation measures to hit different ordering.
@@ -769,7 +769,7 @@ class TestMutationVectorsAndPCA(unittest.TestCase):
     def test_plot_pca_single_method_writes_file(self):
         """plot_pca_single_method should write a file."""
         # Use the real function with simple vectors by mocking the transform function
-        with patch('analysis.compare_methods.pca_transform_single_method') as mock_tx:
+        with patch('analysis.overview.compare_methods.pca_transform_single_method') as mock_tx:
             mock_pca = MagicMock()
             mock_pca.explained_variance_ratio_ = np.array([0.6, 0.4])
             transformed = np.array([[0.1, 0.2], [0.3, 0.4]])
@@ -780,7 +780,7 @@ class TestMutationVectorsAndPCA(unittest.TestCase):
 
     def test_plot_pca_all_methods_writes_file(self):
         """plot_pca_all_methods should write a file."""
-        with patch('analysis.compare_methods.pca_transform_all_methods') as mock_tx:
+        with patch('analysis.overview.compare_methods.pca_transform_all_methods') as mock_tx:
             mock_pca = MagicMock()
             mock_pca.explained_variance_ratio_ = np.array([0.55, 0.45])
             mock_tx.return_value = (mock_pca, {
@@ -792,10 +792,10 @@ class TestMutationVectorsAndPCA(unittest.TestCase):
         out = os.path.join(self.temp_dir, "pca_results", "pca_g1_all_methods.png")
         self.assertTrue(os.path.exists(out))
 
-    @patch('analysis.compare_methods.plot_pca_single_method')
-    @patch('analysis.compare_methods.plot_pca_all_methods')
-    @patch('analysis.compare_methods.load_mutation_data')
-    @patch('analysis.compare_methods.random.sample')
+    @patch('analysis.overview.compare_methods.plot_pca_single_method')
+    @patch('analysis.overview.compare_methods.plot_pca_all_methods')
+    @patch('analysis.overview.compare_methods.load_mutation_data')
+    @patch('analysis.overview.compare_methods.random.sample')
     def test_pca_visualization_calls_plots(self, mock_sample, mock_load, mock_plot_all, mock_plot_single):
         """pca_visualization should call both plotting routines for sampled genes."""
         # Mock load_mutation_data to return our pre-built method_dict
@@ -1126,11 +1126,11 @@ class TestProgressFunctions(unittest.TestCase):
         expected_path = os.path.join(self.temp_dir, "method_progress_over_generations_log.png")
         mock_savefig.assert_called_with(expected_path, dpi=300, bbox_inches='tight')
     
-    @patch('analysis.compare_methods.visualize_progress')
-    @patch('analysis.compare_methods.get_area')
-    @patch('analysis.compare_methods.get_best_area')
-    @patch('analysis.compare_methods.check_genes_present')
-    @patch('analysis.compare_methods.get_gene_paths')
+    @patch('analysis.overview.compare_methods.visualize_progress')
+    @patch('analysis.overview.compare_methods.get_area')
+    @patch('analysis.overview.compare_methods.get_best_area')
+    @patch('analysis.overview.compare_methods.check_genes_present')
+    @patch('analysis.overview.compare_methods.get_gene_paths')
     def test_compare_method_progress(self, mock_get_paths, mock_check_genes, 
                                     mock_best_area, mock_get_area, mock_visualize):
         """Test comparing method progress over generations."""

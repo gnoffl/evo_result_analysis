@@ -10,9 +10,9 @@ from typing import Any, List, Dict, Optional, Tuple
 from matplotlib import pyplot as plt
 import sklearn.decomposition as decomposition
 
-from analysis.simple_result_stats import expand_pareto_front
-from analysis.summarize_mutations import MutatedSequence, MutationsGene
-from analysis.analyze_mutations import count_mutations_single_gene, calculate_conservation_statistic
+from analysis.overview.simple_result_stats import expand_pareto_front
+from analysis.mutations.summarize_mutations import MutatedSequence, MutationsGene
+from analysis.mutations.analyze_mutations import count_mutations_single_gene, calculate_conservation_statistic
 import tqdm
 
 

@@ -9,7 +9,7 @@ import re
 import matplotlib.pyplot as plt
 from typing import Dict, List, Optional, Tuple, Union
 
-from analysis.simple_result_stats import calculate_half_max_mutations, get_min_mutation_count_for_fitness
+from analysis.overview.simple_result_stats import calculate_half_max_mutations, get_min_mutation_count_for_fitness
 
 def reverse_complement(seq: str) -> str:
     """Return the reverse complement of a DNA sequence."""
