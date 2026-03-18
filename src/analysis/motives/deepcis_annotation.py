@@ -22,6 +22,20 @@ def _mutations_from_ohe(
     ref_ohe: np.ndarray,
     max_ohe: np.ndarray,
 ) -> List[Tuple[int, str, str]]:
+    """Return per-position mutations by comparing two full-length OHE arrays.
+
+    Uses :func:`~evolution.sequences.compare_sequences` to obtain the indices
+    of differing positions, then decodes ref/mut bases from the OHE arrays via
+    :func:`~evolution.sequences.one_hot_decode`.
+
+    Args:
+        ref_ohe: One-hot encoded reference sequence, shape ``(seq_len, 4)``.
+        max_ohe: One-hot encoded max-mutated sequence, shape ``(seq_len, 4)``.
+
+    Returns:
+        List of ``(position, ref_base, mut_base)`` tuples (0-based positions in
+        the full sequence).
+    """
     diff_positions = compare_sequences(ref_ohe, max_ohe)
     mutations: List[Tuple[int, str, str]] = []
     for pos in diff_positions:
@@ -35,6 +49,27 @@ def compare_sequences_df(
     df: pd.DataFrame,
     threshold: float = DEFAULT_DELTA_THRESHOLD,
 ) -> pd.DataFrame:
+    """Identify windows where deepCIS predictions changed between the two sequences.
+
+    Pivots the scan DataFrame so each row represents a (gene × window) pair,
+    with separate columns for the reference and max-mutated scores, plus
+    per-TF delta columns.
+
+    Args:
+        df: Output from :func:`scan_all_genes` or :func:`scan_gene_folder`.
+        threshold: Minimum absolute delta for *any* TF to flag a window as
+            ``binding_changed = True`` (default 0.1).
+
+    Returns:
+        ``pd.DataFrame`` with columns::
+
+            gene, window_start, window_end, contains_padding,
+            tf_<family>_ref,     tf_<family>_max_mut,     delta_tf_<family>,
+            tf_<family>_ref,     tf_<family>_max_mut,     delta_tf_<family>,
+            …
+            tf_<family>_ref,    tf_<family>_max_mut,    delta_tf_<family>,
+            max_delta, binding_changed
+    """
     ref_df = df[df["sequence_type"] == "reference"].drop(columns="sequence_type")
     max_df = df[df["sequence_type"] == "max_mutated"].drop(columns="sequence_type")
 
@@ -58,6 +93,30 @@ def annotate_mutations_in_windows(
     changed_df: pd.DataFrame,
     genes_data: Dict[str, GeneRunData],
 ) -> pd.DataFrame:
+    """Add columns listing which mutations fall inside each (changed) window.
+
+    For each row of *changed_df*, the max-mutation sequence for that gene is
+    retrieved from *genes_data*, its mutations are identified by comparing it
+    to the reference sequence, and those within ``[window_start, window_end)``
+    are recorded.
+
+    Mutation positions are expressed as 0-based indices in the **full**
+    sequence (i.e. ``mutation_start + position_within_mutable_region``), which
+    aligns directly with the ``window_start`` / ``window_end`` coordinates.
+
+    Args:
+        changed_df: Output of :func:`compare_sequences_df`.  Must have columns
+            ``gene``, ``window_start``, and ``window_end``.
+        genes_data: Dict mapping gene name → :class:`GeneRunData`, as returned
+            by :func:`scan_all_genes`.
+
+    Returns:
+        *changed_df* extended with two new columns:
+
+        * ``mutations_in_window`` — list of ``(position, ref_base, mut_base)``
+          tuples for mutations that overlap the window (positions in full seq).
+        * ``n_mutations_in_window`` — integer count (convenient for filtering).
+    """
     mutation_lists: List[List[Tuple[int, str, str]]] = []
 
     for _, row in changed_df.iterrows():
@@ -106,6 +165,25 @@ def add_genomic_coordinates(
     intragenic: int = DEFAULT_INTRAGENIC,
     central_padding: int = DEFAULT_CENTRAL_PADDING,
 ) -> pd.DataFrame:
+    """Map sequence-relative window positions to genomic coordinates.
+
+    Parses the gene name using
+    :meth:`~analysis.mutations.genomic_annotation.AnnotatedMutatedSequence.parse_sequence_name`
+    and applies the same promoter/terminator coordinate arithmetic used by
+    ``genomic_annotation.py``.
+
+    Args:
+        df: DataFrame with columns ``gene``, ``window_start``, ``window_end``.
+        extragenic: Extragenic bp used during extraction (default 1000).
+        intragenic: Intragenic bp used during extraction (default 500).
+        central_padding: Length of the central N-padding (default 20).
+
+    Returns:
+        *df* extended with columns::
+
+            gene_id, chromosome, strand,
+            genomic_window_start, genomic_window_end
+    """
     from analysis.mutations.genomic_annotation import AnnotatedMutatedSequence
 
     promoter_length = extragenic + intragenic
