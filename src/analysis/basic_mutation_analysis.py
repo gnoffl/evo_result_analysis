@@ -25,7 +25,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from analysis.summarize_mutations import MutationsGene
+try:
+    from analysis.summarize_mutations import MutationsGene
+except ModuleNotFoundError:
+    from summarize_mutations import MutationsGene
 
 
 def create_run_output_dir(base_output: str, input_path: str) -> str:

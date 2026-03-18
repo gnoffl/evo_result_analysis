@@ -1,9 +1,0 @@
-First mutation: Mean=751.06, Std=197.66880482261232, Min=69, Max=1156
-Last mutation: Mean=2048.28, Std=361.4469831109398, Min=1476, Max=2939
-Max span: Mean=1298.22, Std=451.05812441413804, Min=650, Max=2727
-90% quantile start: Mean=970.45, Std=147.6683700052249, Min=510, Max=1244
-90% quantile end: Mean=1707.39, Std=195.20885712487535, Min=1298, Max=2547
-90% quantile span: Mean=737.94, Std=261.34382793553783, Min=364, Max=2005
-50% quantile start: Mean=1182.1, Std=76.68774347964609, Min=859, Max=1324
-50% quantile end: Mean=1519.93, Std=220.04836990989048, Min=1131, Max=2547
-50% quantile span: Mean=338.83, Std=231.8375748234095, Min=112, Max=1575
