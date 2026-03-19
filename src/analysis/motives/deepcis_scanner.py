@@ -3,11 +3,14 @@
 from dataclasses import dataclass
 import json
 import os
+import re
 from typing import Dict, List, Optional, Tuple
+import argparse
 
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import tensorflow as tf  # type: ignore
 
 from analysis.utils.io import print_status
 from evolution.sequences import one_hot_encode
@@ -191,12 +194,6 @@ def get_full_sequence(
         + reference_sequence_full[mutation_end:]
     )
 
-def _get_zero_mutation_entry(pareto_front: List[ParetoEntry]) -> ParetoEntry:
-    zero = [e for e in pareto_front if e[2] == 0]
-    if zero:
-        return zero[0]
-    raise ValueError("No zero-mutation entry found in pareto front.")
-
 def _get_max_mutation_entry(pareto_front: List[ParetoEntry]) -> ParetoEntry:
     """Return the pareto entry with the most mutations.
 
@@ -209,15 +206,24 @@ def _get_max_mutation_entry(pareto_front: List[ParetoEntry]) -> ParetoEntry:
     """
     return max(pareto_front, key=lambda e: e[2])
 
+
+def find_padding_region(sequence: str):
+    """Uses docstrings to find longest stretch of consequtive "N" and returns start and end index of it.
+
+    Args:
+        sequence (str): sequence in which the padding is searched for.
+    """
+    regex = re.compile(r"N+")
+    matches = [match for match in regex.finditer(sequence)]
+    longest_match = max(matches, key=lambda m: m.end() - m.start()) if matches else None
+    return (longest_match.start(), longest_match.end()) if longest_match else (-1, -1)
+
 def slide_windows(
     sequence: str,
     window_size: int = DEFAULT_WINDOW_SIZE,
     step: int = DEFAULT_STEP_SIZE,
     padding_start: Optional[int] = None,
     padding_end: Optional[int] = None,
-    extragenic: int = DEFAULT_EXTRAGENIC,
-    intragenic: int = DEFAULT_INTRAGENIC,
-    central_padding: int = DEFAULT_CENTRAL_PADDING,
 ) -> List[Tuple[int, int, str, bool]]:
     """Generate overlapping windows across a DNA sequence.
 
@@ -240,16 +246,26 @@ def slide_windows(
         * ``end``   is exclusive so ``end - start == window_size``,
         * ``contains_padding`` is True when the window overlaps the N-pad region.
     """
+    if padding_start is None and padding_end is None:
+        padding_start, padding_end = find_padding_region(sequence)
     if padding_start is None:
-        padding_start = extragenic + intragenic
+        padding_start, _ = find_padding_region(sequence)
     if padding_end is None:
-        padding_end = padding_start + central_padding
+        _, padding_end = find_padding_region(sequence)
 
     windows: List[Tuple[int, int, str, bool]] = []
     for start in range(0, len(sequence) - window_size + 1, step):
         end = start + window_size
         subseq = sequence[start:end]
-        contains_padding = not (end <= padding_start or start >= padding_end)
+        contains_padding = end > padding_start and start < padding_end
+        if end > len(sequence):
+            break
+        windows.append((start, end, subseq, contains_padding))
+    if windows and windows[-1][1] < len(sequence):
+        start = len(sequence) - window_size
+        end = len(sequence)
+        subseq = sequence[start:end]
+        contains_padding = end > padding_start and start < padding_end
         windows.append((start, end, subseq, contains_padding))
     return windows
 
@@ -266,8 +282,6 @@ def load_deepcis_model(model_path: str):
         ImportError: If TensorFlow is not installed.
         ValueError: If the model cannot be loaded from ``model_path``.
     """
-    import tensorflow as tf  # type: ignore
-    print_status(f"Loading deepCIS model from {model_path}")
     model = tf.keras.models.load_model(model_path)
     return model
 
@@ -328,36 +342,16 @@ def scan_single_gene_folder(
             gene, sequence_type, window_start, window_end,
             contains_padding, tf_0, tf_1, …, tf_45
     """
-    padding_start = extragenic + intragenic
-    padding_end = padding_start + central_padding
-
-    ref_entry = _get_zero_mutation_entry(gene_data.pareto_front)
+    ref_full = gene_data.reference_sequence_full
     max_entry = _get_max_mutation_entry(gene_data.pareto_front)
-
-    ref_full = get_full_sequence(
-        ref_entry[0],
-        gene_data.reference_sequence_full,
-        gene_data.mutation_start,
-        gene_data.mutation_end,
-    )
-    max_full = get_full_sequence(
-        max_entry[0],
-        gene_data.reference_sequence_full,
-        gene_data.mutation_start,
-        gene_data.mutation_end,
-    )
+    max_full = get_full_sequence(max_entry[0], gene_data.reference_sequence_full, gene_data.mutation_start,
+                                 gene_data.mutation_end,)
 
     rows: List[dict] = []
     for seq_str, seq_type in [(ref_full, "reference"), (max_full, "max_mutated")]:
-        windows = slide_windows(
-            seq_str,
-            window_size=window_size,
-            step=step,
-            padding_start=padding_start,
-            padding_end=padding_end,
-        )
+        windows = slide_windows(seq_str, window_size=window_size, step=step)
         if not windows:
-            continue
+            raise ValueError(f"Could not generate any windows for gene {gene_data.gene_name} with sequence type {seq_type}.")
 
         _, _, subseqs, _ = zip(*windows)
         encoded = np.stack([one_hot_encode(s) for s in subseqs], axis=0)
@@ -447,16 +441,9 @@ def scan_all_genes(
         try:
             gene_data = GeneRunData.load_gene_run_data(gene_folder)
             genes_data[gene_name] = gene_data
-            df = scan_single_gene_folder(
-                model=model,
-                gene_data=gene_data,
-                window_size=window_size,
-                step=step,
-                batch_size=batch_size,
-                extragenic=extragenic,
-                intragenic=intragenic,
-                central_padding=central_padding,
-            )
+            df = scan_single_gene_folder(model=model, gene_data=gene_data, window_size=window_size, step=step,
+                                         batch_size=batch_size, extragenic=extragenic, intragenic=intragenic,
+                                         central_padding=central_padding,)
             all_frames.append(df)
         except Exception as exc:
             print_status(f"Skipping gene {gene_name}: {exc}", "WARNING")
@@ -465,11 +452,147 @@ def scan_all_genes(
     result_df.to_csv(csv_path, index=False)
     print_status(f"Saved {len(result_df)} rows to {csv_path}", "SUCCESS")
 
-    try:
-        parquet_path = csv_path.replace(".csv", ".parquet")
-        result_df.to_parquet(parquet_path, index=False)
-        print_status(f"Also saved parquet: {parquet_path}", "SUCCESS")
-    except Exception:
-        pass
-
     return result_df, genes_data
+
+def parse_arguments(args=None):
+    """Parse command-line arguments for deepCIS scanning.
+    
+    Args:
+        args: List of argument strings to parse (for testing). 
+              If None, uses sys.argv.
+    
+    Returns:
+        argparse.Namespace with parsed arguments.
+    
+    Raises:
+        SystemExit: On invalid arguments.
+    """
+    parser = argparse.ArgumentParser(
+        description="Run deepCIS sliding-window predictions on evolutionary algorithm output.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Basic usage
+  python -m analysis.motives.deepcis_scanner \\
+    --model /path/to/model.h5 \\
+    --run-folder /path/to/run \\
+    --output /path/to/output
+
+  # With custom parameters
+  python -m analysis.motives.deepcis_scanner \\
+    --model /path/to/model.h5 \\
+    --run-folder /path/to/run \\
+    --output /path/to/output \\
+    --name my_analysis \\
+    --window-size 300 \\
+    --step 75 \\
+    --batch-size 32 \\
+    --overwrite
+        """,
+    )
+    
+    # Required arguments
+    parser.add_argument("--model", type=str, required=True, metavar="PATH", help="Path to deepCIS TensorFlow model (.h5 or SavedModel directory)")
+    parser.add_argument("--run-folder", type=str, required=True, metavar="PATH", help="Root directory of the evolutionary algorithm run",)
+    parser.add_argument( "--output", type=str, required=True, metavar="PATH", help="Directory to write output CSV and Parquet files",)
+    
+    # Optional arguments - naming
+    parser.add_argument( "--name", type=str, default=None, metavar="NAME", help="Label used in output filename (defaults to run_folder basename)",)
+    
+    # Optional arguments - window parameters
+    parser.add_argument( "--window-size", type=int, default=DEFAULT_WINDOW_SIZE, metavar="BP", help=f"Sliding window size in bp (default: {DEFAULT_WINDOW_SIZE})",)
+    parser.add_argument( "--step", type=int, default=DEFAULT_STEP_SIZE, metavar="BP", help=f"Step size between consecutive window starts in bp (default: {DEFAULT_STEP_SIZE})",)
+    
+    # Optional arguments - inference
+    parser.add_argument( "--batch-size", type=int, default=DEFAULT_BATCH_SIZE, metavar="N", help=f"Number of windows per model call (default: {DEFAULT_BATCH_SIZE})",)
+    
+    # Optional arguments - sequence extraction
+    parser.add_argument( "--extragenic", type=int, default=DEFAULT_EXTRAGENIC, metavar="BP", help=f"Extragenic bp used during sequence extraction (default: {DEFAULT_EXTRAGENIC})",)
+    parser.add_argument( "--intragenic", type=int, default=DEFAULT_INTRAGENIC, metavar="BP", help=f"Intragenic bp used during sequence extraction (default: {DEFAULT_INTRAGENIC})",)
+    parser.add_argument( "--central-padding", type=int, default=DEFAULT_CENTRAL_PADDING, metavar="BP", help=f"Length of central N-padding region (default: {DEFAULT_CENTRAL_PADDING})",)
+    
+    # Optional arguments - behavior
+    parser.add_argument( "--overwrite", action="store_true", help="Overwrite existing output file (default: skip if exists)",)
+    
+    # Verbosity (optional)
+    parser.add_argument( "-v", "--verbose", action="store_true", help="Enable verbose output",)
+    
+    parsed_args = parser.parse_args(args)
+    
+    # Validate model path exists
+    if not os.path.exists(parsed_args.model):
+        parser.error(f"Model path does not exist: {parsed_args.model}")
+    
+    # Validate run folder exists
+    if not os.path.isdir(parsed_args.run_folder):
+        parser.error(f"Run folder does not exist or is not a directory: {parsed_args.run_folder}")
+    
+    # Validate window parameters
+    if parsed_args.window_size <= 0:
+        parser.error("--window-size must be positive")
+    if parsed_args.step <= 0:
+        parser.error("--step must be positive")
+    if parsed_args.batch_size <= 0:
+        parser.error("--batch-size must be positive")
+    
+    return parsed_args
+
+
+def run_deepcis_scan(args):
+    """Run deepCIS scanning with provided arguments.
+    
+    Args:
+        args: argparse.Namespace with parsed arguments from parse_arguments().
+    
+    Returns:
+        int: Exit code (0 for success, 1 for error).
+    """
+    # Create output directory
+    os.makedirs(args.output, exist_ok=True)
+    
+    # Run the scan
+    print_status(f"Starting deepCIS scanning", "INFO")
+    print_status(f"Model: {args.model}", "INFO")
+    print_status(f"Run folder: {args.run_folder}", "INFO")
+    print_status(f"Output: {args.output}", "INFO")
+    print_status(f"Window size: {args.window_size} bp, Step: {args.step} bp", "INFO")
+    print_status(f"Batch size: {args.batch_size}", "INFO")
+    
+    try:
+        result_df, genes_data = scan_all_genes(
+            model_path=args.model,
+            run_folder=args.run_folder,
+            output_path=args.output,
+            name=args.name,
+            window_size=args.window_size,
+            step=args.step,
+            batch_size=args.batch_size,
+            extragenic=args.extragenic,
+            intragenic=args.intragenic,
+            central_padding=args.central_padding,
+            overwrite=args.overwrite,
+        )
+        
+        print_status(
+            f"Scanning complete! Processed {len(genes_data)} genes, {len(result_df)} windows",
+            "SUCCESS"
+        )
+        return 0
+        
+    except Exception as exc:
+        print_status(f"Error during scanning: {exc}", "ERROR")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
+def main():
+    """Command-line interface for deepCIS scanning."""
+    args = parse_arguments()
+    return run_deepcis_scan(args)
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
