@@ -3,10 +3,11 @@
 # Script to run complete evolutionary analysis pipeline
 # Usage: ./run_full_analysis.sh <results_folder> <analysis_name> <output_folder> [options]
 #
-# This script runs three analysis scripts in sequence:
+# This script runs four analysis scripts in sequence:
 # 1. simple_result_stats.py - Basic statistics and visualizations
-# 2. summarize_mutations.py - Mutation summarization
-# 3. analyze_mutations.py - Detailed mutation analysis
+# 2. deepcis_scanner.py - DeepCIS sequence scanning
+# 3. summarize_mutations.py - Mutation summarization
+# 4. analyze_mutations.py - Detailed mutation analysis
 
 # Color codes for terminal output
 RED='\033[0;31m'
@@ -24,19 +25,26 @@ usage() {
     echo "  analysis_name   - Name to identify this analysis run"
     echo "  output_folder   - Output folder for results"
     echo ""
-    echo "Optional Arguments (Step 2: summarize_mutations):"
-    echo "  -f, --final-generation <int>    Final generation to consider (default: 1999)"
-    echo "  -g, --generation <int>          Specific generation to filter (default: None - all generations)"
+    echo "Optional Arguments (Step 2: deepcis_scanner):"
+    echo "  --deepcis-window-size <int>     Window size for deepCIS scanning"
+    echo "  --deepcis-step <int>            Step size for deepCIS sliding window"
+    echo "  --deepcis-batch-size <int>      Batch size for deepCIS predictions"
     echo ""
-    echo "Optional Arguments (Step 3: analyze_mutations):"
-    echo "  -w, --window-size <int>         Window size for rolling mean plots (default: 31)"
-    echo "  -m, --mutable-positions <int>       Number of mutable positions (default: 3000)"
+    echo "Optional Arguments (Step 3: summarize_mutations):"
+    echo "  -f, --final-generation <int>    Final generation to consider"
+    echo "  -g, --generation <int>          Specific generation to filter"
+    echo ""
+    echo "Optional Arguments (Step 4: analyze_mutations):"
+    echo "  -w, --window-size <int>         Window size for rolling mean plots"
+    echo "  -m, --mutable-positions <int>   Number of mutable positions"
     echo ""
     echo "Optional Arguments (All steps):"
-    echo "  -o, --output-format <format>        Output format for plots (default: png)"
-    echo "  -l, --last-generation <int>         Last generation for simple_result_stats (default: 1999)"
-    echo "      --overwrite                     Force overwrite of existing stats files (default: false)"
-    echo "      --no-titles                     Omit titles from all generated figures (default: false)"
+    echo "  -o, --output-format <format>    Output format for plots"
+    echo "  -l, --last-generation <int>     Last generation for simple_result_stats"
+    echo "      --overwrite                 Force overwrite of existing stats files"
+    echo "      --no-titles                 Omit titles from all generated figures"
+    echo ""
+    echo "Note: Omitted parameters will use their defaults from the respective scripts."
     echo ""
     echo "Example:"
     echo "  $0 ./results/GOF_run1 GOF_analysis ./outputs"
@@ -55,13 +63,16 @@ ANALYSIS_NAME="$2"
 OUTPUT_FOLDER="$3"
 shift 3  # Remove first 3 arguments, remaining are optional
 
-# Default values for optional parameters
-FINAL_GENERATION=1999
+# Optional parameters - only set if explicitly provided
+FINAL_GENERATION=""
 GENERATION=""
-WINDOW_SIZE=31
-MUTABLE_POSITIONS=3000
-OUTPUT_FORMAT="png"
-LAST_GENERATION=1999
+WINDOW_SIZE=""
+MUTABLE_POSITIONS=""
+OUTPUT_FORMAT=""
+LAST_GENERATION=""
+DEEPCIS_WINDOW_SIZE=""
+DEEPCIS_STEP_SIZE=""
+DEEPCIS_BATCH_SIZE=""
 OVERWRITE_FLAG=""
 NO_TITLES_FLAG=""
 
@@ -90,6 +101,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         -l|--last-generation)
             LAST_GENERATION="$2"
+            shift 2
+            ;;
+        --deepcis-window-size)
+            DEEPCIS_WINDOW_SIZE="$2"
+            shift 2
+            ;;
+        --deepcis-step)
+            DEEPCIS_STEP_SIZE="$2"
+            shift 2
+            ;;
+        --deepcis-batch-size)
+            DEEPCIS_BATCH_SIZE="$2"
             shift 2
             ;;
         --overwrite)
@@ -128,14 +151,33 @@ echo "Analysis Name: $ANALYSIS_NAME"
 echo "Output Folder: $OUTPUT_FOLDER"
 echo ""
 echo "Parameters:"
-echo "  Final Generation: $FINAL_GENERATION"
+if [ -n "$LAST_GENERATION" ]; then
+    echo "  Last Generation (stats): $LAST_GENERATION"
+fi
+if [ -n "$FINAL_GENERATION" ]; then
+    echo "  Final Generation: $FINAL_GENERATION"
+fi
 if [ -n "$GENERATION" ]; then
     echo "  Specific Generation: $GENERATION"
 fi
-echo "  Last Generation (stats): $LAST_GENERATION"
-echo "  Window Size: $WINDOW_SIZE"
-echo "  Mutable Positions: $MUTABLE_POSITIONS"
-echo "  Output Format: $OUTPUT_FORMAT"
+if [ -n "$WINDOW_SIZE" ]; then
+    echo "  Window Size (mutations): $WINDOW_SIZE"
+fi
+if [ -n "$MUTABLE_POSITIONS" ]; then
+    echo "  Mutable Positions: $MUTABLE_POSITIONS"
+fi
+if [ -n "$DEEPCIS_WINDOW_SIZE" ]; then
+    echo "  DeepCIS Window Size: $DEEPCIS_WINDOW_SIZE"
+fi
+if [ -n "$DEEPCIS_STEP_SIZE" ]; then
+    echo "  DeepCIS Step Size: $DEEPCIS_STEP_SIZE"
+fi
+if [ -n "$DEEPCIS_BATCH_SIZE" ]; then
+    echo "  DeepCIS Batch Size: $DEEPCIS_BATCH_SIZE"
+fi
+if [ -n "$OUTPUT_FORMAT" ]; then
+    echo "  Output Format: $OUTPUT_FORMAT"
+fi
 if [ -n "$OVERWRITE_FLAG" ]; then
     echo "  Overwrite Existing Stats: true"
 fi
@@ -151,16 +193,27 @@ echo ""
 OVERALL_SUCCESS=true
 
 # Step 1: Simple Result Stats
-echo -e "${BLUE}[STEP 1/3] Running simple_result_stats.py...${NC}"
-if python -m src.analysis.simple_result_stats \
-    --results_folder "$RESULTS_FOLDER" \
-    --name "$ANALYSIS_NAME" \
-    --output_folder "$OUTPUT_FOLDER" \
-    --output_format "$OUTPUT_FORMAT" \
-    --last_generation $LAST_GENERATION \
-    $OVERWRITE_FLAG \
-    $NO_TITLES_FLAG \
-    --all; then
+echo -e "${BLUE}[STEP 1/4] Running simple_result_stats.py...${NC}"
+STATS_CMD="python -m src.analysis.overview.simple_result_stats \
+    --results_folder \"$RESULTS_FOLDER\" \
+    --name \"$ANALYSIS_NAME\" \
+    --output_folder \"$OUTPUT_FOLDER\" \
+    --all"
+
+if [ -n "$LAST_GENERATION" ]; then
+    STATS_CMD="$STATS_CMD --last_generation $LAST_GENERATION"
+fi
+if [ -n "$OUTPUT_FORMAT" ]; then
+    STATS_CMD="$STATS_CMD --output_format \"$OUTPUT_FORMAT\""
+fi
+if [ -n "$OVERWRITE_FLAG" ]; then
+    STATS_CMD="$STATS_CMD $OVERWRITE_FLAG"
+fi
+if [ -n "$NO_TITLES_FLAG" ]; then
+    STATS_CMD="$STATS_CMD $NO_TITLES_FLAG"
+fi
+
+if eval $STATS_CMD; then
     echo -e "${GREEN}✓ simple_result_stats.py completed successfully${NC}"
 else
     echo -e "${RED}✗ simple_result_stats.py failed${NC}"
@@ -168,16 +221,46 @@ else
 fi
 echo ""
 
-# Step 2: Summarize Mutations
-echo -e "${BLUE}[STEP 2/3] Running summarize_mutations.py...${NC}"
+# Step 2: DeepCIS Scanner
+echo -e "${BLUE}[STEP 2/4] Running deepcis_scanner.py...${NC}"
+DEEPCIS_OUTPUT_DIR="$OUTPUT_FOLDER/deepcis_scan"
+mkdir -p "$DEEPCIS_OUTPUT_DIR"
 
-# Build command with optional generation parameter
-SUMMARIZE_CMD="python -m src.analysis.summarize_mutations \
+DEEPCIS_CMD="python -m src.analysis.motives.deepcis_scanner \
+    --run-folder \"$RESULTS_FOLDER\" \
+    --output \"$DEEPCIS_OUTPUT_DIR\" \
+    --name \"$ANALYSIS_NAME\""
+
+if [ -n "$DEEPCIS_WINDOW_SIZE" ]; then
+    DEEPCIS_CMD="$DEEPCIS_CMD --window-size $DEEPCIS_WINDOW_SIZE"
+fi
+if [ -n "$DEEPCIS_STEP_SIZE" ]; then
+    DEEPCIS_CMD="$DEEPCIS_CMD --step $DEEPCIS_STEP_SIZE"
+fi
+if [ -n "$DEEPCIS_BATCH_SIZE" ]; then
+    DEEPCIS_CMD="$DEEPCIS_CMD --batch-size $DEEPCIS_BATCH_SIZE"
+fi
+
+if eval $DEEPCIS_CMD; then
+    echo -e "${GREEN}✓ deepcis_scanner.py completed successfully${NC}"
+else
+    echo -e "${RED}✗ deepcis_scanner.py failed${NC}"
+    OVERALL_SUCCESS=false
+fi
+echo ""
+
+# Step 3: Summarize Mutations
+echo -e "${BLUE}[STEP 3/4] Running summarize_mutations.py...${NC}"
+
+# Build command with optional parameters
+SUMMARIZE_CMD="python -m src.analysis.mutations.summarize_mutations \
     --results_folder \"$RESULTS_FOLDER\" \
     --name \"$ANALYSIS_NAME\" \
-    --output_folder \"$OUTPUT_FOLDER\" \
-    --final_generation $FINAL_GENERATION"
+    --output_folder \"$OUTPUT_FOLDER\""
 
+if [ -n "$FINAL_GENERATION" ]; then
+    SUMMARIZE_CMD="$SUMMARIZE_CMD --final_generation $FINAL_GENERATION"
+fi
 if [ -n "$GENERATION" ]; then
     SUMMARIZE_CMD="$SUMMARIZE_CMD --generation $GENERATION"
 fi
@@ -202,23 +285,36 @@ else
 fi
 echo ""
 
-# Step 3: Analyze Mutations
+# Step 4: Analyze Mutations
 if [ -z "$MUTATION_DATA" ] || [ ! -f "$MUTATION_DATA" ]; then
     echo -e "${RED}✗ Mutation data file not found or not set: $MUTATION_DATA${NC}"
     echo -e "${RED}  Cannot proceed with analyze_mutations.py${NC}"
     OVERALL_SUCCESS=false
 else
-    echo -e "${BLUE}[STEP 3/3] Running analyze_mutations.py...${NC}"
-    if python -m src.analysis.analyze_mutations \
-        --mutation_data "$MUTATION_DATA" \
-        --name "$ANALYSIS_NAME" \
-        --output_folder "$OUTPUT_FOLDER" \
-        --window_size $WINDOW_SIZE \
-        --mutable_positions $MUTABLE_POSITIONS \
-        --output_format "$OUTPUT_FORMAT" \
-        --generation "$GENERATION" \
-        $NO_TITLES_FLAG \
-        --all; then
+    echo -e "${BLUE}[STEP 4/4] Running analyze_mutations.py...${NC}"
+    ANALYZE_CMD="python -m src.analysis.mutations.analyze_mutations \
+        --mutation_data \"$MUTATION_DATA\" \
+        --name \"$ANALYSIS_NAME\" \
+        --output_folder \"$OUTPUT_FOLDER\" \
+        --all"
+    
+    if [ -n "$WINDOW_SIZE" ]; then
+        ANALYZE_CMD="$ANALYZE_CMD --window_size $WINDOW_SIZE"
+    fi
+    if [ -n "$MUTABLE_POSITIONS" ]; then
+        ANALYZE_CMD="$ANALYZE_CMD --mutable_positions $MUTABLE_POSITIONS"
+    fi
+    if [ -n "$OUTPUT_FORMAT" ]; then
+        ANALYZE_CMD="$ANALYZE_CMD --output_format \"$OUTPUT_FORMAT\""
+    fi
+    if [ -n "$GENERATION" ]; then
+        ANALYZE_CMD="$ANALYZE_CMD --generation \"$GENERATION\""
+    fi
+    if [ -n "$NO_TITLES_FLAG" ]; then
+        ANALYZE_CMD="$ANALYZE_CMD $NO_TITLES_FLAG"
+    fi
+    
+    if eval $ANALYZE_CMD; then
         echo -e "${GREEN}✓ analyze_mutations.py completed successfully${NC}"
     else
         echo -e "${RED}✗ analyze_mutations.py failed${NC}"
