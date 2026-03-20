@@ -6,6 +6,7 @@ import os
 import re
 from typing import Dict, List, Optional, Tuple
 import argparse
+import traceback
 
 import numpy as np
 import pandas as pd
@@ -19,7 +20,7 @@ from evolution.sequences import one_hot_encode
 N_TF_FAMILIES: int = 46
 
 DEFAULT_WINDOW_SIZE: int = 250
-DEFAULT_STEP_SIZE: int = 50
+DEFAULT_STEP_SIZE: int = 10
 DEFAULT_BATCH_SIZE: int = 64
 DEFAULT_DELTA_THRESHOLD: float = 0.1
 
@@ -314,9 +315,6 @@ def scan_single_gene_folder(
     window_size: int = DEFAULT_WINDOW_SIZE,
     step: int = DEFAULT_STEP_SIZE,
     batch_size: int = DEFAULT_BATCH_SIZE,
-    extragenic: int = DEFAULT_EXTRAGENIC,
-    intragenic: int = DEFAULT_INTRAGENIC,
-    central_padding: int = DEFAULT_CENTRAL_PADDING,
 ) -> pd.DataFrame:
     """Scan the 0-mutation and max-mutation sequences of one gene with deepCIS.
 
@@ -379,9 +377,6 @@ def scan_all_genes(
     window_size: int = DEFAULT_WINDOW_SIZE,
     step: int = DEFAULT_STEP_SIZE,
     batch_size: int = DEFAULT_BATCH_SIZE,
-    extragenic: int = DEFAULT_EXTRAGENIC,
-    intragenic: int = DEFAULT_INTRAGENIC,
-    central_padding: int = DEFAULT_CENTRAL_PADDING,
     overwrite: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, GeneRunData]]:
     """Run deepCIS sliding-window scan over all gene folders in a run folder.
@@ -403,9 +398,6 @@ def scan_all_genes(
         window_size: Sliding-window size in bp (default 250).
         step: Step size between window starts (default 50).
         batch_size: Inference batch size (default 64).
-        extragenic: Extragenic bp used during sequence extraction (default 1000).
-        intragenic: Intragenic bp used during sequence extraction (default 500).
-        central_padding: Central N-padding length (default 20).
         overwrite: When False, load and return an existing output file without
             re-running inference (genes_data dict will be empty in that case).
 
@@ -442,8 +434,7 @@ def scan_all_genes(
             gene_data = GeneRunData.load_gene_run_data(gene_folder)
             genes_data[gene_name] = gene_data
             df = scan_single_gene_folder(model=model, gene_data=gene_data, window_size=window_size, step=step,
-                                         batch_size=batch_size, extragenic=extragenic, intragenic=intragenic,
-                                         central_padding=central_padding,)
+                                         batch_size=batch_size)
             all_frames.append(df)
         except Exception as exc:
             print_status(f"Skipping gene {gene_name}: {exc}", "WARNING")
@@ -492,10 +483,11 @@ Examples:
     )
     
     # Required arguments
-    parser.add_argument("--model", type=str, required=True, metavar="PATH", help="Path to deepCIS TensorFlow model (.h5 or SavedModel directory)")
     parser.add_argument("--run-folder", type=str, required=True, metavar="PATH", help="Root directory of the evolutionary algorithm run",)
     parser.add_argument( "--output", type=str, required=True, metavar="PATH", help="Directory to write output CSV and Parquet files",)
     
+    parser.add_argument("--model", type=str, default="models/deepcis/deepCIS_model_chrom_1_model.h5", metavar="PATH", help="Path to deepCIS TensorFlow model (.h5 or SavedModel directory)")
+
     # Optional arguments - naming
     parser.add_argument( "--name", type=str, default=None, metavar="NAME", help="Label used in output filename (defaults to run_folder basename)",)
     
@@ -506,16 +498,8 @@ Examples:
     # Optional arguments - inference
     parser.add_argument( "--batch-size", type=int, default=DEFAULT_BATCH_SIZE, metavar="N", help=f"Number of windows per model call (default: {DEFAULT_BATCH_SIZE})",)
     
-    # Optional arguments - sequence extraction
-    parser.add_argument( "--extragenic", type=int, default=DEFAULT_EXTRAGENIC, metavar="BP", help=f"Extragenic bp used during sequence extraction (default: {DEFAULT_EXTRAGENIC})",)
-    parser.add_argument( "--intragenic", type=int, default=DEFAULT_INTRAGENIC, metavar="BP", help=f"Intragenic bp used during sequence extraction (default: {DEFAULT_INTRAGENIC})",)
-    parser.add_argument( "--central-padding", type=int, default=DEFAULT_CENTRAL_PADDING, metavar="BP", help=f"Length of central N-padding region (default: {DEFAULT_CENTRAL_PADDING})",)
-    
     # Optional arguments - behavior
     parser.add_argument( "--overwrite", action="store_true", help="Overwrite existing output file (default: skip if exists)",)
-    
-    # Verbosity (optional)
-    parser.add_argument( "-v", "--verbose", action="store_true", help="Enable verbose output",)
     
     parsed_args = parser.parse_args(args)
     
@@ -567,9 +551,6 @@ def run_deepcis_scan(args):
             window_size=args.window_size,
             step=args.step,
             batch_size=args.batch_size,
-            extragenic=args.extragenic,
-            intragenic=args.intragenic,
-            central_padding=args.central_padding,
             overwrite=args.overwrite,
         )
         
@@ -581,9 +562,7 @@ def run_deepcis_scan(args):
         
     except Exception as exc:
         print_status(f"Error during scanning: {exc}", "ERROR")
-        if args.verbose:
-            import traceback
-            traceback.print_exc()
+        traceback.print_exc()
         return 1
 
 
