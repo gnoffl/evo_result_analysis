@@ -28,8 +28,13 @@ DEFAULT_EXTRAGENIC: int = 1000
 DEFAULT_INTRAGENIC: int = 500
 DEFAULT_CENTRAL_PADDING: int = 20
 
-# Placeholder for real TF family names
-TF_FAMILY_NAMES: List[str] = [f"TF_{i}" for i in range(N_TF_FAMILIES)]
+TF_FAMILY_NAMES: List[str] = [
+    "ABI3VP1_tnt", "AP2EREBP_tnt", "ARF_ecoli", "ARF_tnt", "ARID_tnt", "BBRBPC_tnt", "BES1_tnt", "BZR_tnt", "C2C2YABBY_tnt",
+    "C2C2dof_tnt", "C2C2gata_tnt", "C2H2_tnt", "C3H_tnt", "CAMTA_tnt", "CPP_tnt", "E2FDP_tnt", "EIL_tnt", "FAR1_tnt", "G2like_tnt",
+    "GRF_tnt", "GeBP_tnt", "HB_tnt", "HSF_tnt", "Homeobox_ecoli", "Homeobox_tnt", "LOBAS2_tnt", "MADS_tnt", "MYB_tnt", "MYBrelated_tnt",
+    "NAC_tnt", "ND_tnt", "Orphan_tnt", "RAV_tnt", "REM_tnt", "RWPRK_tnt", "S1Falike_tnt", "SBP_tnt", "SRS_tnt", "TCP_tnt",
+    "Trihelix_tnt", "WRKY_tnt", "ZFHD_tnt", "bHLH_tnt", "bZIP_tnt", "mTERF_tnt", "zfGRF_tnt"
+]
 
 if len(TF_FAMILY_NAMES) != N_TF_FAMILIES:
     raise ValueError(
@@ -483,23 +488,23 @@ Examples:
     )
     
     # Required arguments
-    parser.add_argument("--run-folder", type=str, required=True, metavar="PATH", help="Root directory of the evolutionary algorithm run",)
-    parser.add_argument( "--output", type=str, required=True, metavar="PATH", help="Directory to write output CSV and Parquet files",)
+    parser.add_argument("--run-folder", "-r", type=str, required=True, metavar="PATH", help="Root directory of the evolutionary algorithm run",)
+    parser.add_argument( "--output", "-o", type=str, required=True, metavar="PATH", help="Directory to write output CSV",)
     
-    parser.add_argument("--model", type=str, default="models/deepcis/deepCIS_model_chrom_1_model.h5", metavar="PATH", help="Path to deepCIS TensorFlow model (.h5 or SavedModel directory)")
+    parser.add_argument("--model", "-m", type=str, default="models/deepcis/deepCIS_model_chrom_1_model.h5", metavar="PATH", help="Path to deepCIS TensorFlow model (.h5 or SavedModel directory)")
 
     # Optional arguments - naming
-    parser.add_argument( "--name", type=str, default=None, metavar="NAME", help="Label used in output filename (defaults to run_folder basename)",)
+    parser.add_argument( "--name", "-n", type=str, default=None, metavar="NAME", help="Label used in output filename (defaults to run_folder basename)",)
     
     # Optional arguments - window parameters
-    parser.add_argument( "--window-size", type=int, default=DEFAULT_WINDOW_SIZE, metavar="BP", help=f"Sliding window size in bp (default: {DEFAULT_WINDOW_SIZE})",)
-    parser.add_argument( "--step", type=int, default=DEFAULT_STEP_SIZE, metavar="BP", help=f"Step size between consecutive window starts in bp (default: {DEFAULT_STEP_SIZE})",)
+    parser.add_argument( "--window-size", "-w", type=int, default=DEFAULT_WINDOW_SIZE, metavar="BP", help=f"Sliding window size in bp (default: {DEFAULT_WINDOW_SIZE})",)
+    parser.add_argument( "--step", "-s", type=int, default=DEFAULT_STEP_SIZE, metavar="BP", help=f"Step size between consecutive window starts in bp (default: {DEFAULT_STEP_SIZE})",)
     
     # Optional arguments - inference
-    parser.add_argument( "--batch-size", type=int, default=DEFAULT_BATCH_SIZE, metavar="N", help=f"Number of windows per model call (default: {DEFAULT_BATCH_SIZE})",)
+    parser.add_argument( "--batch-size", "-b", type=int, default=DEFAULT_BATCH_SIZE, metavar="N", help=f"Number of windows per model call (default: {DEFAULT_BATCH_SIZE})",)
     
     # Optional arguments - behavior
-    parser.add_argument( "--overwrite", action="store_true", help="Overwrite existing output file (default: skip if exists)",)
+    parser.add_argument( "--overwrite", "-ow", action="store_true", help="Overwrite existing output file (default: skip if exists)",)
     
     parsed_args = parser.parse_args(args)
     
