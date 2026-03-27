@@ -149,7 +149,6 @@ def _plot_line(
     y: np.ndarray,
     label: str,
     color: str,
-    marker: str,
 ) -> None:
     """Plot a single line on the axes.
 
@@ -165,7 +164,6 @@ def _plot_line(
         ax.plot(
             x,
             y,
-            marker=marker,
             linestyle="-",
             color=color,
             linewidth=2,
@@ -195,6 +193,7 @@ def _set_axis_properties(
     """
     # Set x-axis limits based on data range
     ax.set_xlim(x_min, x_max)
+    ax.set_ylim(0, 1)
 
     # Set labels
     ax.set_xlabel("Genomic Position (bp)")
@@ -234,8 +233,8 @@ def _plot_gene_tf(
     _add_padding_background(ax, padding_regions)
 
     # Plot reference and mutated lines
-    _plot_line(ax, ref_x, ref_y, "Reference", "black", "o")
-    _plot_line(ax, mut_x, mut_y, "Mutated", "blue", "s")
+    _plot_line(ax, ref_x, ref_y, "Reference", "black")
+    _plot_line(ax, mut_x, mut_y, "Mutated", "blue")
 
     # Set axis properties
     _set_axis_properties(ax, x_min, x_max, gene, tf_col, include_title)
