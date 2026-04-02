@@ -614,4 +614,3 @@ class PeakAnnotator:
         )
 
 #TODO: rethink logic with stepsize (dont rely on fixed stepsize, instead dynamically select windows within 250bp region)
-#TODO: Think about edge detection (maybe hardcode 250bp requirements for peaks of width ~250bp)
