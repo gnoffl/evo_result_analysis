@@ -14,6 +14,7 @@ from typing import List, Optional, Tuple, Union, cast
 import pandas as pd
 
 from analysis.motives.peak_annotation import PeakAnnotator
+from tqdm import tqdm
 
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ class DeepCISPeakScanner:
         save_results: bool = True,
         annotator_window_size: int = 250,
         annotator_step_size: Optional[int] = None,
-        annotator_threshold_peak: float = 0.0,
+        annotator_threshold_peak: float = 0.2,
         annotator_sigma: float = 10.0,
         annotator_lambda_weight: float = 1.0,
     ):
@@ -264,8 +265,9 @@ class DeepCISPeakScanner:
             mismatches = signal_df.loc[signal_df["_merge"] != "both", ["window_start", "window_end", "_merge"]]
             raise ValueError(f"Reference and mutated windows do not perfectly match for gene {gene_df['gene'].iloc[0]} and TF {tf_name}. First mismatches:\n{mismatches.head(20).to_string(index=False)}")
 
-        signal_df["signal"] = signal_df[f"{tf_name}_mut"] - signal_df[tf_name]
+        signal_df["signal"] = abs(signal_df[f"{tf_name}_mut"] - signal_df[tf_name])
         signal_df = signal_df[["signal", "window_start", "window_end"]]
+        signal_df = signal_df.rename(columns={"signal": tf_name})
         return signal_df
 
     def _compute_gene_tf_signal(
@@ -331,7 +333,7 @@ class DeepCISPeakScanner:
             lambda_weight=self.annotator_lambda_weight,
         )
 
-        peaks_df = run_annotator.detect_peaks(signal_column="signal")
+        peaks_df = run_annotator.detect_peaks(signal_column=tf_name)
 
         # Add metadata columns
         peaks_df["gene"] = gene_name
@@ -339,12 +341,14 @@ class DeepCISPeakScanner:
         peaks_df["signal_type"] = self.signal_type
 
         # Reorder columns to standard format
-        return peaks_df[[
+        return peaks_df[[                   #type: ignore
                 "gene",
                 "tf",
                 "signal_type",
                 "peak_start",
                 "peak_end",
+                "peak_middle_start",
+                "peak_middle_end",
                 "score",
                 "region_idx",
                 "peak_rank",
@@ -388,7 +392,7 @@ class DeepCISPeakScanner:
         """
         all_peaks = []
 
-        for gene_name in selected_genes:
+        for gene_name in tqdm(selected_genes):
             gene_df = df[df["gene"] == gene_name].copy().reset_index(drop=True)
 
             for tf_name in selected_tfs:
@@ -516,10 +520,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument( "scanner_data", help="Path to deepCIS prediction CSV file.",)
-    parser.add_argument( "--genes", nargs="+", default=None, help="Genes to scan (space-separated and/or comma-separated).",)
-    parser.add_argument( "--tfs", nargs="+", default=None, help="TF columns to scan (space-separated and/or comma-separated).",)
-    parser.add_argument( "--signal-type", choices=["reference", "max_mutated", "difference"], default="difference", help="Which signal to scan (default: difference).",)
-    parser.add_argument( "--output-dir", default="", help="Output directory for results (default: next to input file).",)
+    parser.add_argument( "--genes", "-g", nargs="+", default=None, help="Genes to scan (space-separated and/or comma-separated).",)
+    parser.add_argument( "--tfs", "-t", nargs="+", default=None, help="TF columns to scan (space-separated and/or comma-separated).",)
+    parser.add_argument( "--signal-type", "-s", choices=["reference", "max_mutated", "difference"], default="difference", help="Which signal to scan (default: difference).",)
+    parser.add_argument( "--output-dir", "-o", default="", help="Output directory for results (default: next to input file).",)
 
     save_group = parser.add_mutually_exclusive_group()
     save_group.add_argument( "--save-results", dest="save_results", action="store_true", help="Save results to CSV (default).",)
@@ -528,7 +532,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument( "--annotator-window-size", type=int, default=250, help="PeakAnnotator window size in bp (default: 250).",)
     parser.add_argument( "--annotator-step-size", type=int, default=None, help=( "PeakAnnotator step size in bp. If omitted, inferred from window_start for each gene/TF signal."),)
-    parser.add_argument( "--annotator-threshold-peak", type=float, default=0.0, help="PeakAnnotator detection threshold (default: 0.0).",)
+    parser.add_argument( "--annotator-threshold-peak", type=float, default=0.2, help="PeakAnnotator detection threshold (default: 0.0).",)
     parser.add_argument( "--annotator-sigma", type=float, default=10.0, help="PeakAnnotator Gaussian sigma in bp (default: 10.0).",)
     parser.add_argument( "--annotator-lambda-weight", type=float, default=1.0, help="PeakAnnotator lambda weight (default: 1.0).",)
     parser.add_argument( "--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], default="INFO", help="Logging level (default: INFO).",)

@@ -52,7 +52,7 @@ class TestDeepCISPeakScannerInit(_PeakScannerTestBase):
         self.assertTrue(scanner.save_results)
         self.assertEqual(scanner.annotator_window_size, 250)
         self.assertIsNone(scanner.annotator_step_size)
-        self.assertEqual(scanner.annotator_threshold_peak, 0.0)
+        self.assertEqual(scanner.annotator_threshold_peak, 0.2)
         self.assertEqual(scanner.annotator_sigma, 10.0)
         self.assertEqual(scanner.annotator_lambda_weight, 1.0)
 
@@ -209,10 +209,10 @@ class TestComputeDifferenceSignal(_PeakScannerTestBase):
         result: pd.DataFrame = scanner._compute_difference_signal(gene_a_df, "tf_1") #type: ignore
 
         self.assertIsNotNone(result)
-        self.assertEqual(list(result.columns), ["signal", "window_start", "window_end"])
+        self.assertEqual(list(result.columns), ["tf_1", "window_start", "window_end"])
         result = result.sort_values("window_start").reset_index(drop=True)
-        self.assertAlmostEqual(result["signal"].tolist()[0], 0.3)
-        self.assertAlmostEqual(result["signal"].tolist()[1], 0.6)
+        self.assertAlmostEqual(result["tf_1"].tolist()[0], 0.3)
+        self.assertAlmostEqual(result["tf_1"].tolist()[1], 0.6)
 
     def test_compute_difference_signal_success(self):
         scanner = DeepCISPeakScanner(signal_type="difference")
@@ -221,9 +221,22 @@ class TestComputeDifferenceSignal(_PeakScannerTestBase):
         result = scanner._compute_difference_signal(gene_a_df, "tf_1")
 
         self.assertIsNotNone(result)
-        self.assertEqual(list(result.columns), ["signal", "window_start", "window_end"])
-        self.assertAlmostEqual(result["signal"].tolist()[0], 0.3)
-        self.assertAlmostEqual(result["signal"].tolist()[1], 0.6)
+        self.assertEqual(list(result.columns), ["tf_1", "window_start", "window_end"])
+        self.assertAlmostEqual(result["tf_1"].tolist()[0], 0.3)
+        self.assertAlmostEqual(result["tf_1"].tolist()[1], 0.6)
+
+    def test_compute_difference_signal_mutated_smaller(self):
+        scanner = DeepCISPeakScanner(signal_type="difference")
+        gene_a_df = self.sample_df[self.sample_df["gene"] == "geneA"]
+        gene_a_df.iloc[2, gene_a_df.columns.get_loc("tf_1")] = 0.05
+        gene_a_df.iloc[3, gene_a_df.columns.get_loc("tf_1")] = 0.05
+
+        result = scanner._compute_difference_signal(gene_a_df, "tf_1")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(list(result.columns), ["tf_1", "window_start", "window_end"])
+        self.assertAlmostEqual(result["tf_1"].tolist()[0], 0.05)
+        self.assertAlmostEqual(result["tf_1"].tolist()[1], 0.15)
 
     def test_compute_difference_signal_mismatched_windows_raises(self):
         scanner = DeepCISPeakScanner(signal_type="difference")
@@ -310,6 +323,8 @@ class TestDetectPeaksForGeneTf(_PeakScannerTestBase):
             {
                 "peak_start": [10],
                 "peak_end": [30],
+                "peak_middle_start": [15],
+                "peak_middle_end": [25],
                 "score": [0.75],
                 "region_idx": [0],
                 "peak_rank": [0],
@@ -326,8 +341,8 @@ class TestDetectPeaksForGeneTf(_PeakScannerTestBase):
 
         self.assertIsNotNone(result)
         self.assertEqual(
-            list(result.columns),
-            ["gene", "tf", "signal_type", "peak_start", "peak_end", "score", "region_idx", "peak_rank", "edge_peak"],
+            set(result.columns),
+            {"gene", "tf", "signal_type", "peak_start", "peak_end", "score", "region_idx", "peak_rank", "edge_peak", "peak_middle_start", "peak_middle_end"},
         )
         self.assertEqual(result.iloc[0]["gene"], "geneA")
         self.assertEqual(result.iloc[0]["tf"], "tf_1")
@@ -338,13 +353,13 @@ class TestDetectPeaksForGeneTf(_PeakScannerTestBase):
         self.assertEqual(result.iloc[0]["region_idx"], 0)
         self.assertEqual(result.iloc[0]["peak_rank"], 0)
         self.assertEqual(result.iloc[0]["edge_peak"], True)
-        mock_annotator.detect_peaks.assert_called_once_with(signal_column="signal")
+        mock_annotator.detect_peaks.assert_called_once_with(signal_column="tf_1")
         # assert that the annotator was called with the correct inputs
         mock_annotator_cls.assert_called_once_with(
             df=self.signal_df,
             window_size=250,
             step_size=None,
-            threshold_peak=0.0,
+            threshold_peak=0.2,
             sigma=10.0,
             lambda_weight=1.0,
         )
@@ -354,7 +369,7 @@ class TestDetectPeaksForGeneTf(_PeakScannerTestBase):
         scanner = DeepCISPeakScanner()
         with patch("analysis.motives.peak_scanner.PeakAnnotator") as mock_annotator_cls:
             mock_annotator = MagicMock()
-            mock_annotator.detect_peaks.return_value = pd.DataFrame(columns=["peak_start", "peak_end", "score", "region_idx", "peak_rank", "edge_peak"])
+            mock_annotator.detect_peaks.return_value = pd.DataFrame(columns=["peak_start", "peak_end", "score", "region_idx", "peak_rank", "edge_peak", "peak_middle_start", "peak_middle_end"])
             mock_annotator_cls.return_value = mock_annotator
 
             result = scanner._detect_peaks_for_gene_tf(self.signal_df, "geneA", "tf_1")
@@ -531,8 +546,10 @@ class TestScan(_PeakScannerTestBase):
             "tf": "tf_1",
             "signal_type": "difference",
             "peak_start": 20,
-            "peak_end": 70,
-            "score": annotator._calculate_peak_score(2, 5, annotator._preprocess_signal_for_peaks(expected_signal_df["signal"].to_numpy(dtype=np.float64)), annotator._get_cumsum_signal(expected_signal_df["signal"].to_numpy(dtype=np.float64))),
+            "peak_end": 49,
+            "peak_middle_start": 30,
+            "peak_middle_end": 40,
+            "score": annotator._calculate_peak_score(2, 5, annotator._calculate_smooth_derivative(expected_signal_df["signal"].to_numpy(dtype=np.float64)), annotator._get_cumsum_signal(expected_signal_df["signal"].to_numpy(dtype=np.float64))),
             "region_idx": 0,
             "peak_rank": 0,
             "edge_peak": True,
