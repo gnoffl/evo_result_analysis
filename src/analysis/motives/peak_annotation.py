@@ -182,32 +182,28 @@ class PeakAnnotator:
 
     # ========== PART A: REGION DETECTION ==========
 
-    @staticmethod
-    def _compute_moving_average(signal: np.ndarray, window_size_elements: int) -> np.ndarray:
+    def _compute_moving_average(self,signal: np.ndarray) -> np.ndarray:
         """Compute moving average using uniform convolution.
 
         Args:
             signal: 1D numpy array of signal values.
-            window_size_elements: Size of averaging window in elements.
 
         Returns:
             1D array of moving averages (shorter by window_size_elements - 1).
         """
-        kernel = np.ones(window_size_elements) / window_size_elements
+        kernel = np.ones(self._window_size_elements) / self._window_size_elements
         return np.convolve(signal, kernel, mode='valid')
 
-    @staticmethod
-    def _threshold_mask(avg_signal: np.ndarray, threshold: float) -> np.ndarray:
+    def _threshold_mask(self, avg_signal: np.ndarray) -> np.ndarray:
         """Create binary mask where moving average exceeds threshold.
 
         Args:
             avg_signal: 1D array of pre-smoothed values.
-            threshold: Threshold value.
 
         Returns:
             Boolean 1D array.
         """
-        return avg_signal > threshold
+        return avg_signal > self.threshold_peak
 
     @staticmethod
     def _find_contiguous_regions(mask: np.ndarray) -> List[Tuple[int, int]]:
@@ -248,19 +244,17 @@ class PeakAnnotator:
         Returns:
             List of (region_start, region_end) tuples.
         """
-        avg_signal = self._compute_moving_average(signal, self._window_size_elements)
+        avg_signal = self._compute_moving_average(signal)
         if len(avg_signal) == 0:
             return []
 
-        mask = self._threshold_mask(avg_signal, self.threshold_peak)
+        mask = self._threshold_mask(avg_signal)
         regions = self._find_contiguous_regions(mask)
-
         return regions
 
     # ========== PART B: SIGNAL PREPROCESSING ==========
 
-    @staticmethod
-    def _gaussian_smooth(signal: np.ndarray, sigma: float) -> np.ndarray:
+    def _gaussian_smooth(self, signal: np.ndarray) -> np.ndarray:
         """Apply Gaussian smoothing to signal.
 
         Args:
@@ -270,7 +264,7 @@ class PeakAnnotator:
         Returns:
             Smoothed 1D array, same length as input.
         """
-        return gaussian_filter1d(signal, sigma=sigma, mode='nearest')
+        return gaussian_filter1d(signal, sigma=self._sigma_elements, mode='nearest')
 
     @staticmethod
     def _compute_forward_derivative(smooth_signal: np.ndarray) -> np.ndarray:
@@ -285,7 +279,7 @@ class PeakAnnotator:
         deriv = np.diff(smooth_signal)
         return deriv
 
-    def _preprocess_signal_for_peaks(
+    def _calculate_smooth_derivative(
         self,
         signal: np.ndarray,
     ) -> np.ndarray:
@@ -301,7 +295,7 @@ class PeakAnnotator:
         """
         #extend signal by one zero before and after to ensure derivative can be calculated for all possible edges
         signal = np.pad(signal, (1, 1), mode='constant', constant_values=0)
-        smooth_signal = self._gaussian_smooth(signal, self._sigma_elements)
+        smooth_signal = self._gaussian_smooth(signal)
         deriv = self._compute_forward_derivative(smooth_signal)
         return deriv
 
@@ -364,7 +358,8 @@ class PeakAnnotator:
             fallback_end = max(fallback_start + 1, min(region_end, len(deriv) - 1))
             return fallback_start, fallback_end
 
-        result = max(candidates, key=lambda x: x[0])
+        candidates = sorted(candidates, key=lambda x: x[0], reverse=True)
+        result = candidates[0]
         return result[1], result[2]
     
     def _calculate_peak_score(self, peak_start_idx: int, peak_end_idx: int, deriv: np.ndarray, signal_cum_sum: np.ndarray) -> float:
@@ -488,6 +483,22 @@ class PeakAnnotator:
         return pd.DataFrame(
             columns=['peak_start', 'peak_end', 'score', 'region_idx', 'peak_rank', 'edge_peak']
         )
+    
+    def get_middle_window(self, start: int, end: int) -> Tuple[int, int]:
+        """Calculate the middle window of a given region.
+
+        Args:
+            start: Inclusive start coordinate of the region.
+            end: Exclusive end coordinate of the region.
+
+        Returns:
+            Tuple of (middle_start, middle_end) coordinates for the middle window.
+        """
+        middle = (start + end + 1) / 2
+        middle_start = middle - self.step_size / 2
+        middle_end = middle_start + self.step_size
+
+        return int(middle_start), int(middle_end)
 
     def _extract_and_format_peaks(
         self,
@@ -523,11 +534,15 @@ class PeakAnnotator:
             for peak_rank, (peak_start_idx, peak_end_idx, score) in enumerate(peaks):
 
                 out_start = int(window_starts[peak_start_idx])
-                out_end = int(window_starts[peak_end_idx - 1]) + self.window_size
+                out_end = int(window_starts[peak_end_idx - 1]) + self.step_size - 1
+
+                middle_start, middle_end = self.get_middle_window(out_start, out_end)
 
                 all_peaks.append({
                     'peak_start': out_start,
                     'peak_end': out_end,
+                    'peak_middle_start': middle_start,
+                    'peak_middle_end': middle_end,
                     'score': score,
                     'region_idx': region_idx,
                     'peak_rank': peak_rank,
@@ -596,7 +611,7 @@ class PeakAnnotator:
         if not regions:
             return self.empty_result_df()
 
-        deriv = self._preprocess_signal_for_peaks(signal)
+        deriv = self._calculate_smooth_derivative(signal)
         signal_cum_sum = self._get_cumsum_signal(signal)
         window_starts = self.df['window_start'].values
         result_df = self._extract_and_format_peaks(
