@@ -335,53 +335,101 @@ class PeakAnnotator:
             peaks.append((peak_start, peak_end))
 
         return peaks
+    
+    def _calculate_reduced_mass_score(self, l: int, r: int, signal_cum_sum: np.ndarray) -> float:
+        """Calculate the reduced mass score for a candidate peak defined by (l, r).
 
-    def _find_multi_peak_edges(self, region_start: int, region_end: int, deriv: np.ndarray, signal_cum_sum: np.ndarray) -> Tuple[int, int]:
+        Args:
+            l: Left index of the candidate peak.
+            r: Right index of the candidate peak.
+            signal_cum_sum: Cumulative sum array for mass term calculation.
+        Returns:
+            Reduced mass score for the candidate peak.
+        """
+        mass_term = signal_cum_sum[r] - signal_cum_sum[l]
+        mass_term_reduced = mass_term - (r - l) * self.threshold_peak
+        return mass_term_reduced
+    
+    def calculate_mass_contributions(self, signal_cum_sum: np.ndarray, scan_range: Tuple[int, int, int, int],) -> np.ndarray:
+        """Calculate mass contributions for candidate peaks in the scan range.
+
+        Args:
+            deriv: Forward derivative array.
+            signal_cum_sum: Cumulative sum array for mass term calculation.
+            scan_range: Tuple of (region_start, region_end, left_end, right_end) indices.
+
+        Returns:
+            2D array of mass contributions for each (l, r) candidate pair.
+        """
+        region_start, region_end, left_end, right_end = scan_range
+        left_elements = left_end - region_start + 1
+        right_elements = right_end - region_end  + 1
+        mass_contributions = np.empty((left_elements, right_elements), dtype=np.float64)
+
+        for i, l in enumerate(range(region_start, left_end + 1)):
+            for j, r in enumerate(range(region_end, right_end + 1)):
+                mass_term_reduced = self._calculate_reduced_mass_score(l, r, signal_cum_sum)
+                mass_contributions[i, j] = mass_term_reduced
+
+        return mass_contributions
+    
+    def calculate_scan_range(self, region_start: int, region_end: int, deriv: np.ndarray) -> Tuple[int, int, int, int]:
+        region_end = min(region_end, len(deriv) - 1)
+        left_end = min(region_end - 1, region_start + self._window_size_elements)
+        right_end = min(len(deriv) - 1, region_end + self._window_size_elements)
+        return region_start, region_end, left_end, right_end
+
+    def _find_multi_peak_edges(self, region_start: int, region_end: int, deriv: np.ndarray, signal_cum_sum: np.ndarray) -> Tuple[int, int, float, float]:
         """Determine the edges of one connected region, which might contain multiple peaks.
 
         Returns:
             Tuple of (edge_start, edge_end) in element indices.
         """
         candidates: List[Tuple[float, int, int]] = []
+        scan_range = self.calculate_scan_range(region_start, region_end, deriv)
+        mass_contributions = self.calculate_mass_contributions(signal_cum_sum, scan_range)
+        mass_norm_term = float(np.nanpercentile(mass_contributions, 90))
+        deriv_norm_term = float(np.nanpercentile(abs(deriv), 90))
+        region_start, region_end, left_end, right_end = scan_range
 
-        region_end = min(region_end, len(deriv) - 1)
-        left_end = min(region_end - 1, region_start + self._window_size_elements)
-        right_end = min(len(deriv) - 1, region_end + self._window_size_elements)
-
-        for l in range(region_start, left_end + 1):
-            for r in range(region_end, right_end + 1):
-                score = self._calculate_peak_score(l, r, deriv, signal_cum_sum)
+        for i, l in enumerate(range(region_start, left_end + 1)):
+            for j, r in enumerate(range(region_end, right_end + 1)):
+                reduced_mass_score = mass_contributions[i, j]
+                score = self._calculate_peak_score(peak_start_idx=l, peak_end_idx=r, deriv=deriv, deriv_norm_term=deriv_norm_term, mass_norm_term=mass_norm_term, reduced_mass_score=reduced_mass_score)
                 candidates.append((score, l, r))
 
         if not candidates:
             fallback_start = max(0, min(region_start, len(deriv) - 1))
             fallback_end = max(fallback_start + 1, min(region_end, len(deriv) - 1))
-            return fallback_start, fallback_end
+            return fallback_start, fallback_end, mass_norm_term, deriv_norm_term
 
         candidates = sorted(candidates, key=lambda x: x[0], reverse=True)
         result = candidates[0]
-        return result[1], result[2]
+        return result[1], result[2], mass_norm_term, deriv_norm_term
     
-    def _calculate_peak_score(self, peak_start_idx: int, peak_end_idx: int, deriv: np.ndarray, signal_cum_sum: np.ndarray) -> float:
+    def _calculate_peak_score(self, peak_start_idx: int, peak_end_idx: int, deriv: np.ndarray, mass_norm_term: float, deriv_norm_term: float, reduced_mass_score: float) -> float:
         """Calculate the score of a peak based on derivative and mass term.
 
         Args:
             peak_start_idx: Start index of the peak in element indices.
             peak_end_idx: End index of the peak in element indices.
             deriv: Forward derivative array.
-            signal_cum_sum: Cumulative sum array for mass term calculation.
+            normalized_mass_term: Normalized mass term.
+            deriv_norm_term: Normalized derivative term.
 
         Returns:
             Peak score.
         """
         if peak_end_idx <= peak_start_idx:
             return float('-inf')
-        mass_term = signal_cum_sum[peak_end_idx] - signal_cum_sum[peak_start_idx]
-        mass_term_norm = mass_term / (peak_end_idx - peak_start_idx)
-        lambda_mass = self.lambda_weight * mass_term_norm
+
+        normalized_mass_term = reduced_mass_score / mass_norm_term
+        lambda_mass = self.lambda_weight * normalized_mass_term
         left_flank = deriv[peak_start_idx]
         right_flank = -deriv[peak_end_idx]
-        score = left_flank + right_flank + lambda_mass
+        left_flank_norm = left_flank / deriv_norm_term
+        right_flank_norm = right_flank / deriv_norm_term
+        score = left_flank_norm + right_flank_norm + lambda_mass
         return score
 
     def _select_peaks_in_region(
@@ -402,7 +450,8 @@ class PeakAnnotator:
         Returns:
             List of (peak_start, peak_end) tuples in element indices.
         """
-        start, finish = self._find_multi_peak_edges(region_start, region_end, deriv, signal_cum_sum)
+        
+        start, finish, mass_norm_term, deriv_norm_term = self._find_multi_peak_edges(region_start, region_end, deriv, signal_cum_sum)
         region_width = finish - start
         num_peaks = max(1, math.ceil(region_width / self._window_size_elements))
 
@@ -410,7 +459,7 @@ class PeakAnnotator:
             start, finish, num_peaks=num_peaks
         )
 
-        selected_peaks = [(s, e, self._calculate_peak_score(s, e, deriv, signal_cum_sum)) for s, e in selected_peaks]
+        selected_peaks = [(s, e, self._calculate_peak_score(peak_start_idx=s, peak_end_idx=e, deriv=deriv, mass_norm_term=mass_norm_term, deriv_norm_term=deriv_norm_term, reduced_mass_score=self._calculate_reduced_mass_score(s, e, signal_cum_sum))) for s, e in selected_peaks]
 
         return selected_peaks
 
@@ -481,7 +530,7 @@ class PeakAnnotator:
     def empty_result_df() -> pd.DataFrame:
         """Create an empty result DataFrame with the correct columns."""
         return pd.DataFrame(
-            columns=['peak_start', 'peak_end', 'score', 'region_idx', 'peak_rank', 'edge_peak']
+            columns=['peak_start', 'peak_end', 'peak_middle_start', 'peak_middle_end', 'score', 'region_idx', 'peak_rank', 'edge_peak']
         )
     
     def get_middle_window(self, start: int, end: int) -> Tuple[int, int]:

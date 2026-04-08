@@ -231,18 +231,7 @@ class TestPeakAnnotator(unittest.TestCase):
         self.assertEqual(annotator.distribute_peaks_over_area(start=10, finish=2, num_peaks=3), [])
         self.assertEqual(annotator.distribute_peaks_over_area(start=2, finish=10, num_peaks=-1), [])
 
-    def test_find_multi_peak_edges_fallback_when_no_candidates(self):
-        df = self._make_df([0.0, 1.0, 2.0, 1.0, 0.0], step_size=10)
-        annotator = PeakAnnotator(threshold_peak=0, df=df, window_size=20)
-        cumsum = np.cumsum(df["signal"].to_numpy(dtype=np.float64))
 
-        deriv = annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64))
-        l_idx, r_idx = annotator._find_multi_peak_edges(
-            region_start=1, region_end=2, deriv=deriv, signal_cum_sum=cumsum
-        )
-
-        self.assertGreaterEqual(l_idx, 0)
-        self.assertGreaterEqual(r_idx, l_idx + 1)
     
     def test_get_cumsum_signal(self):
         df = self._make_df([1.0, 2.0, 3.0], step_size=10)
@@ -269,6 +258,68 @@ class TestPeakAnnotator(unittest.TestCase):
 
         # For a 20bp step and peak [40, 99], middle window should be [60, 80].
         self.assertEqual(annotator.get_middle_window(40, 99), (60, 80))
+    
+    def test_calculate_reduced_mass_score(self):
+        df = self._make_df([0.1, 0.2, 0.5, 0.6], step_size=10)
+        annotator = PeakAnnotator(threshold_peak=0.2, df=df, window_size=20)
+        signal_cum_sum = annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))
+        # l=0, r=2 -> (0.1 + 0.2) - (2 * 0.2) = 0.3 - 0.4 = -0.1
+        self.assertAlmostEqual(annotator._calculate_reduced_mass_score(l=0, r=2, signal_cum_sum=signal_cum_sum), -0.1,)
+        # l=1, r=3 -> (0.2 + 0.5) - (2 * 0.2) = 0.7 - 0.4 = 0.3
+        self.assertAlmostEqual( annotator._calculate_reduced_mass_score(l=1, r=3, signal_cum_sum=signal_cum_sum), 0.3,)
+        self.assertAlmostEqual( annotator._calculate_reduced_mass_score(l=0, r=4, signal_cum_sum=signal_cum_sum), 0.6,)
+        self.assertAlmostEqual( annotator._calculate_reduced_mass_score(l=0, r=1, signal_cum_sum=signal_cum_sum), -0.1,)
+
+    def test_calculate_mass_contributions(self):
+        """Test basic mass contribution calculation with simple cumulative sum."""
+        df = self._make_df([0.1, 0.2, 0.5, 0.6], step_size=10)
+        annotator = PeakAnnotator(threshold_peak=0.2, df=df, window_size=20)
+        
+        # Cumulative sum of [0.1, 0.2, 0.5, 0.6] is [0, 0.1, 0.3, 0.8, 1.4, 1.4] (with prepended 0)
+        signal_cum_sum = annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))
+        np.testing.assert_allclose(signal_cum_sum, np.array([0.0, 0.1, 0.3, 0.8, 1.4, 1.4]), atol=1e-6)
+        
+        # Test scan_range: region_start=0, region_end=2, left_end=1, right_end=3
+        scan_range = (0, 2, 1, 3)
+        mass_contributions = annotator.calculate_mass_contributions(signal_cum_sum, scan_range)
+        
+        # left_elements = 1 - 0 + 1 = 2 (indices 0, 1)
+        # right_elements = 3 - 2 + 1 = 2 (indices 1, 2)
+        # total = 2 * 2 = 4
+        self.assertEqual(mass_contributions.shape, (2, 2))
+        expected_values = [
+            [
+                # l=0, r=2: mass_term = cumsum[2] - cumsum[0] = 0.3 - 0 = 0.3, reduced = 0.3 - (2-0)*0.2 = -.1
+                -0.1,
+                #l=0, r=3: mass_term = cumsum[3] - cumsum[0] = 0.8 - 0 = 0.8, reduced = 0.8 - (3-0)*0.2 = 0.2
+                0.2,
+            ],
+            [
+                # l=1, r=2: mass_term = cumsum[2] - cumsum[1] = 0.3 - 0.1 = 0.2, reduced = 0.2 - (2-1)*0.2 = 0.0
+                0.0,
+                # l=1, r=3: mass_term = cumsum[3] - cumsum[1] = 0.8 - 0.1 = 0.7, reduced = 0.7 - (3-1)*0.2 = 0.3
+                0.3,
+            ]
+        ]
+        expected_values = np.array(expected_values)
+        np.testing.assert_allclose(mass_contributions, expected_values, atol=1e-6)
+
+    def test_calculate_scan_range(self):
+        df = self._make_df([0.1, 0.2, 0.5, 0.6], step_size=10)
+        annotator = PeakAnnotator(threshold_peak=0.2, df=df, window_size=20)
+        deriv = np.array([0.0, 0.1, 0.2, -0.1, -0.2], dtype=np.float64)
+
+        # window_size=20, step_size=10 -> _window_size_elements=2
+        self.assertEqual(
+            annotator.calculate_scan_range(region_start=0, region_end=2, deriv=deriv),
+            (0, 2, 1, 4),
+        )
+
+        # region_end is clipped to len(deriv)-1, and left/right bounds are clipped as well.
+        self.assertEqual(
+            annotator.calculate_scan_range(region_start=2, region_end=99, deriv=deriv),
+            (2, 4, 3, 4),
+        )
 
     def test_calculate_peak_score_matches_formula(self):
         df = self._make_df([0.1, 0.5, 1.0, 0.4], step_size=10)
@@ -276,16 +327,21 @@ class TestPeakAnnotator(unittest.TestCase):
 
         deriv = np.array([0.1, 0.4, 0.5, -0.6, -0.4], dtype=np.float64)
         signal_cum_sum = annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))
+        add_args = {
+            "deriv": deriv,
+            "mass_norm_term": 1,
+            "deriv_norm_term": 1,
+        }
 
         score = annotator._calculate_peak_score(
             peak_start_idx=1,
             peak_end_idx=3,
-            deriv=deriv,
-            signal_cum_sum=signal_cum_sum,
+            reduced_mass_score=annotator._calculate_reduced_mass_score(l=1, r=3, signal_cum_sum=signal_cum_sum),
+            **add_args
         )
 
-        # lambda (=1.0) * sum of two middle values (left index included, right index excluded) divided by width
-        expected_mass_term = 1.5 / 2
+        # lambda (=1.0) * sum of two middle values (left index included, right index excluded) divided by normalization term (1)
+        expected_mass_term = 1.5
         # derivative at left index (0.5) - derivative at right index (-0.6) + mass term (1.5)
         # derivatives should be including left edge (difference getting TO first index and FROM second index)
         expected_score = 0.4 + 0.6 + expected_mass_term
@@ -294,18 +350,19 @@ class TestPeakAnnotator(unittest.TestCase):
         score = annotator._calculate_peak_score(
             peak_start_idx=0,
             peak_end_idx=2,
-            deriv=deriv,
-            signal_cum_sum=signal_cum_sum,
+            reduced_mass_score=annotator._calculate_reduced_mass_score(l=0, r=2, signal_cum_sum=signal_cum_sum),
+            **add_args
+            
         )
-        expected_mass = 0.6 / 2
+        expected_mass = 0.6
         expected_score = 0.1 - 0.5 + expected_mass
         self.assertAlmostEqual(score, expected_score)
 
         score = annotator._calculate_peak_score(
             peak_start_idx=1,
             peak_end_idx=1,
-            deriv=deriv,
-            signal_cum_sum=signal_cum_sum,
+            reduced_mass_score=annotator._calculate_reduced_mass_score(l=1, r=1, signal_cum_sum=signal_cum_sum),
+            **add_args
         )
         expected_score = float('-inf')
         self.assertEqual(score, expected_score)
@@ -313,10 +370,10 @@ class TestPeakAnnotator(unittest.TestCase):
         score = annotator._calculate_peak_score(
             peak_start_idx=2,
             peak_end_idx=4,
-            deriv=deriv,
-            signal_cum_sum=signal_cum_sum,
+            reduced_mass_score=annotator._calculate_reduced_mass_score(l=2, r=4, signal_cum_sum=signal_cum_sum),
+            **add_args
         )
-        expected_mass = 1.4 / 2
+        expected_mass = 1.4
         expected_score = 0.5 + 0.4 + expected_mass
         self.assertAlmostEqual(score, expected_score)
 
@@ -328,25 +385,44 @@ class TestPeakAnnotator(unittest.TestCase):
 
         no_mass = PeakAnnotator(threshold_peak=0, df=df, window_size=20, lambda_weight=0.0)
         with_mass = PeakAnnotator(threshold_peak=0, df=df, window_size=20, lambda_weight=3.0)
+    
+        reduced_mass = annotator._calculate_reduced_mass_score(l=1, r=3, signal_cum_sum=signal_cum_sum)
 
         score_no_mass = no_mass._calculate_peak_score(
             peak_start_idx=1,
             peak_end_idx=3,
             deriv=deriv,
-            signal_cum_sum=signal_cum_sum,
+            mass_norm_term=1,
+            deriv_norm_term=1,
+            reduced_mass_score=reduced_mass,
         )
         score_with_mass = with_mass._calculate_peak_score(
             peak_start_idx=1,
             peak_end_idx=3,
             deriv=deriv,
-            signal_cum_sum=signal_cum_sum,
+            mass_norm_term=1,
+            deriv_norm_term=1,
+            reduced_mass_score=reduced_mass,
         )
 
-        expected_mass_term = (signal_cum_sum[3] - signal_cum_sum[1]) / (3 - 1)
+        expected_mass_term = (signal_cum_sum[3] - signal_cum_sum[1])
         self.assertAlmostEqual(
             score_with_mass - score_no_mass,
             (with_mass.lambda_weight - no_mass.lambda_weight) * expected_mass_term,
         )
+
+    def test_find_multi_peak_edges_fallback_when_no_candidates(self):
+        df = self._make_df([0.0, 1.0, 2.0, 1.0, 0.0], step_size=10)
+        annotator = PeakAnnotator(threshold_peak=0, df=df, window_size=20)
+        cumsum = np.cumsum(df["signal"].to_numpy(dtype=np.float64))
+
+        deriv = annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64))
+        l_idx, r_idx, _, _ = annotator._find_multi_peak_edges(
+            region_start=1, region_end=2, deriv=deriv, signal_cum_sum=cumsum
+        )
+
+        self.assertGreaterEqual(l_idx, 0)
+        self.assertGreaterEqual(r_idx, l_idx + 1)
 
     def test_find_multi_peak_edges_clean_cut(self):
         df = self._make_df([0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0], step_size=10)
@@ -355,7 +431,7 @@ class TestPeakAnnotator(unittest.TestCase):
         deriv = annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64))
         cumsum = annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))
 
-        l_idx, r_idx = annotator._find_multi_peak_edges(
+        l_idx, r_idx, _, _ = annotator._find_multi_peak_edges(
             region_start=2,
             region_end=5,
             deriv=deriv,
@@ -371,7 +447,7 @@ class TestPeakAnnotator(unittest.TestCase):
         deriv = annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64))
         cumsum = np.cumsum(df["signal"].to_numpy(dtype=np.float64))
 
-        l_idx, r_idx = annotator._find_multi_peak_edges(
+        l_idx, r_idx, _, _ = annotator._find_multi_peak_edges(
             region_start=2,
             region_end=5,
             deriv=deriv,
@@ -387,7 +463,7 @@ class TestPeakAnnotator(unittest.TestCase):
         deriv = annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64))
         cumsum = annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))
 
-        l_idx, r_idx = annotator._find_multi_peak_edges(
+        l_idx, r_idx, _, _ = annotator._find_multi_peak_edges(
             region_start=2,
             region_end=5,
             deriv=deriv,
@@ -404,7 +480,7 @@ class TestPeakAnnotator(unittest.TestCase):
         deriv = annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64))
         cumsum = annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))
 
-        l_idx, r_idx = annotator._find_multi_peak_edges(
+        l_idx, r_idx, _, _ = annotator._find_multi_peak_edges(
             region_start=0,
             region_end=3,
             deriv=deriv,
@@ -420,7 +496,7 @@ class TestPeakAnnotator(unittest.TestCase):
         deriv = annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64))
         cumsum = annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))
 
-        l_idx, r_idx = annotator._find_multi_peak_edges(
+        l_idx, r_idx, _, _ = annotator._find_multi_peak_edges(
             region_start=3,
             region_end=8,
             deriv=deriv,
@@ -437,7 +513,7 @@ class TestPeakAnnotator(unittest.TestCase):
         deriv = annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64))
         cumsum = annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))
 
-        l_idx, r_idx = annotator._find_multi_peak_edges(
+        l_idx, r_idx, _, _ = annotator._find_multi_peak_edges(
             region_start=1,
             region_end=2,
             deriv=deriv,
@@ -453,7 +529,7 @@ class TestPeakAnnotator(unittest.TestCase):
         deriv = annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64))
         cumsum = annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))
 
-        l_idx, r_idx = annotator._find_multi_peak_edges(
+        l_idx, r_idx, _, _ = annotator._find_multi_peak_edges(
             region_start=0,
             region_end=4,
             deriv=deriv,
@@ -496,6 +572,7 @@ class TestPeakAnnotator(unittest.TestCase):
         deriv = annotator._calculate_smooth_derivative(signal)
         cumsum = annotator._get_cumsum_signal(signal)
         regions = [(2, 5)]
+        start, finish, mass_norm_term, deriv_norm_term = annotator._find_multi_peak_edges(2, 5, deriv, cumsum)
 
         peaks = annotator._extract_and_format_peaks(
             regions=regions,
@@ -503,14 +580,14 @@ class TestPeakAnnotator(unittest.TestCase):
             signal_cum_sum=cumsum,
             window_starts=df["window_start"].to_numpy(),
         )
-        self.assertGreaterEqual(len(peaks), 1)
+        self.assertEqual(len(peaks), 1)
         self.assertTrue({"peak_start", "peak_end", "score", "region_idx", "edge_peak"}.issubset(set(peaks.columns)))
         expected = pd.DataFrame([{
             "peak_start": 20,
             "peak_end": 49,
             "peak_middle_start": 30,
             "peak_middle_end": 40,
-            "score": annotator._calculate_peak_score(2, 5, deriv, cumsum),
+            "score": annotator._calculate_peak_score(2, 5, deriv, mass_norm_term=mass_norm_term, deriv_norm_term=deriv_norm_term, reduced_mass_score=3),
             "region_idx": 0,
             "peak_rank": 0,
             "edge_peak": True,
@@ -524,6 +601,8 @@ class TestPeakAnnotator(unittest.TestCase):
         deriv = annotator._calculate_smooth_derivative(signal)
         cumsum = annotator._get_cumsum_signal(signal)
         regions = [(1, 3), (7, 10)]
+        _, _, mass_norm_term_a, deriv_norm_term_a = annotator._find_multi_peak_edges(1, 3, deriv, cumsum)
+        _, _, mass_norm_term_b, deriv_norm_term_b = annotator._find_multi_peak_edges(7, 10, deriv, cumsum)
 
         peaks = annotator._extract_and_format_peaks(
             regions=regions,
@@ -538,7 +617,7 @@ class TestPeakAnnotator(unittest.TestCase):
                 "peak_end": 39,
                 "peak_middle_start": 20,
                 "peak_middle_end": 30,
-                "score": annotator._calculate_peak_score(1, 4, deriv, cumsum),
+                "score": annotator._calculate_peak_score(1, 4, deriv, mass_norm_term=mass_norm_term_a, deriv_norm_term=deriv_norm_term_a, reduced_mass_score=3),
                 "region_idx": 0,
                 "peak_rank": 0,
                 "edge_peak": True,
@@ -548,7 +627,7 @@ class TestPeakAnnotator(unittest.TestCase):
                 "peak_end": 49,
                 "peak_middle_start": 30,
                 "peak_middle_end": 40,
-                "score": annotator._calculate_peak_score(2, 5, deriv, cumsum),
+                "score": annotator._calculate_peak_score(2, 5, deriv, mass_norm_term=mass_norm_term_a, deriv_norm_term=deriv_norm_term_a, reduced_mass_score=3),
                 "region_idx": 0,
                 "peak_rank": 1,
                 "edge_peak": True,
@@ -558,7 +637,7 @@ class TestPeakAnnotator(unittest.TestCase):
                 "peak_end": 99,
                 "peak_middle_start": 80,
                 "peak_middle_end": 90,
-                "score": annotator._calculate_peak_score(7, 10, deriv, cumsum),
+                "score": annotator._calculate_peak_score(7, 10, deriv, mass_norm_term=mass_norm_term_b, deriv_norm_term=deriv_norm_term_b, reduced_mass_score=3),
                 "region_idx": 1,
                 "peak_rank": 0,
                 "edge_peak": True,
@@ -608,7 +687,7 @@ class TestPeakAnnotator(unittest.TestCase):
         result = annotator.detect_peaks(signal_column="signal")
 
         self.assertTrue(result.empty)
-        expected_columns = {"peak_start", "peak_end", "score", "region_idx", "peak_rank", "edge_peak"}
+        expected_columns = {"peak_start", "peak_end", "score", "region_idx", "peak_rank", "edge_peak", "peak_middle_start", "peak_middle_end"}
         self.assertEqual(
             set(result.columns),
             expected_columns,
@@ -620,7 +699,7 @@ class TestPeakAnnotator(unittest.TestCase):
         df = self._make_df([0.0, 0.0, 0.0, 0.0, 0.0], step_size=10)
         annotator = PeakAnnotator(df=df, window_size=20, threshold_peak=10.0)
         result = annotator.detect_peaks(signal_column="signal")
-        expected_columns = ["peak_start", "peak_end", "score", "region_idx", "peak_rank", "edge_peak"]
+        expected_columns = ["peak_start", "peak_end", "peak_middle_start", "peak_middle_end", "score", "region_idx", "peak_rank", "edge_peak"]
         expected_df = pd.DataFrame(columns=expected_columns)
         pd.testing.assert_frame_equal(result, expected_df, check_like=True)
 
@@ -635,6 +714,9 @@ class TestPeakAnnotator(unittest.TestCase):
             sigma=10.0,
             lambda_weight=0.5,
         )
+        deriv = annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64))
+        cumsum = annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))
+        _, _, mass_norm_term_a, deriv_norm_term_a = annotator._find_multi_peak_edges(0, 5, deriv, cumsum)
 
         result = annotator.detect_peaks(signal_column="signal")
         print(result)
@@ -644,7 +726,7 @@ class TestPeakAnnotator(unittest.TestCase):
             "peak_end": 49,
             "peak_middle_start": 30,
             "peak_middle_end": 40,
-            "score": annotator._calculate_peak_score(2, 5, annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64)), annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))),
+            "score": annotator._calculate_peak_score(2, 5, deriv, mass_norm_term=mass_norm_term_a, deriv_norm_term=deriv_norm_term_a, reduced_mass_score=annotator._calculate_reduced_mass_score(l=2, r=5, signal_cum_sum=cumsum)),
             "region_idx": 0,
             "peak_rank": 0,
             "edge_peak": True,
@@ -665,6 +747,10 @@ class TestPeakAnnotator(unittest.TestCase):
 
         result = annotator.detect_peaks(signal_column="signal")
         print(result)
+        cum_sum = annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))
+        deriv = annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64))
+        _, _, mass_norm_term_a, deriv_norm_term_a = annotator._find_multi_peak_edges(0, 5, deriv, cum_sum)
+        _, _, mass_norm_term_b, deriv_norm_term_b = annotator._find_multi_peak_edges(6, 11, deriv, cum_sum)
 
         expected = pd.DataFrame({
             "peak_start": [20, 80, 100],
@@ -672,9 +758,9 @@ class TestPeakAnnotator(unittest.TestCase):
             "peak_middle_start": [30, 90, 110],
             "peak_middle_end": [40, 100, 120],
             "score": [
-                annotator._calculate_peak_score(2, 5, annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64)), annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))),
-                annotator._calculate_peak_score(8, 11, annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64)), annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))),
-                annotator._calculate_peak_score(10, 13, annotator._calculate_smooth_derivative(df["signal"].to_numpy(dtype=np.float64)), annotator._get_cumsum_signal(df["signal"].to_numpy(dtype=np.float64))),
+                annotator._calculate_peak_score(2, 5, deriv, mass_norm_term=mass_norm_term_a, deriv_norm_term=deriv_norm_term_a, reduced_mass_score=annotator._calculate_reduced_mass_score(l=2, r=5, signal_cum_sum=cum_sum)),
+                annotator._calculate_peak_score(8, 11, deriv, mass_norm_term=mass_norm_term_b, deriv_norm_term=deriv_norm_term_b, reduced_mass_score=annotator._calculate_reduced_mass_score(l=8, r=11, signal_cum_sum=cum_sum)),
+                annotator._calculate_peak_score(10, 13, deriv, mass_norm_term=mass_norm_term_b, deriv_norm_term=deriv_norm_term_b, reduced_mass_score=annotator._calculate_reduced_mass_score(l=10, r=13, signal_cum_sum=cum_sum)),
             ],
             "region_idx": [0, 1, 1],
             "peak_rank": [0, 0, 1],
@@ -699,6 +785,7 @@ class TestPeakAnnotator(unittest.TestCase):
         self.assertIn("sigma=12.0", text)
         self.assertIn("lambda_weight=2.0", text)
 
+    # ===== calculate_mass_contributions tests =====
 
 if __name__ == "__main__":
     unittest.main()
