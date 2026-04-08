@@ -183,7 +183,7 @@ class TestComputeDifferenceSignal(_PeakScannerTestBase):
 
     def test_compute_difference_signal_missing_sequence_type_raises(self):
         scanner = DeepCISPeakScanner(signal_type="difference")
-        only_ref = self.sample_df[self.sample_df["sequence_type"] == "reference"]
+        only_ref: pd.DataFrame = self.sample_df[self.sample_df["sequence_type"] == "reference"] #type: ignore
         with self.assertRaises(ValueError):
             scanner._compute_difference_signal(only_ref, "tf_1")
 
@@ -197,7 +197,7 @@ class TestComputeDifferenceSignal(_PeakScannerTestBase):
     
     def test_compute_difference_signal_zero_length_returns_none(self):
         scanner = DeepCISPeakScanner(signal_type="difference")
-        empty_df = self.sample_df.iloc[0:0]
+        empty_df: pd.DataFrame = self.sample_df.iloc[0:0] #type:ignore
         with self.assertRaises(ValueError):
             result = scanner._compute_difference_signal(empty_df, "tf_1")
     
@@ -216,24 +216,28 @@ class TestComputeDifferenceSignal(_PeakScannerTestBase):
 
     def test_compute_difference_signal_success(self):
         scanner = DeepCISPeakScanner(signal_type="difference")
-        gene_a_df = self.sample_df[self.sample_df["gene"] == "geneA"]
+        gene_a_df: pd.DataFrame = self.sample_df[self.sample_df["gene"] == "geneA"] #type: ignore
 
         result = scanner._compute_difference_signal(gene_a_df, "tf_1")
 
         self.assertIsNotNone(result)
+        if result is None:
+            raise AssertionError("Expected non-None result")
         self.assertEqual(list(result.columns), ["tf_1", "window_start", "window_end"])
         self.assertAlmostEqual(result["tf_1"].tolist()[0], 0.3)
         self.assertAlmostEqual(result["tf_1"].tolist()[1], 0.6)
 
     def test_compute_difference_signal_mutated_smaller(self):
         scanner = DeepCISPeakScanner(signal_type="difference")
-        gene_a_df = self.sample_df[self.sample_df["gene"] == "geneA"]
+        gene_a_df: pd.DataFrame = self.sample_df[self.sample_df["gene"] == "geneA"] #type: ignore
         gene_a_df.iloc[2, gene_a_df.columns.get_loc("tf_1")] = 0.05
         gene_a_df.iloc[3, gene_a_df.columns.get_loc("tf_1")] = 0.05
 
         result = scanner._compute_difference_signal(gene_a_df, "tf_1")
 
         self.assertIsNotNone(result)
+        if result is None:
+            raise AssertionError("Expected non-None result")
         self.assertEqual(list(result.columns), ["tf_1", "window_start", "window_end"])
         self.assertAlmostEqual(result["tf_1"].tolist()[0], 0.05)
         self.assertAlmostEqual(result["tf_1"].tolist()[1], 0.15)
@@ -272,31 +276,35 @@ class TestComputeGeneTfSignal(_PeakScannerTestBase):
 
     def test_compute_gene_tf_signal_reference_success(self):
         scanner = DeepCISPeakScanner(signal_type="reference")
-        gene_a_df = self.sample_df[self.sample_df["gene"] == "geneA"]
+        gene_a_df: pd.DataFrame = self.sample_df[self.sample_df["gene"] == "geneA"] #type: ignore
         result = scanner._compute_gene_tf_signal(gene_a_df, "tf_1")
         self.assertIsNotNone(result)
+        if result is None:
+            raise AssertionError("Expected non-None result")
         self.assertEqual(list(result.columns), ["tf_1", "window_start", "window_end"])
         self.assertEqual(len(result), 2)
         self.assertEqual(result["tf_1"].tolist(), [0.1, 0.2])
 
     def test_compute_gene_tf_signal_reference_missing_returns_none(self):
         scanner = DeepCISPeakScanner(signal_type="reference")
-        only_mut = self.sample_df[self.sample_df["sequence_type"] == "max_mutated"]
+        only_mut: pd.DataFrame = self.sample_df[self.sample_df["sequence_type"] == "max_mutated"] #type: ignore
         with self.assertRaises(ValueError):
             result = scanner._compute_gene_tf_signal(only_mut, "tf_1")
 
     def test_compute_gene_tf_signal_max_mutated_success(self):
         scanner = DeepCISPeakScanner(signal_type="max_mutated")
-        gene_a_df = self.sample_df[self.sample_df["gene"] == "geneA"]
+        gene_a_df: pd.DataFrame = self.sample_df[self.sample_df["gene"] == "geneA"] #type: ignore
         result = scanner._compute_gene_tf_signal(gene_a_df, "tf_2")
         self.assertIsNotNone(result)
+        if result is None:
+            raise AssertionError("Expected non-None result")
         self.assertEqual(len(result), 2)
         self.assertEqual(list(result.columns), ["tf_2", "window_start", "window_end"])
         self.assertEqual(result["tf_2"].tolist(), [0.6, 0.7])
 
     def test_compute_gene_tf_signal_difference_delegates(self):
         scanner = DeepCISPeakScanner(signal_type="difference")
-        gene_a_df = self.sample_df[self.sample_df["gene"] == "geneA"]
+        gene_a_df: pd.DataFrame = self.sample_df[self.sample_df["gene"] == "geneA"] #type: ignore
         expected = pd.DataFrame({"signal": [0.5], "window_start": [0], "window_end": [20]})
         with patch.object(scanner, "_compute_difference_signal", return_value=expected) as mock_diff:
             result = scanner._compute_gene_tf_signal(gene_a_df, "tf_1")
@@ -340,6 +348,8 @@ class TestDetectPeaksForGeneTf(_PeakScannerTestBase):
             result = scanner._detect_peaks_for_gene_tf(self.signal_df, "geneA", "tf_1")
 
         self.assertIsNotNone(result)
+        if result is None:
+            raise AssertionError("Expected non-None result")
         self.assertEqual(
             set(result.columns),
             {"gene", "tf", "signal_type", "peak_start", "peak_end", "score", "region_idx", "peak_rank", "edge_peak", "peak_middle_start", "peak_middle_end"},
@@ -373,6 +383,8 @@ class TestDetectPeaksForGeneTf(_PeakScannerTestBase):
             mock_annotator_cls.return_value = mock_annotator
 
             result = scanner._detect_peaks_for_gene_tf(self.signal_df, "geneA", "tf_1")
+        if result is None:
+            raise AssertionError("Expected empty DataFrame, got None")
         self.assertTrue(result.empty)
 
 
@@ -468,8 +480,8 @@ class TestScanAllCombinations(_PeakScannerTestBase):
                     selected_genes=["geneA", "geneB"],
                     selected_tfs=["tf_1", "tf_2"],
                 )
-                actual_peak_calls_detect_peaks = scanner._detect_peaks_for_gene_tf.call_args_list
-                actual_calls_compute_signal = scanner._compute_gene_tf_signal.call_args_list
+                actual_peak_calls_detect_peaks = scanner._detect_peaks_for_gene_tf.call_args_list       #type:ignore
+                actual_calls_compute_signal = scanner._compute_gene_tf_signal.call_args_list            #type:ignore
 
         self.assertEqual(len(result), 3)
         self.assertEqual(result[0].iloc[0]["gene"], "geneA")
@@ -484,7 +496,7 @@ class TestScanAllCombinations(_PeakScannerTestBase):
         for curr_df, curr_tf in expected_calls:
             actual_call = actual_calls_compute_signal.pop(0)
             self.assertEqual(actual_call[0][1], curr_tf)
-            pd.testing.assert_frame_equal(actual_call[0][0], curr_df)
+            pd.testing.assert_frame_equal(actual_call[0][0], curr_df)               #type:ignore
         
         # parameters for _detect_peaks_for_gene_tf only called for non-None signals
         expected_peak_calls = [
