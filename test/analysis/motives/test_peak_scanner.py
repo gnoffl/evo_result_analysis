@@ -540,6 +540,9 @@ class TestScan(_PeakScannerTestBase):
             sigma=10.0,
             lambda_weight=0.5,
         )
+        cum_sum = annotator._get_cumsum_signal(expected_signal_df["signal"].to_numpy(dtype=np.float64))
+        deriv = annotator._calculate_smooth_derivative(expected_signal_df["signal"].to_numpy(dtype=np.float64))
+        _, _, mass_norm_term, deriv_norm_term = annotator._find_multi_peak_edges(0, 5, deriv=deriv, signal_cum_sum=cum_sum)
 
         expected = pd.DataFrame([{
             "gene": "geneA",
@@ -549,7 +552,7 @@ class TestScan(_PeakScannerTestBase):
             "peak_end": 49,
             "peak_middle_start": 30,
             "peak_middle_end": 40,
-            "score": annotator._calculate_peak_score(2, 5, annotator._calculate_smooth_derivative(expected_signal_df["signal"].to_numpy(dtype=np.float64)), annotator._get_cumsum_signal(expected_signal_df["signal"].to_numpy(dtype=np.float64))),
+            "score": annotator._calculate_peak_score(2, 5, deriv=deriv, mass_norm_term=mass_norm_term, deriv_norm_term=deriv_norm_term, reduced_mass_score=annotator._calculate_reduced_mass_score(l=2, r=5, signal_cum_sum=cum_sum)),
             "region_idx": 0,
             "peak_rank": 0,
             "edge_peak": True,
