@@ -364,10 +364,12 @@ class PeakAnnotator:
         region_start, region_end, left_end, right_end = scan_range
         left_elements = left_end - region_start + 1
         right_elements = right_end - region_end  + 1
-        mass_contributions = np.empty((left_elements, right_elements), dtype=np.float64)
+        mass_contributions = np.full((left_elements, right_elements), dtype=np.float64, fill_value=np.nan)
 
         for i, l in enumerate(range(region_start, left_end + 1)):
             for j, r in enumerate(range(region_end, right_end + 1)):
+                if r <= l:
+                    continue
                 mass_term_reduced = self._calculate_reduced_mass_score(l, r, signal_cum_sum)
                 mass_contributions[i, j] = mass_term_reduced
 
@@ -375,7 +377,7 @@ class PeakAnnotator:
     
     def calculate_scan_range(self, region_start: int, region_end: int, deriv: np.ndarray) -> Tuple[int, int, int, int]:
         region_end = min(region_end, len(deriv) - 1)
-        left_end = min(region_end - 1, region_start + self._window_size_elements)
+        left_end = min(len(deriv) - 1, region_start + self._window_size_elements)
         right_end = min(len(deriv) - 1, region_end + self._window_size_elements)
         return region_start, region_end, left_end, right_end
 
@@ -394,6 +396,8 @@ class PeakAnnotator:
 
         for i, l in enumerate(range(region_start, left_end + 1)):
             for j, r in enumerate(range(region_end, right_end + 1)):
+                if r <= l:
+                    continue
                 reduced_mass_score = mass_contributions[i, j]
                 score = self._calculate_peak_score(peak_start_idx=l, peak_end_idx=r, deriv=deriv, deriv_norm_term=deriv_norm_term, mass_norm_term=mass_norm_term, reduced_mass_score=reduced_mass_score)
                 candidates.append((score, l, r))
