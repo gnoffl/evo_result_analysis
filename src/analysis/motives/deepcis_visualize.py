@@ -12,6 +12,23 @@ from tqdm import tqdm
 from analysis.utils.io import print_status
 
 
+PEAK_SIGNAL_TYPES = ("reference", "max_mutated", "difference")
+DIFFERENCE_DIRECTIONS = ("max_mutated_minus_reference", "reference_minus_max_mutated")
+PEAK_BACKGROUND_COLORS = {
+    "reference": "#9e9e9e",
+    "max_mutated": "#1f77b4",
+    "difference": "#ffcccc",
+}
+
+PEAK_REQUIRED_COLUMNS = {
+    "gene",
+    "tf",
+    "signal_type",
+    "peak_start",
+    "peak_end",
+}
+
+
 def load_scan_results(
     scan_path: str,
 ) -> pd.DataFrame:
@@ -30,6 +47,33 @@ def load_scan_results(
         raise FileNotFoundError(f"Scan results file not found: {scan_path}")
     
     df = pd.read_csv(scan_path)
+    return df
+
+
+def load_peak_results(
+    peak_path: str,
+) -> pd.DataFrame:
+    """Load peak annotation results from a CSV file.
+
+    Args:
+        peak_path: Path to the CSV file containing peak annotations from
+            peak_scanner.py.
+
+    Returns:
+        DataFrame with peak annotations.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+    """
+    if not os.path.exists(peak_path):
+        raise FileNotFoundError(f"Peak results file not found: {peak_path}")
+
+    df = pd.read_csv(peak_path)
+    missing_cols = PEAK_REQUIRED_COLUMNS - set(df.columns)
+    if missing_cols:
+        raise KeyError(
+            f"Peak results file missing required columns: {sorted(missing_cols)}"
+        )
     return df
 
 
@@ -52,8 +96,19 @@ def get_tf_columns(df: pd.DataFrame) -> List[str]:
     Returns:
         Sorted list of TF column names.
     """
-    fixed_columns = {"gene", "sequence_type", "window_start", "window_end", "contains_padding"}
-    tf_cols = [col for col in df.columns if col not in fixed_columns]
+    fixed_columns = {
+        "gene",
+        "sequence_type",
+        "window_start",
+        "window_end",
+        "contains_padding",
+        "window_id",
+    }
+    tf_cols = [
+        col
+        for col in df.columns
+        if col not in fixed_columns and "__" not in col
+    ]
     return sorted(tf_cols)
     
 # Calculate window center positions: (start + end) / 2
@@ -65,7 +120,8 @@ def get_centers(data: pd.DataFrame) -> np.ndarray:
 def extract_plot_data(
     df_subset: pd.DataFrame,
     tf_col: str,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
+    difference_direction: str = "max_mutated_minus_reference",
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
     """Extract and transform data from DataFrame to plottable coordinates.
 
     Separates reference and mutated sequences, calculates window center positions,
@@ -74,11 +130,15 @@ def extract_plot_data(
     Args:
         df_subset: DataFrame filtered to contain only data for one gene and one TF.
         tf_col: Name of the TF column to extract values from.
+        difference_direction: Direction for signed difference:
+            "max_mutated_minus_reference" or "reference_minus_max_mutated".
 
     Returns:
-        Tuple of (ref_x, ref_y, mut_x, mut_y, x_min, x_max) where:
+        Tuple of (ref_x, ref_y, mut_x, mut_y, diff_x, diff_y, x_min, x_max) where:
         * ref_x, mut_x: Window center positions (in bp) for reference and mutated
         * ref_y, mut_y: Prediction scores for reference and mutated
+                * diff_x, diff_y: Signed difference coordinates based on
+                    ``difference_direction``
         * x_min, x_max: Global min/max genomic positions (window_start/window_end)
     """
     # Separate reference and mutated sequences
@@ -91,11 +151,32 @@ def extract_plot_data(
     mut_x = get_centers(mut_data) if len(mut_data) > 0 else np.array([])
     mut_y = mut_data[tf_col].values if len(mut_data) > 0 else np.array([])
 
+    # Compute signed difference from aligned windows.
+    diff_data = ref_data[["window_start", "window_end", tf_col]].merge(
+        mut_data[["window_start", "window_end", tf_col]],
+        on=["window_start", "window_end"],
+        how="inner",
+        suffixes=("_ref", "_mut"),
+    )
+    diff_x = get_centers(diff_data) if len(diff_data) > 0 else np.array([])
+    if len(diff_data) > 0:
+        if difference_direction == "max_mutated_minus_reference":
+            diff_y = diff_data[f"{tf_col}_mut"].to_numpy() - diff_data[f"{tf_col}_ref"].to_numpy()
+        elif difference_direction == "reference_minus_max_mutated":
+            diff_y = diff_data[f"{tf_col}_ref"].to_numpy() - diff_data[f"{tf_col}_mut"].to_numpy()
+        else:
+            raise ValueError(
+                f"Invalid difference_direction '{difference_direction}'. "
+                f"Expected one of {DIFFERENCE_DIRECTIONS}."
+            )
+    else:
+        diff_y = np.array([])
+
     # Determine x-axis range (from min window_start to max window_end)
     x_min = df_subset["window_start"].min()
     x_max = df_subset["window_end"].max()
 
-    return ref_x, ref_y, mut_x, mut_y, x_min, x_max
+    return ref_x, ref_y, mut_x, mut_y, diff_x, diff_y, x_min, x_max
 
 
 def _get_padding_regions(df_subset: pd.DataFrame) -> List[Tuple[float, float]]:
@@ -143,6 +224,91 @@ def _add_padding_background(ax: plt.Axes, padding_regions: List[Tuple[float, flo
         ax.axvspan(start, end, alpha=0.2, color="grey", zorder=0)
 
 
+def _merge_intervals(regions: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """Merge overlapping or touching intervals."""
+    if not regions:
+        return []
+
+    sorted_regions = sorted({(float(start), float(end)) for start, end in regions})
+    merged: List[List[float]] = [[sorted_regions[0][0], sorted_regions[0][1]]]
+
+    for start, end in sorted_regions[1:]:
+        if start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+
+    return [(start, end) for start, end in merged]
+
+
+def _get_peak_background_regions(
+    df_subset: pd.DataFrame,
+    tf_col: str,
+    signal_types: Optional[List[str]] = None,
+) -> Dict[str, List[Tuple[float, float]]]:
+    """Extract merged background regions for annotated peaks.
+
+    Uses the window-centric merged output, so peak backgrounds are drawn as
+    spans across the windows that overlap peaks rather than exact peak bounds.
+    """
+    if signal_types is None:
+        signal_types = list(PEAK_SIGNAL_TYPES)
+
+    background_regions: Dict[str, List[Tuple[float, float]]] = {}
+    for signal_type in signal_types:
+        in_peak_col = f"{tf_col}__{signal_type}__in_peak"
+        if in_peak_col not in df_subset.columns:
+            continue
+
+        peak_windows = df_subset[df_subset[in_peak_col] == True]
+        intervals = list(zip(peak_windows["window_start"], peak_windows["window_end"]))
+        if intervals:
+            background_regions[signal_type] = _merge_intervals(intervals)
+
+    return background_regions
+
+
+def _get_peak_background_regions_from_peaks(
+    peak_df: pd.DataFrame,
+    gene: str,
+    tf_col: str,
+    signal_types: Optional[List[str]] = None,
+) -> Dict[str, List[Tuple[float, float]]]:
+    """Extract merged background regions from raw peak annotations.
+
+    This uses the direct peak start/end coordinates emitted by peak_scanner.py
+    instead of deriving highlighted windows from merged window annotations.
+    """
+    if signal_types is None:
+        signal_types = [
+            signal_type
+            for signal_type in PEAK_SIGNAL_TYPES
+            if signal_type in set(peak_df["signal_type"].astype(str).unique())
+        ]
+
+    background_regions: Dict[str, List[Tuple[float, float]]] = {}
+    tf_peaks = peak_df[(peak_df["gene"] == gene) & (peak_df["tf"] == tf_col)]
+
+    for signal_type in signal_types:
+        signal_peaks = tf_peaks[tf_peaks["signal_type"] == signal_type]
+        intervals = list(zip(signal_peaks["peak_start"] + 125, signal_peaks["peak_end"] + 125))
+        if intervals:
+            background_regions[signal_type] = _merge_intervals(intervals)
+
+    return background_regions
+
+
+def _add_peak_background(
+    ax: plt.Axes,
+    peak_regions: Dict[str, List[Tuple[float, float]]],
+) -> None:
+    """Add colored background spans for annotated peaks."""
+    for signal_type, regions in peak_regions.items():
+        color = PEAK_BACKGROUND_COLORS.get(signal_type, "#ff7f0e")
+        for start, end in regions:
+            ax.axvspan(start, end, alpha=0.12, color=color, zorder=1)
+
+
 def _plot_line(
     ax: plt.Axes,
     x: np.ndarray,
@@ -180,6 +346,7 @@ def _set_axis_properties(
     gene: str,
     tf_col: str,
     include_title: bool,
+    show_difference: bool,
 ) -> None:
     """Set axis limits, labels, title, and formatting.
 
@@ -193,11 +360,17 @@ def _set_axis_properties(
     """
     # Set x-axis limits based on data range
     ax.set_xlim(x_min, x_max)
-    ax.set_ylim(0, 1)
+    if show_difference:
+        ax.set_ylim(-1, 1)
+    else:
+        ax.set_ylim(0, 1)
 
     # Set labels
     ax.set_xlabel("Genomic Position (bp)")
-    ax.set_ylabel("Binding Prediction Score")
+    if show_difference:
+        ax.set_ylabel("Binding Signal / Difference")
+    else:
+        ax.set_ylabel("Binding Prediction Score")
 
     # Set title
     if include_title:
@@ -215,6 +388,12 @@ def _plot_gene_tf(
     tf_col: str,
     ax: plt.Axes,
     include_title: bool = True,
+    highlight_padding: bool = True,
+    highlight_peaks: bool = False,
+    peak_signal_types: Optional[List[str]] = None,
+    peak_df: Optional[pd.DataFrame] = None,
+    show_difference: bool = True,
+    difference_direction: str = "max_mutated_minus_reference",
 ) -> None:
     """Plot predictions for a single gene and TF family.
 
@@ -226,18 +405,53 @@ def _plot_gene_tf(
         include_title: Whether to include a title on the plot.
     """
     # Extract plot data using the transformation function
-    ref_x, ref_y, mut_x, mut_y, x_min, x_max = extract_plot_data(df_subset, tf_col)
+    ref_x, ref_y, mut_x, mut_y, diff_x, diff_y, x_min, x_max = extract_plot_data(
+        df_subset,
+        tf_col,
+        difference_direction=difference_direction,
+    )
 
-    # Add padding regions background
-    padding_regions = _get_padding_regions(df_subset)
-    _add_padding_background(ax, padding_regions)
+    # Add optional background highlights before the lines.
+    if highlight_padding:
+        padding_regions = _get_padding_regions(df_subset)
+        _add_padding_background(ax, padding_regions)
+
+    if highlight_peaks:
+        if peak_df is not None:
+            peak_regions = _get_peak_background_regions_from_peaks(
+                peak_df,
+                gene,
+                tf_col,
+                signal_types=peak_signal_types,
+            )
+        else:
+            peak_regions = _get_peak_background_regions(
+                df_subset,
+                tf_col,
+                signal_types=peak_signal_types,
+            )
+        _add_peak_background(ax, peak_regions)
 
     # Plot reference and mutated lines
     _plot_line(ax, ref_x, ref_y, "Reference", "black")
-    _plot_line(ax, mut_x, mut_y, "Mutated", "blue")
+    _plot_line(ax, mut_x, mut_y, "Max Mutated", "blue")
+    if show_difference:
+        if difference_direction == "max_mutated_minus_reference":
+            diff_label = "Difference (max_mutated - reference)"
+        else:
+            diff_label = "Difference (reference - max_mutated)"
+        _plot_line(ax, diff_x, diff_y, diff_label, "red")
 
     # Set axis properties
-    _set_axis_properties(ax, x_min, x_max, gene, tf_col, include_title)
+    _set_axis_properties(
+        ax,
+        x_min,
+        x_max,
+        gene,
+        tf_col,
+        include_title,
+        show_difference,
+    )
 
 
 def _validate_and_set_defaults(
@@ -311,6 +525,12 @@ def _process_gene_tf(
     output_dir: str,
     output_format: str,
     include_title: bool,
+    highlight_padding: bool,
+    highlight_peaks: bool,
+    peak_signal_types: Optional[List[str]],
+    peak_df: Optional[pd.DataFrame],
+    show_difference: bool,
+    difference_direction: str,
 ) -> bool:
     """Create and save a single gene/TF plot.
 
@@ -332,7 +552,19 @@ def _process_gene_tf(
     # Create figure and plot
     fig, ax = plt.subplots(figsize=(12, 6))
     try:
-        _plot_gene_tf(gene_df, gene, tf_col, ax, include_title=include_title)
+        _plot_gene_tf(
+            gene_df,
+            gene,
+            tf_col,
+            ax,
+            include_title=include_title,
+            highlight_padding=highlight_padding,
+            highlight_peaks=highlight_peaks,
+            peak_signal_types=peak_signal_types,
+            peak_df=peak_df,
+            show_difference=show_difference,
+            difference_direction=difference_direction,
+        )
         _save_gene_tf_plot(fig, gene, tf_col, output_dir, output_format)
         return True
     except Exception as e:
@@ -366,6 +598,26 @@ def _load_input_data(input: Union[str, pd.DataFrame]) -> pd.DataFrame:
         )
 
 
+def _load_peak_input_data(peak_input: Union[str, pd.DataFrame, None]) -> Optional[pd.DataFrame]:
+    """Load peak annotations from file or DataFrame when provided."""
+    if peak_input is None:
+        return None
+    if isinstance(peak_input, str):
+        return load_peak_results(peak_input)
+    if isinstance(peak_input, pd.DataFrame):
+        if peak_input.empty:
+            raise ValueError("Peak input DataFrame is empty")
+        missing_cols = PEAK_REQUIRED_COLUMNS - set(peak_input.columns)
+        if missing_cols:
+            raise KeyError(
+                f"Peak input DataFrame missing required columns: {sorted(missing_cols)}"
+            )
+        return peak_input
+    raise ValueError(
+        f"peak_input must be a string (file path), DataFrame, or None, got {type(peak_input)}"
+    )
+
+
 def _resolve_output_directory(input: Union[str, pd.DataFrame], output_dir: Optional[str]) -> str:
     """Resolve the output directory path.
 
@@ -393,6 +645,13 @@ def visualize_scan_results(
     output_dir: Optional[str] = None,
     output_format: str = "png",
     include_title: bool = True,
+    highlight_padding: bool = True,
+    highlight_peaks: bool = False,
+    peak_signal_types: Optional[List[str]] = None,
+    show_difference: bool = True,
+    difference_direction: str = "max_mutated_minus_reference",
+    *,
+    peak_input: Union[str, pd.DataFrame, None] = None,
 ) -> None:
     """Main entry point for visualization.
 
@@ -400,18 +659,23 @@ def visualize_scan_results(
 
     Args:
         input: Path to CSV file with scan results, or a DataFrame.
+        peak_input: Optional path or DataFrame containing raw peak annotations
+            from peak_scanner.py.
         genes: List of gene names to plot. If None, plots all.
         tfs: List of TF column names to plot. If None, plots all.
         output_dir: Directory to save plots. If None, defaults to "plots"
             next to the input file (for file input) or current working directory (for DataFrame input).
         output_format: File format for saving plots. Default: "png".
         include_title: Whether to include titles in plots. Default: True.
+        show_difference: Whether to display the difference line. Default: True.
+        difference_direction: Direction of difference line computation.
 
     Raises:
         ValueError: If input is invalid type or DataFrame is empty.
     """
     # Load data
     df = _load_input_data(input)
+    peak_df = _load_peak_input_data(peak_input)
 
     # Resolve output directory
     output_dir = _resolve_output_directory(input, output_dir)
@@ -419,13 +683,43 @@ def visualize_scan_results(
     # Validate inputs and set defaults
     genes, tfs = _validate_and_set_defaults(df, genes, tfs)
 
+    if highlight_peaks and peak_signal_types is None:
+        if peak_df is not None:
+            peak_signal_types = [
+                signal_type
+                for signal_type in PEAK_SIGNAL_TYPES
+                if signal_type in set(peak_df["signal_type"].astype(str).unique())
+            ]
+        else:
+            peak_signal_types = [
+                signal_type
+                for signal_type in PEAK_SIGNAL_TYPES
+                if any(
+                    col.endswith(f"__{signal_type}__in_peak")
+                    for col in df.columns
+                )
+            ]
+
     # Create plots
     successful_plots = 0
     for gene in tqdm(genes, desc="Processing genes"):
-        gene_df = df[df["gene"] == gene]
+        gene_df = df.loc[df["gene"] == gene].copy()
 
         for tf_col in tfs:
-            if _process_gene_tf(gene_df, gene, tf_col, output_dir, output_format, include_title):       #type: ignore
+            if _process_gene_tf(
+                gene_df,
+                gene,
+                tf_col,
+                output_dir,
+                output_format,
+                include_title,
+                highlight_padding,
+                highlight_peaks,
+                peak_signal_types,
+                peak_df,
+                show_difference,
+                difference_direction,
+            ):
                 successful_plots += 1
 
     print_status(
@@ -470,17 +764,71 @@ Examples:
     --input data/deepcis_window_scan_results.csv \\
     --output plots \\
     --no-title
+
+    # Highlight peaks from peak_scanner.py output
+    python -m analysis.motives.deepcis_visualize \
+        --input data/deepcis_window_scan_results.csv \
+        --peaks data/peak_annotations/deepcis_predictions_difference.csv \
+        --output plots \
+        --highlight-peaks \
+        --peak-signals reference difference
         """,
     )
 
     # Add arguments
     parser.add_argument("--input", type=str, required=True, metavar="PATH", help="Path to CSV file with deepCIS scan results",)
+    parser.add_argument("--peaks", type=str, default=None, metavar="PATH", help="Optional CSV file with raw peak annotations from peak_scanner.py",)
     parser.add_argument("--output", type=str, default=None, metavar="DIR", help="Directory to save plots (default: 'plots' next to input file)",)
     parser.add_argument("--genes", type=str, nargs="+", default=None, metavar="GENE", help="Gene names to plot (default: all genes)",)
     parser.add_argument("--tfs", type=str, nargs="+", default=None, metavar="TF", help="TF columns to plot, e.g., tf_0 tf_1 (default: all TFs)",)
     parser.add_argument("--format", type=str, default="png", metavar="FORMAT", choices=["png", "pdf", "svg", "jpg", "jpeg"],
                         help="Output file format (default: png)",)
     parser.add_argument("--no-title", action="store_true", help="Do not include titles in plots",)
+
+    padding_group = parser.add_mutually_exclusive_group()
+    padding_group.add_argument("--highlight-padding", dest="highlight_padding", action="store_true", help="Highlight padded windows in the background (default).",)
+    padding_group.add_argument("--no-highlight-padding", dest="highlight_padding", action="store_false", help="Do not highlight padded windows in the background.",)
+
+    peak_group = parser.add_mutually_exclusive_group()
+    peak_group.add_argument( "--highlight-peaks", dest="highlight_peaks", action="store_true", help="Highlight annotated peak windows in the background.",)
+    peak_group.add_argument( "--no-highlight-peaks", dest="highlight_peaks", action="store_false", help="Do not highlight annotated peak windows in the background.",)
+
+    parser.add_argument(
+        "--peak-signals", type=str, nargs="+", default=None, choices=list(PEAK_SIGNAL_TYPES), metavar="SIGNAL",
+        help=(
+            "Peak signal types to highlight when --highlight-peaks is enabled "
+            "(default: all available in the input)."
+        ),
+    )
+
+    diff_group = parser.add_mutually_exclusive_group()
+    diff_group.add_argument(
+        "--show-difference",
+        dest="show_difference",
+        action="store_true",
+        help="Show the red difference line (default).",
+    )
+    diff_group.add_argument(
+        "--no-show-difference",
+        dest="show_difference",
+        action="store_false",
+        help="Hide the red difference line and keep y-axis at [0, 1].",
+    )
+
+    parser.add_argument(
+        "--difference-direction",
+        type=str,
+        default="max_mutated_minus_reference",
+        choices=list(DIFFERENCE_DIRECTIONS),
+        metavar="DIRECTION",
+        help=(
+            "Direction used for the signed difference line. "
+            "Choices: max_mutated_minus_reference (default), "
+            "reference_minus_max_mutated."
+        ),
+    )
+
+    parser.set_defaults(highlight_padding=True, highlight_peaks=True, show_difference=True)
 
     # Parse
     parsed_args = parser.parse_args(args)
@@ -504,11 +852,17 @@ def run_visualization(args):
     try:
         visualize_scan_results(
             args.input,
+            peak_input=args.peaks,
             genes=args.genes,
             tfs=args.tfs,
             output_dir=args.output,
             output_format=args.format,
             include_title=not args.no_title,
+            highlight_padding=args.highlight_padding,
+            highlight_peaks=args.highlight_peaks,
+            peak_signal_types=args.peak_signals,
+            show_difference=args.show_difference,
+            difference_direction=args.difference_direction,
         )
         return 0
     except Exception as exc:
