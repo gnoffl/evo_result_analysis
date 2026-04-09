@@ -2,6 +2,7 @@
 import traceback
 import argparse
 import os
+import random
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -27,6 +28,42 @@ PEAK_REQUIRED_COLUMNS = {
     "peak_start",
     "peak_end",
 }
+
+
+def _resolve_peak_signal_types(
+    df: pd.DataFrame,
+    peak_df: Optional[pd.DataFrame],
+    highlight_peaks: bool,
+    peak_signal_types: Optional[List[str]],
+) -> List[str]:
+    """Resolve which peak signal types are available for plotting."""
+    if peak_signal_types is not None:
+        return [signal_type for signal_type in peak_signal_types if signal_type in PEAK_SIGNAL_TYPES]
+
+    if not highlight_peaks:
+        return []
+
+    if peak_df is not None:
+        available_signal_types = [
+            signal_type
+            for signal_type in PEAK_SIGNAL_TYPES
+            if signal_type in set(peak_df["signal_type"].astype(str).unique())
+        ]
+    else:
+        available_signal_types = [
+            signal_type
+            for signal_type in PEAK_SIGNAL_TYPES
+            if any(col.endswith(f"__{signal_type}__in_peak") for col in df.columns)
+        ]
+
+    return available_signal_types
+
+
+def _select_random_subset(genes: List[str], tfs: List[str], limit: int = 3) -> Tuple[List[str], List[str]]:
+    """Select up to ``limit`` random genes and TFs."""
+    selected_genes = random.sample(genes, k=min(limit, len(genes)))
+    selected_tfs = random.sample(tfs, k=min(limit, len(tfs)))
+    return selected_genes, selected_tfs
 
 
 def load_scan_results(
@@ -499,6 +536,7 @@ def _save_gene_tf_plot(
     tf_col: str,
     output_dir: str,
     output_format: str,
+    signal_type: Optional[str] = None,
 ) -> None:
     """Save a plot figure to disk.
 
@@ -510,7 +548,10 @@ def _save_gene_tf_plot(
         output_format: File format (e.g., "png", "pdf").
     """
     tf_name = tf_col.replace("tf_", "TF_")
-    filename = f"{gene}_{tf_name}.{output_format}"
+    if signal_type is None:
+        filename = f"{gene}_{tf_name}.{output_format}"
+    else:
+        filename = f"{gene}_{tf_name}_{signal_type}.{output_format}"
     filepath = os.path.join(output_dir, gene, filename)
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     fig.tight_layout()
@@ -531,6 +572,7 @@ def _process_gene_tf(
     peak_df: Optional[pd.DataFrame],
     show_difference: bool,
     difference_direction: str,
+    signal_type: Optional[str] = None,
 ) -> bool:
     """Create and save a single gene/TF plot.
 
@@ -549,6 +591,9 @@ def _process_gene_tf(
     if gene_df[tf_col].isna().all():
         return False
 
+    if signal_type is not None and signal_type not in PEAK_SIGNAL_TYPES:
+        raise ValueError(f"Invalid signal_type '{signal_type}'. Expected one of {PEAK_SIGNAL_TYPES}.")
+
     # Create figure and plot
     fig, ax = plt.subplots(figsize=(12, 6))
     try:
@@ -565,7 +610,7 @@ def _process_gene_tf(
             show_difference=show_difference,
             difference_direction=difference_direction,
         )
-        _save_gene_tf_plot(fig, gene, tf_col, output_dir, output_format)
+        _save_gene_tf_plot(fig, gene, tf_col, output_dir, output_format, signal_type=signal_type)
         return True
     except Exception as e:
         print_status(f"Error plotting {gene} / {tf_col}: {e}", "WARNING")
@@ -650,6 +695,7 @@ def visualize_scan_results(
     peak_signal_types: Optional[List[str]] = None,
     show_difference: bool = True,
     difference_direction: str = "max_mutated_minus_reference",
+    random_subset: bool = False,
     *,
     peak_input: Union[str, pd.DataFrame, None] = None,
 ) -> None:
@@ -669,6 +715,8 @@ def visualize_scan_results(
         include_title: Whether to include titles in plots. Default: True.
         show_difference: Whether to display the difference line. Default: True.
         difference_direction: Direction of difference line computation.
+        random_subset: If True, sample up to 3 genes and 3 TFs from the
+            compatible input before plotting.
 
     Raises:
         ValueError: If input is invalid type or DataFrame is empty.
@@ -683,22 +731,26 @@ def visualize_scan_results(
     # Validate inputs and set defaults
     genes, tfs = _validate_and_set_defaults(df, genes, tfs)
 
-    if highlight_peaks and peak_signal_types is None:
-        if peak_df is not None:
-            peak_signal_types = [
-                signal_type
-                for signal_type in PEAK_SIGNAL_TYPES
-                if signal_type in set(peak_df["signal_type"].astype(str).unique())
-            ]
-        else:
-            peak_signal_types = [
-                signal_type
-                for signal_type in PEAK_SIGNAL_TYPES
-                if any(
-                    col.endswith(f"__{signal_type}__in_peak")
-                    for col in df.columns
-                )
-            ]
+    if random_subset:
+        genes, tfs = _select_random_subset(genes, tfs)
+        print_status(
+            f"Random subset selected {len(genes)} genes and {len(tfs)} TFs",
+            "INFO",
+        )
+
+    resolved_peak_signal_types = _resolve_peak_signal_types(
+        df,
+        peak_df,
+        highlight_peaks,
+        peak_signal_types,
+    )
+    separate_signal_images = len(resolved_peak_signal_types) > 1
+
+    if separate_signal_images:
+        print_status(
+            f"Plotting {len(resolved_peak_signal_types)} signal types as separate images",
+            "INFO",
+        )
 
     # Create plots
     successful_plots = 0
@@ -706,21 +758,40 @@ def visualize_scan_results(
         gene_df: pd.DataFrame = df.loc[df["gene"] == gene].copy()       #type:ignore
 
         for tf_col in tfs:
-            if _process_gene_tf(
-                gene_df,
-                gene,
-                tf_col,
-                output_dir,
-                output_format,
-                include_title,
-                highlight_padding,
-                highlight_peaks,
-                peak_signal_types,
-                peak_df,
-                show_difference,
-                difference_direction,
-            ):
-                successful_plots += 1
+            if separate_signal_images:
+                for signal_type in resolved_peak_signal_types:
+                    if _process_gene_tf(
+                        gene_df,
+                        gene,
+                        tf_col,
+                        output_dir,
+                        output_format,
+                        include_title,
+                        highlight_padding,
+                        highlight_peaks,
+                        [signal_type],
+                        peak_df,
+                        show_difference,
+                        difference_direction,
+                        signal_type=signal_type,
+                    ):
+                        successful_plots += 1
+            else:
+                if _process_gene_tf(
+                    gene_df,
+                    gene,
+                    tf_col,
+                    output_dir,
+                    output_format,
+                    include_title,
+                    highlight_padding,
+                    highlight_peaks,
+                    resolved_peak_signal_types,
+                    peak_df,
+                    show_difference,
+                    difference_direction,
+                ):
+                    successful_plots += 1
 
     print_status(
         f"Successfully saved {successful_plots} plots to {output_dir}",
@@ -765,6 +836,11 @@ Examples:
     --output plots \\
     --no-title
 
+    # Plot a random subset of compatible genes and TFs
+    python -m analysis.motives.deepcis_visualize \
+        --input data/deepcis_window_scan_results.csv \
+        --random-subset
+
     # Highlight peaks from peak_scanner.py output
     python -m analysis.motives.deepcis_visualize \
         --input data/deepcis_window_scan_results.csv \
@@ -781,6 +857,11 @@ Examples:
     parser.add_argument("--output", type=str, default=None, metavar="DIR", help="Directory to save plots (default: 'plots' next to input file)",)
     parser.add_argument("--genes", type=str, nargs="+", default=None, metavar="GENE", help="Gene names to plot (default: all genes)",)
     parser.add_argument("--tfs", type=str, nargs="+", default=None, metavar="TF", help="TF columns to plot, e.g., tf_0 tf_1 (default: all TFs)",)
+    parser.add_argument(
+        "--random-subset",
+        action="store_true",
+        help="Randomly sample up to 3 compatible genes and 3 compatible TFs before plotting.",
+    )
     parser.add_argument("--format", type=str, default="png", metavar="FORMAT", choices=["png", "pdf", "svg", "jpg", "jpeg"],
                         help="Output file format (default: png)",)
     parser.add_argument("--no-title", action="store_true", help="Do not include titles in plots",)
@@ -863,6 +944,7 @@ def run_visualization(args):
             peak_signal_types=args.peak_signals,
             show_difference=args.show_difference,
             difference_direction=args.difference_direction,
+            random_subset=args.random_subset,
         )
         return 0
     except Exception as exc:

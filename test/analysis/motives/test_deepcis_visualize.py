@@ -4,6 +4,7 @@ import os
 import unittest
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -20,6 +21,7 @@ from analysis.motives.deepcis_visualize import (
     _validate_and_set_defaults,
     _load_input_data,
     _resolve_output_directory,
+    _select_random_subset,
     parse_arguments,
     visualize_scan_results,
 )
@@ -618,6 +620,17 @@ class TestVisualizeScanResults(unittest.TestCase):
             "tf_1": [0.3, 0.4, 0.35, 0.45],
             "tf_2": [0.2, 0.2, 0.25, 0.3],
         })
+        self.sample_peak_data = pd.DataFrame({
+            "gene": ["gene1", "gene1", "gene1"],
+            "tf": ["tf_0", "tf_0", "tf_0"],
+            "signal_type": ["reference", "max_mutated", "difference"],
+            "peak_start": [0, 50, 100],
+            "peak_end": [250, 300, 350],
+            "score": [0.1, 0.2, 0.3],
+            "region_idx": [0, 1, 2],
+            "peak_rank": [0, 0, 0],
+            "edge_peak": [False, False, False],
+        })
 
     def test_visualize_from_file(self):
         """Test visualization from CSV file."""
@@ -708,6 +721,89 @@ class TestVisualizeScanResults(unittest.TestCase):
             expected_file = os.path.join(tmpdir, "deepcis_scan_plots", "gene1", "gene1_TF_0.png")
             self.assertTrue(os.path.exists(expected_file))
 
+    def test_visualize_separate_images_for_multiple_signal_types(self):
+        """Test that multiple peak signal types are written as separate images."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            visualize_scan_results(
+                self.sample_scan_data,
+                genes=["gene1"],
+                tfs=["tf_0"],
+                output_dir=tmpdir,
+                highlight_peaks=True,
+                peak_input=self.sample_peak_data,
+            )
+
+            base_dir = os.path.join(tmpdir, "gene1")
+            expected_files = {
+                os.path.join(base_dir, "gene1_TF_0_reference.png"),
+                os.path.join(base_dir, "gene1_TF_0_max_mutated.png"),
+                os.path.join(base_dir, "gene1_TF_0_difference.png"),
+            }
+            for expected_file in expected_files:
+                self.assertTrue(os.path.exists(expected_file))
+
+    def test_visualize_random_subset_uses_subset_and_separate_images(self):
+        """Test random subset selection with multiple signal types."""
+        data = pd.DataFrame({
+            "gene": ["geneA", "geneA", "geneB", "geneB", "geneC", "geneC"],
+            "sequence_type": ["reference", "max_mutated"] * 3,
+            "window_start": [0, 0, 0, 0, 0, 0],
+            "window_end": [250, 250, 250, 250, 250, 250],
+            "contains_padding": [False, False, False, False, False, False],
+            "tf_0": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+            "tf_1": [0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+            "tf_2": [0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+            "tf_3": [0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+        })
+        peak_data = pd.DataFrame({
+            "gene": ["geneA", "geneA", "geneA"],
+            "tf": ["tf_0", "tf_0", "tf_0"],
+            "signal_type": ["reference", "max_mutated", "difference"],
+            "peak_start": [0, 50, 100],
+            "peak_end": [250, 300, 350],
+            "score": [0.1, 0.2, 0.3],
+            "region_idx": [0, 1, 2],
+            "peak_rank": [0, 0, 0],
+            "edge_peak": [False, False, False],
+        })
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "analysis.motives.deepcis_visualize.random.sample",
+            side_effect=lambda values, k: list(values)[:k],
+        ):
+            visualize_scan_results(
+                data,
+                output_dir=tmpdir,
+                highlight_peaks=True,
+                peak_input=peak_data,
+                random_subset=True,
+            )
+
+            for gene in ["geneA", "geneB", "geneC"][:3]:
+                gene_dir = os.path.join(tmpdir, gene)
+                self.assertTrue(os.path.isdir(gene_dir))
+
+            expected_file = os.path.join(tmpdir, "geneA", "geneA_TF_0_reference.png")
+            self.assertTrue(os.path.exists(expected_file))
+
+
+class TestRandomSubsetHelper(unittest.TestCase):
+    """Tests for random subset selection."""
+
+    def test_select_random_subset_limits_to_three(self):
+        with patch("analysis.motives.deepcis_visualize.random.sample", side_effect=lambda values, k: list(values)[:k]):
+            genes, tfs = _select_random_subset(["gene1", "gene2", "gene3", "gene4"], ["tf_0", "tf_1", "tf_2", "tf_3"])
+
+        self.assertEqual(genes, ["gene1", "gene2", "gene3"])
+        self.assertEqual(tfs, ["tf_0", "tf_1", "tf_2"])
+
+    def test_select_random_subset_handles_small_inputs(self):
+        with patch("analysis.motives.deepcis_visualize.random.sample", side_effect=lambda values, k: list(values)[:k]):
+            genes, tfs = _select_random_subset(["gene1"], ["tf_0", "tf_1"])
+
+        self.assertEqual(genes, ["gene1"])
+        self.assertEqual(tfs, ["tf_0", "tf_1"])
+
 
 class TestParseArguments(unittest.TestCase):
     """Tests for the CLI parser."""
@@ -759,6 +855,24 @@ class TestParseArguments(unittest.TestCase):
             self.assertFalse(args.highlight_padding)
             self.assertFalse(args.highlight_peaks)
             self.assertEqual(args.peak_signals, ["reference", "difference"])
+
+    def test_parse_arguments_random_subset(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = os.path.join(tmpdir, "scan.csv")
+            pd.DataFrame(
+                {
+                    "gene": ["gene1"],
+                    "sequence_type": ["reference"],
+                    "window_start": [0],
+                    "window_end": [250],
+                    "contains_padding": [False],
+                    "tf_0": [0.1],
+                }
+            ).to_csv(input_path, index=False)
+
+            args = parse_arguments(["--input", input_path, "--random-subset"])
+
+            self.assertTrue(args.random_subset)
 
 
 if __name__ == '__main__':
