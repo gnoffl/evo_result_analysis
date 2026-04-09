@@ -532,9 +532,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument( "--annotator-window-size", type=int, default=250, help="PeakAnnotator window size in bp (default: 250).",)
     parser.add_argument( "--annotator-step-size", type=int, default=None, help=( "PeakAnnotator step size in bp. If omitted, inferred from window_start for each gene/TF signal."),)
-    parser.add_argument( "--annotator-threshold-peak", type=float, default=0.2, help="PeakAnnotator detection threshold (default: 0.0).",)
-    parser.add_argument( "--annotator-sigma", type=float, default=10.0, help="PeakAnnotator Gaussian sigma in bp (default: 10.0).",)
-    parser.add_argument( "--annotator-lambda-weight", type=float, default=1.0, help="PeakAnnotator lambda weight (default: 1.0).",)
+    parser.add_argument( "--annotator-threshold-peak", type=float, default=0.2, help="PeakAnnotator detection threshold (default: 0.2).",)
+    parser.add_argument( "--annotator-sigma", type=float, default=50.0, help="PeakAnnotator Gaussian sigma in bp (default: 50.0).",)
+    parser.add_argument( "--annotator-lambda-weight", type=float, default=2.0, help="PeakAnnotator lambda weight (default: 2.0).",)
     parser.add_argument( "--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], default="INFO", help="Logging level (default: INFO).",)
 
     return parser
