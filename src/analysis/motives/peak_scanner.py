@@ -373,7 +373,7 @@ class DeepCISPeakScanner:
             base_name = Path(scanner_data).stem
         else:
             base_name = "peaks"
-        signal_type_str = "_".join(signal_types) if signal_types else self.signal_type
+        signal_type_str = "_".join(sorted(signal_types)) if signal_types else self.signal_type
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = self.output_dir / f"{base_name}_{signal_type_str}_{timestamp}.csv"
         result_df.to_csv(output_file, index=False)
