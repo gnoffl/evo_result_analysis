@@ -703,7 +703,7 @@ def visualize_scan_results(
     # Create plots
     successful_plots = 0
     for gene in tqdm(genes, desc="Processing genes"):
-        gene_df = df.loc[df["gene"] == gene].copy()
+        gene_df: pd.DataFrame = df.loc[df["gene"] == gene].copy()       #type:ignore
 
         for tf_col in tfs:
             if _process_gene_tf(

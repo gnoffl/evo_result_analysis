@@ -44,7 +44,7 @@ class TestExtractPlotData(unittest.TestCase):
 
     def test_extract_plot_data_basic(self):
         """Test basic extraction of plot data."""
-        gene_df = self.sample_scan_data[self.sample_scan_data["gene"] == "gene1"]
+        gene_df: pd.DataFrame = self.sample_scan_data[self.sample_scan_data["gene"] == "gene1"]         #type:ignore
         ref_x, ref_y, mut_x, mut_y, _, _, x_min, x_max = extract_plot_data(gene_df, "tf_0")
 
         # Check that we get two reference points and two mutated points
@@ -61,7 +61,7 @@ class TestExtractPlotData(unittest.TestCase):
 
     def test_extract_plot_data_y_values(self):
         """Test that y values are correctly extracted."""
-        gene_df = self.sample_scan_data[self.sample_scan_data["gene"] == "gene1"]
+        gene_df: pd.DataFrame = self.sample_scan_data[self.sample_scan_data["gene"] == "gene1"]         #type:ignore
         ref_x, ref_y, mut_x, mut_y, _, _, x_min, x_max = extract_plot_data(gene_df, "tf_0")
 
         # Reference: [0.1, 0.5]
@@ -71,7 +71,7 @@ class TestExtractPlotData(unittest.TestCase):
 
     def test_extract_plot_data_x_range(self):
         """Test that x_min and x_max are correctly determined."""
-        gene_df = self.sample_scan_data[self.sample_scan_data["gene"] == "gene1"]
+        gene_df: pd.DataFrame = self.sample_scan_data[self.sample_scan_data["gene"] == "gene1"]         #type:ignore
         ref_x, ref_y, mut_x, mut_y, _, _, x_min, x_max = extract_plot_data(gene_df, "tf_0")
 
         # x_min should be minimum window_start (0)
@@ -81,7 +81,7 @@ class TestExtractPlotData(unittest.TestCase):
 
     def test_extract_plot_data_different_tf(self):
         """Test extraction with different TF columns."""
-        gene_df = self.sample_scan_data[self.sample_scan_data["gene"] == "gene1"]
+        gene_df: pd.DataFrame = self.sample_scan_data[self.sample_scan_data["gene"] == "gene1"]         #type:ignore
 
         # Test tf_1
         ref_x, ref_y, mut_x, mut_y, _, _, x_min, x_max = extract_plot_data(gene_df, "tf_1")
@@ -571,7 +571,7 @@ class TestLoadInputData(unittest.TestCase):
     def test_load_input_data_invalid_type(self):
         """Test with invalid input type."""
         with self.assertRaises(ValueError):
-            _load_input_data(123)
+            _load_input_data(123)               #type:ignore
 
     def test_load_input_data_empty_dataframe(self):
         """Test with empty DataFrame."""
@@ -599,7 +599,7 @@ class TestResolveOutputDirectory(unittest.TestCase):
 
     def test_resolve_output_directory_from_dataframe(self):
         """Test with input as DataFrame (not file)."""
-        result = _resolve_output_directory(None, None)
+        result = _resolve_output_directory(pd.DataFrame(), None)
         self.assertEqual(result, os.path.join(os.getcwd(), "deepcis_scan_plots"))
 
 
