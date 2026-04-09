@@ -56,7 +56,6 @@ class DeepCISPeakScanner:
         tfs: Optional[List[str]] = None,
         signal_type: str = "difference",
         output_dir: Optional[Union[str, Path]] = None,
-        save_results: bool = True,
         annotator_window_size: int = 250,
         annotator_step_size: Optional[int] = None,
         annotator_threshold_peak: float = 0.2,
@@ -91,7 +90,6 @@ class DeepCISPeakScanner:
         self.tfs = tfs
         self.signal_type = signal_type
         self.output_dir = Path(output_dir) if output_dir else Path("data") / "peak_annotations"
-        self.save_results = save_results
         self.annotator_window_size = annotator_window_size
         self.annotator_step_size = annotator_step_size
         self.annotator_threshold_peak = annotator_threshold_peak
@@ -364,6 +362,7 @@ class DeepCISPeakScanner:
         self,
         result_df: pd.DataFrame,
         scanner_data: Union[pd.DataFrame, str, Path],
+        signal_types: Optional[List[str]] = None,
     ) -> None:
         """Save peak detection results to timestamped CSV file.
 
@@ -374,8 +373,9 @@ class DeepCISPeakScanner:
             base_name = Path(scanner_data).stem
         else:
             base_name = "peaks"
+        signal_type_str = "_".join(signal_types) if signal_types else self.signal_type
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = self.output_dir / f"{base_name}_{self.signal_type}_{timestamp}.csv"
+        output_file = self.output_dir / f"{base_name}_{signal_type_str}_{timestamp}.csv"
         result_df.to_csv(output_file, index=False)
         logger.info(f"Saved {len(result_df)} peaks to {output_file}")
     
@@ -476,9 +476,6 @@ class DeepCISPeakScanner:
                 ]
             )
 
-        if self.save_results:
-            self._save_peaks_results(result_df, scanner_data)
-
         return result_df
 
     # ========================================================================
@@ -490,13 +487,38 @@ class DeepCISPeakScanner:
         return (
             f"DeepCISPeakScanner(genes={self.genes}, tfs={self.tfs}, "
             f"signal_type='{self.signal_type}', output_dir={self.output_dir}, "
-            f"save_results={self.save_results}, "
             f"annotator_window_size={self.annotator_window_size}, "
             f"annotator_step_size={self.annotator_step_size}, "
             f"annotator_threshold_peak={self.annotator_threshold_peak}, "
             f"annotator_sigma={self.annotator_sigma}, "
             f"annotator_lambda_weight={self.annotator_lambda_weight})"
         )
+
+def run(scanner_data: Union[pd.DataFrame, str, Path], output_dir: Union[Path, str], genes: Optional[List[str]] = None,
+        tfs: Optional[List[str]] = None, signal_types: List[str] = ["difference"], window_size: int = 250, step_size: Optional[int] = None,
+        threshold_peak: float = 0.2, sigma: float = 50.0, lambda_weight: float = 2.0,) -> pd.DataFrame:
+    all_results: List[pd.DataFrame] = []
+
+    for signal_type in signal_types:
+        logger.info("Running peak scan for signal_type=%s", signal_type)
+        scanner = DeepCISPeakScanner(
+            genes=_parse_list_arg(genes),
+            tfs=_parse_list_arg(tfs),
+            signal_type=cast(str, signal_type),
+            output_dir=output_dir,
+            annotator_window_size=window_size,
+            annotator_step_size=step_size,
+            annotator_threshold_peak=threshold_peak,
+            annotator_sigma=sigma,
+            annotator_lambda_weight=lambda_weight,
+        )
+
+        result_df = scanner.scan(scanner_data=scanner_data)
+        all_results.append(result_df)
+        logger.info("Detected %s peaks for signal_type=%s", len(result_df), signal_type)
+    all_peaks = pd.concat(all_results, ignore_index=True) if all_results else pd.DataFrame()
+    scanner._save_peaks_results(all_peaks, scanner_data, signal_types=signal_types)
+    return all_peaks
 
 
 def _parse_list_arg(values: Optional[List[str]]) -> Optional[List[str]]:
@@ -512,23 +534,15 @@ def _parse_list_arg(values: Optional[List[str]]) -> Optional[List[str]]:
 
 def _build_parser() -> argparse.ArgumentParser:
     """Create command line parser for DeepCIS peak scanning."""
-    parser = argparse.ArgumentParser(
-        description=(
-            "Scan deepCIS predictions for TF binding peaks with configurable "
-            "scanner and PeakAnnotator parameters."
-        )
-    )
+    parser = argparse.ArgumentParser(description=("Scan deepCIS predictions for TF binding peaks with configurable scanner and PeakAnnotator parameters."))
 
     parser.add_argument( "scanner_data", help="Path to deepCIS prediction CSV file.",)
     parser.add_argument( "--genes", "-g", nargs="+", default=None, help="Genes to scan (space-separated and/or comma-separated).",)
     parser.add_argument( "--tfs", "-t", nargs="+", default=None, help="TF columns to scan (space-separated and/or comma-separated).",)
-    parser.add_argument( "--signal-type", "-s", choices=["reference", "max_mutated", "difference"], default="difference", help="Which signal to scan (default: difference).",)
+    parser.add_argument("--signal-type", "-s", choices=["reference", "max_mutated", "difference", "all"], default="difference",
+        help=( "Which signal to scan (default: difference). " "Use 'all' to run reference, max_mutated, and difference in one call."),
+    )
     parser.add_argument( "--output-dir", "-o", default="", help="Output directory for results (default: next to input file).",)
-
-    save_group = parser.add_mutually_exclusive_group()
-    save_group.add_argument( "--save-results", dest="save_results", action="store_true", help="Save results to CSV (default).",)
-    save_group.add_argument( "--no-save-results", dest="save_results", action="store_false", help="Do not save results to CSV.",)
-    parser.set_defaults(save_results=True)
 
     parser.add_argument( "--annotator-window-size", type=int, default=250, help="PeakAnnotator window size in bp (default: 250).",)
     parser.add_argument( "--annotator-step-size", type=int, default=None, help=( "PeakAnnotator step size in bp. If omitted, inferred from window_start for each gene/TF signal."),)
@@ -551,21 +565,20 @@ def main() -> None:
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
 
-    scanner = DeepCISPeakScanner(
-        genes=_parse_list_arg(args.genes),
-        tfs=_parse_list_arg(args.tfs),
-        signal_type=args.signal_type,
+    signal_types = ["reference", "max_mutated", "difference"] if args.signal_type == "all" else [args.signal_type]
+    all_peaks = run(
+        scanner_data=args.scanner_data,
         output_dir=args.output_dir,
-        save_results=args.save_results,
-        annotator_window_size=args.annotator_window_size,
-        annotator_step_size=args.annotator_step_size,
-        annotator_threshold_peak=args.annotator_threshold_peak,
-        annotator_sigma=args.annotator_sigma,
-        annotator_lambda_weight=args.annotator_lambda_weight,
+        genes=args.genes,
+        tfs=args.tfs,
+        signal_types=signal_types,
+        window_size=args.annotator_window_size,
+        step_size=args.annotator_step_size,
+        threshold_peak=args.annotator_threshold_peak,
+        sigma=args.annotator_sigma,
+        lambda_weight=args.annotator_lambda_weight,
     )
-
-    result_df = scanner.scan(scanner_data=args.scanner_data)
-    logger.info("Detected %s peaks", len(result_df))
+    logger.info("Detected %s peaks in total across %s signal type(s)", len(all_peaks), len(signal_types))
 
 
 if __name__ == "__main__":
