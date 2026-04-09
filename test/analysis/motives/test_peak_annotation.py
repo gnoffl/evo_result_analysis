@@ -280,13 +280,13 @@ class TestPeakAnnotator(unittest.TestCase):
         np.testing.assert_allclose(signal_cum_sum, np.array([0.0, 0.1, 0.3, 0.8, 1.4, 1.4]), atol=1e-6)
         
         # Test scan_range: region_start=0, region_end=2, left_end=1, right_end=3
-        scan_range = (0, 2, 1, 3)
+        scan_range = (0, 2, 2, 3)
         mass_contributions = annotator.calculate_mass_contributions(signal_cum_sum, scan_range)
         
         # left_elements = 1 - 0 + 1 = 2 (indices 0, 1)
         # right_elements = 3 - 2 + 1 = 2 (indices 1, 2)
         # total = 2 * 2 = 4
-        self.assertEqual(mass_contributions.shape, (2, 2))
+        self.assertEqual(mass_contributions.shape, (3, 2))
         expected_values = [
             [
                 # l=0, r=2: mass_term = cumsum[2] - cumsum[0] = 0.3 - 0 = 0.3, reduced = 0.3 - (2-0)*0.2 = -.1
@@ -298,6 +298,12 @@ class TestPeakAnnotator(unittest.TestCase):
                 # l=1, r=2: mass_term = cumsum[2] - cumsum[1] = 0.3 - 0.1 = 0.2, reduced = 0.2 - (2-1)*0.2 = 0.0
                 0.0,
                 # l=1, r=3: mass_term = cumsum[3] - cumsum[1] = 0.8 - 0.1 = 0.7, reduced = 0.7 - (3-1)*0.2 = 0.3
+                0.3,
+            ],
+            [
+                #l=2, r=2: if r <= l, contribution should be NaN
+                np.nan,
+                # l=2, r=3: mass_term = cumsum[3] - cumsum[2] = 0.8 - 0.3 = 0.5, reduced = 0.5 - (3-2)*0.2 = 0.3
                 0.3,
             ]
         ]
@@ -312,13 +318,13 @@ class TestPeakAnnotator(unittest.TestCase):
         # window_size=20, step_size=10 -> _window_size_elements=2
         self.assertEqual(
             annotator.calculate_scan_range(region_start=0, region_end=2, deriv=deriv),
-            (0, 2, 1, 4),
+            (0, 2, 2, 4),
         )
 
         # region_end is clipped to len(deriv)-1, and left/right bounds are clipped as well.
         self.assertEqual(
             annotator.calculate_scan_range(region_start=2, region_end=99, deriv=deriv),
-            (2, 4, 3, 4),
+            (2, 4, 4, 4),
         )
 
     def test_calculate_peak_score_matches_formula(self):

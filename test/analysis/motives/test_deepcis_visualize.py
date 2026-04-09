@@ -13,7 +13,10 @@ from analysis.motives.deepcis_visualize import (
     extract_plot_data,
     get_tf_columns,
     load_scan_results,
+    load_peak_results,
     _get_padding_regions,
+    _get_peak_background_regions,
+    _get_peak_background_regions_from_peaks,
     _validate_and_set_defaults,
     _load_input_data,
     _resolve_output_directory,
@@ -42,7 +45,7 @@ class TestExtractPlotData(unittest.TestCase):
     def test_extract_plot_data_basic(self):
         """Test basic extraction of plot data."""
         gene_df = self.sample_scan_data[self.sample_scan_data["gene"] == "gene1"]
-        ref_x, ref_y, mut_x, mut_y, x_min, x_max = extract_plot_data(gene_df, "tf_0")
+        ref_x, ref_y, mut_x, mut_y, _, _, x_min, x_max = extract_plot_data(gene_df, "tf_0")
 
         # Check that we get two reference points and two mutated points
         self.assertEqual(len(ref_x), 2)
@@ -59,7 +62,7 @@ class TestExtractPlotData(unittest.TestCase):
     def test_extract_plot_data_y_values(self):
         """Test that y values are correctly extracted."""
         gene_df = self.sample_scan_data[self.sample_scan_data["gene"] == "gene1"]
-        ref_x, ref_y, mut_x, mut_y, x_min, x_max = extract_plot_data(gene_df, "tf_0")
+        ref_x, ref_y, mut_x, mut_y, _, _, x_min, x_max = extract_plot_data(gene_df, "tf_0")
 
         # Reference: [0.1, 0.5]
         # Mutated: [0.2, 0.6]
@@ -69,7 +72,7 @@ class TestExtractPlotData(unittest.TestCase):
     def test_extract_plot_data_x_range(self):
         """Test that x_min and x_max are correctly determined."""
         gene_df = self.sample_scan_data[self.sample_scan_data["gene"] == "gene1"]
-        ref_x, ref_y, mut_x, mut_y, x_min, x_max = extract_plot_data(gene_df, "tf_0")
+        ref_x, ref_y, mut_x, mut_y, _, _, x_min, x_max = extract_plot_data(gene_df, "tf_0")
 
         # x_min should be minimum window_start (0)
         # x_max should be maximum window_end (300)
@@ -81,12 +84,12 @@ class TestExtractPlotData(unittest.TestCase):
         gene_df = self.sample_scan_data[self.sample_scan_data["gene"] == "gene1"]
 
         # Test tf_1
-        ref_x, ref_y, mut_x, mut_y, x_min, x_max = extract_plot_data(gene_df, "tf_1")
+        ref_x, ref_y, mut_x, mut_y, _, _, x_min, x_max = extract_plot_data(gene_df, "tf_1")
         self.assertTrue(np.allclose(ref_y, [0.3, 0.4]))
         self.assertTrue(np.allclose(mut_y, [0.35, 0.45]))
 
         # Test tf_2
-        ref_x, ref_y, mut_x, mut_y, x_min, x_max = extract_plot_data(gene_df, "tf_2")
+        ref_x, ref_y, mut_x, mut_y, _, _, x_min, x_max = extract_plot_data(gene_df, "tf_2")
         self.assertTrue(np.allclose(ref_y, [0.2, 0.2]))
         self.assertTrue(np.allclose(mut_y, [0.25, 0.3]))
 
@@ -101,7 +104,7 @@ class TestExtractPlotData(unittest.TestCase):
             "tf_0": [0.5, 0.7],
         }
         df = pd.DataFrame(data)
-        ref_x, ref_y, mut_x, mut_y, x_min, x_max = extract_plot_data(df, "tf_0")
+        ref_x, ref_y, mut_x, mut_y, _, _, x_min, x_max = extract_plot_data(df, "tf_0")
 
         # Single reference point
         self.assertEqual(len(ref_x), 1)
@@ -126,7 +129,7 @@ class TestExtractPlotData(unittest.TestCase):
             "tf_0": [0.7],
         }
         df = pd.DataFrame(data)
-        ref_x, ref_y, mut_x, mut_y, x_min, x_max = extract_plot_data(df, "tf_0")
+        ref_x, ref_y, mut_x, mut_y, _, _, x_min, x_max = extract_plot_data(df, "tf_0")
 
         # No reference data
         self.assertEqual(len(ref_x), 0)
@@ -147,7 +150,7 @@ class TestExtractPlotData(unittest.TestCase):
             "tf_0": [0.1, 0.2, 0.3, 0.15, 0.25, 0.35],
         }
         df = pd.DataFrame(data)
-        ref_x, ref_y, mut_x, mut_y, x_min, x_max = extract_plot_data(df, "tf_0")
+        ref_x, ref_y, mut_x, mut_y, _, _, x_min, x_max = extract_plot_data(df, "tf_0")
 
         # Three windows per sequence type
         self.assertEqual(len(ref_x), 3)
@@ -233,6 +236,23 @@ class TestGetTfColumns(unittest.TestCase):
         # Should be sorted
         self.assertEqual(tf_cols, sorted(["BHLH", "WRKY", "MYB"]))
 
+    def test_get_tf_columns_ignores_peak_annotation_columns(self):
+        data = {
+            "gene": ["gene1"],
+            "sequence_type": ["reference"],
+            "window_start": [0],
+            "window_end": [250],
+            "contains_padding": [False],
+            "window_id": [0],
+            "tf_0": [0.4],
+            "tf_0__reference__in_peak": [True],
+            "tf_0__reference__region_idx_list": [[0]],
+            "tf_0__reference__peak_rank_list": [[0]],
+        }
+        df = pd.DataFrame(data)
+        tf_cols = get_tf_columns(df)
+        self.assertEqual(tf_cols, ["tf_0"])
+
 
 
 
@@ -312,6 +332,141 @@ class TestGetPaddingRegions(unittest.TestCase):
         regions = _get_padding_regions(df)
         # Should be sorted: (0, 250) before (100, 350)
         self.assertEqual(regions, [(0, 250), (100, 350)])
+
+
+class TestPeakBackgroundRegions(unittest.TestCase):
+    """Tests for peak background extraction from merged wide output."""
+
+    def test_get_peak_background_regions_merges_overlapping_windows(self):
+        df = pd.DataFrame(
+            {
+                "gene": ["gene1", "gene1", "gene1", "gene1"],
+                "sequence_type": ["reference", "reference", "max_mutated", "max_mutated"],
+                "window_start": [0, 50, 0, 50],
+                "window_end": [250, 300, 250, 300],
+                "contains_padding": [False, False, False, False],
+                "tf_0": [0.1, 0.5, 0.2, 0.6],
+                "tf_0__reference__in_peak": [False, True, False, False],
+                "tf_0__max_mutated__in_peak": [False, False, True, True],
+                "tf_0__difference__in_peak": [False, False, False, True],
+            }
+        )
+
+        regions = _get_peak_background_regions(df, "tf_0")
+
+        self.assertIn("reference", regions)
+        self.assertIn("max_mutated", regions)
+        self.assertIn("difference", regions)
+        self.assertEqual(regions["reference"], [(50.0, 300.0)])
+        self.assertEqual(regions["max_mutated"], [(0.0, 300.0)])
+        self.assertEqual(regions["difference"], [(50.0, 300.0)])
+
+    def test_get_peak_background_regions_respects_requested_types(self):
+        df = pd.DataFrame(
+            {
+                "gene": ["gene1"],
+                "sequence_type": ["reference"],
+                "window_start": [0],
+                "window_end": [250],
+                "contains_padding": [False],
+                "tf_0": [0.1],
+                "tf_0__reference__in_peak": [True],
+            }
+        )
+
+        regions = _get_peak_background_regions(df, "tf_0", signal_types=["difference"])
+        self.assertEqual(regions, {})
+
+
+class TestPeakBackgroundRegionsFromPeaks(unittest.TestCase):
+    """Tests for peak background extraction from raw peak-scanner output."""
+
+    def test_get_peak_background_regions_from_peaks_merges_overlapping_peaks(self):
+        peak_df = pd.DataFrame(
+            {
+                "gene": ["gene1", "gene1", "gene1", "gene1"],
+                "tf": ["tf_0", "tf_0", "tf_0", "tf_0"],
+                "signal_type": ["reference", "reference", "max_mutated", "difference"],
+                "peak_start": [50, 80, 0, 60],
+                "peak_end": [120, 300, 250, 300],
+                "score": [0.1, 0.2, 0.3, 0.4],
+                "region_idx": [0, 1, 0, 2],
+                "peak_rank": [0, 1, 0, 0],
+                "edge_peak": [False, False, False, False],
+            }
+        )
+
+        regions = _get_peak_background_regions_from_peaks(peak_df, "gene1", "tf_0")
+
+        self.assertIn("reference", regions)
+        self.assertIn("max_mutated", regions)
+        self.assertIn("difference", regions)
+        self.assertEqual(regions["reference"], [(175.0, 425.0)])
+        self.assertEqual(regions["max_mutated"], [(125.0, 375.0)])
+        self.assertEqual(regions["difference"], [(185.0, 425.0)])
+
+    def test_get_peak_background_regions_from_peaks_respects_requested_types(self):
+        peak_df = pd.DataFrame(
+            {
+                "gene": ["gene1"],
+                "tf": ["tf_0"],
+                "signal_type": ["reference"],
+                "peak_start": [0],
+                "peak_end": [250],
+                "score": [0.1],
+                "region_idx": [0],
+                "peak_rank": [0],
+                "edge_peak": [False],
+            }
+        )
+
+        regions = _get_peak_background_regions_from_peaks(
+            peak_df,
+            "gene1",
+            "tf_0",
+            signal_types=["difference"],
+        )
+        self.assertEqual(regions, {})
+
+
+class TestLoadPeakResults(unittest.TestCase):
+    """Tests for loading raw peak-scanner output."""
+
+    def test_load_peak_results_from_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = os.path.join(tmpdir, "peaks.csv")
+            pd.DataFrame(
+                {
+                    "gene": ["gene1"],
+                    "tf": ["tf_0"],
+                    "signal_type": ["reference"],
+                    "peak_start": [0],
+                    "peak_end": [250],
+                    "score": [0.1],
+                    "region_idx": [0],
+                    "peak_rank": [0],
+                    "edge_peak": [False],
+                }
+            ).to_csv(csv_path, index=False)
+
+            df = load_peak_results(csv_path)
+            self.assertEqual(len(df), 1)
+            self.assertEqual(df.loc[0, "peak_start"], 0)
+
+    def test_load_peak_results_validates_required_columns(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = os.path.join(tmpdir, "peaks.csv")
+            pd.DataFrame(
+                {
+                    "gene": ["gene1"],
+                    "tf": ["tf_0"],
+                    "peak_start": [0],
+                    "peak_end": [250],
+                }
+            ).to_csv(csv_path, index=False)
+
+            with self.assertRaises(KeyError):
+                load_peak_results(csv_path)
 
 
 class TestValidateAndSetDefaults(unittest.TestCase):
@@ -469,12 +624,27 @@ class TestVisualizeScanResults(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             csv_path = os.path.join(tmpdir, "scan.csv")
             self.sample_scan_data.to_csv(csv_path, index=False)
+            peaks_path = os.path.join(tmpdir, "peaks.csv")
+            pd.DataFrame(
+                {
+                    "gene": ["gene1", "gene1"],
+                    "tf": ["tf_0", "tf_0"],
+                    "signal_type": ["reference", "max_mutated"],
+                    "peak_start": [0, 50],
+                    "peak_end": [250, 300],
+                    "score": [0.1, 0.2],
+                    "region_idx": [0, 1],
+                    "peak_rank": [0, 0],
+                    "edge_peak": [False, False],
+                }
+            ).to_csv(peaks_path, index=False)
 
             visualize_scan_results(
                 csv_path,
                 genes=["gene1"],
                 tfs=["tf_0"],
                 output_dir=os.path.join(tmpdir, "output"),
+                peak_input=peaks_path,
             )
 
             # Check file was created
@@ -484,11 +654,25 @@ class TestVisualizeScanResults(unittest.TestCase):
     def test_visualize_from_dataframe(self):
         """Test visualization from DataFrame."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            peaks_df = pd.DataFrame(
+                {
+                    "gene": ["gene1"],
+                    "tf": ["tf_0"],
+                    "signal_type": ["reference"],
+                    "peak_start": [0],
+                    "peak_end": [250],
+                    "score": [0.1],
+                    "region_idx": [0],
+                    "peak_rank": [0],
+                    "edge_peak": [False],
+                }
+            )
             visualize_scan_results(
                 self.sample_scan_data,
                 genes=["gene1"],
                 tfs=["tf_0"],
                 output_dir=tmpdir,
+                peak_input=peaks_df,
             )
 
             output_file = os.path.join(tmpdir, "gene1", "gene1_TF_0.png")
@@ -505,11 +689,76 @@ class TestVisualizeScanResults(unittest.TestCase):
                 csv_path,
                 genes=["gene1"],
                 tfs=["tf_0"],
+                peak_input=pd.DataFrame(
+                    {
+                        "gene": ["gene1"],
+                        "tf": ["tf_0"],
+                        "signal_type": ["reference"],
+                        "peak_start": [0],
+                        "peak_end": [250],
+                        "score": [0.1],
+                        "region_idx": [0],
+                        "peak_rank": [0],
+                        "edge_peak": [False],
+                    }
+                ),
             )
 
             # Should create plots in tmpdir/plots
             expected_file = os.path.join(tmpdir, "deepcis_scan_plots", "gene1", "gene1_TF_0.png")
             self.assertTrue(os.path.exists(expected_file))
+
+
+class TestParseArguments(unittest.TestCase):
+    """Tests for the CLI parser."""
+
+    def test_parse_arguments_defaults_include_background_flags(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = os.path.join(tmpdir, "scan.csv")
+            pd.DataFrame(
+                {
+                    "gene": ["gene1"],
+                    "sequence_type": ["reference"],
+                    "window_start": [0],
+                    "window_end": [250],
+                    "contains_padding": [False],
+                    "tf_0": [0.1],
+                }
+            ).to_csv(input_path, index=False)
+
+            args = parse_arguments(["--input", input_path])
+
+            self.assertTrue(args.highlight_padding)
+            self.assertTrue(args.highlight_peaks)
+            self.assertIsNone(args.peak_signals)
+
+    def test_parse_arguments_peak_flags(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = os.path.join(tmpdir, "scan.csv")
+            pd.DataFrame(
+                {
+                    "gene": ["gene1"],
+                    "sequence_type": ["reference"],
+                    "window_start": [0],
+                    "window_end": [250],
+                    "contains_padding": [False],
+                    "tf_0": [0.1],
+                }
+            ).to_csv(input_path, index=False)
+
+            args = parse_arguments([
+                "--input",
+                input_path,
+                "--no-highlight-padding",
+                "--no-highlight-peaks",
+                "--peak-signals",
+                "reference",
+                "difference",
+            ])
+
+            self.assertFalse(args.highlight_padding)
+            self.assertFalse(args.highlight_peaks)
+            self.assertEqual(args.peak_signals, ["reference", "difference"])
 
 
 if __name__ == '__main__':

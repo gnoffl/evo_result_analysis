@@ -49,7 +49,6 @@ class TestDeepCISPeakScannerInit(_PeakScannerTestBase):
         scanner = DeepCISPeakScanner()
         self.assertEqual(scanner.signal_type, "difference")
         self.assertEqual(scanner.output_dir, Path("data") / "peak_annotations")
-        self.assertTrue(scanner.save_results)
         self.assertEqual(scanner.annotator_window_size, 250)
         self.assertIsNone(scanner.annotator_step_size)
         self.assertEqual(scanner.annotator_threshold_peak, 0.2)
@@ -62,7 +61,6 @@ class TestDeepCISPeakScannerInit(_PeakScannerTestBase):
             tfs=["tf_1"],
             signal_type="reference",
             output_dir="custom_dir",
-            save_results=False,
             annotator_window_size=100,
             annotator_step_size=10,
             annotator_threshold_peak=0.2,
@@ -73,7 +71,6 @@ class TestDeepCISPeakScannerInit(_PeakScannerTestBase):
         self.assertEqual(scanner.tfs, ["tf_1"])
         self.assertEqual(scanner.signal_type, "reference")
         self.assertEqual(scanner.output_dir, Path("custom_dir"))
-        self.assertFalse(scanner.save_results)
         self.assertEqual(scanner.annotator_window_size, 100)
         self.assertEqual(scanner.annotator_step_size, 10)
         self.assertEqual(scanner.annotator_threshold_peak, 0.2)
@@ -427,9 +424,9 @@ class TestSavePeaksResults(_PeakScannerTestBase):
             scanner.output_dir = Path(tmpdir)
             with patch("analysis.motives.peak_scanner.datetime") as mock_datetime:
                 mock_datetime.now.return_value.strftime.return_value = "20260101_000000"
-                scanner._save_peaks_results(result_df, self.sample_df)
+                scanner._save_peaks_results(result_df, self.sample_df, signal_types=[ "reference", "difference"])
 
-            expected_path = Path(tmpdir) / "peaks_difference_20260101_000000.csv"
+            expected_path = Path(tmpdir) / "peaks_difference_reference_20260101_000000.csv"
             self.assertTrue(expected_path.exists())
 
 
@@ -534,7 +531,6 @@ class TestScan(_PeakScannerTestBase):
             genes=["geneA"],
             tfs=["tf_1"],
             signal_type="difference",
-            save_results=False,
             annotator_window_size=30,
             annotator_threshold_peak=0.2,
             annotator_sigma=10.0,
@@ -574,7 +570,7 @@ class TestScan(_PeakScannerTestBase):
         pd.testing.assert_frame_equal(result.reset_index(drop=True), expected)
 
     def test_scan_returns_concatenated_results(self):
-        scanner = DeepCISPeakScanner(save_results=False)
+        scanner = DeepCISPeakScanner()
         peaks_1 = pd.DataFrame(
             {
                 "gene": ["geneA"],
@@ -612,7 +608,7 @@ class TestScan(_PeakScannerTestBase):
         self.assertEqual(list(result["gene"]), ["geneA", "geneB"])
 
     def test_scan_returns_empty_dataframe_with_standard_columns_when_no_peaks(self):
-        scanner = DeepCISPeakScanner(save_results=False)
+        scanner = DeepCISPeakScanner()
 
         with patch.object(scanner, "_load_scanner_data", return_value=self.sample_df):
             with patch.object(scanner, "_validate_scanner_input"):
@@ -635,37 +631,6 @@ class TestScan(_PeakScannerTestBase):
         self.assertEqual(list(result.columns), expected_cols)
         self.assertTrue(result.empty)
 
-    def test_scan_creates_output_dir_and_saves_when_enabled(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_dir = Path(tmpdir) / "nested" / "peaks"
-            scanner = DeepCISPeakScanner(save_results=True, output_dir=output_dir)
-
-            peaks = pd.DataFrame(
-                {
-                    "gene": ["geneA"],
-                    "tf": ["tf_1"],
-                    "signal_type": ["difference"],
-                    "peak_start": [0],
-                    "peak_end": [20],
-                    "score": [0.8],
-                    "region_idx": [0],
-                    "peak_rank": [1],
-                }
-            )
-
-            with patch.object(scanner, "_load_scanner_data", return_value=self.sample_df):
-                with patch.object(scanner, "_validate_scanner_input"):
-                    with patch.object(scanner, "_get_available_tfs", return_value=["tf_1", "tf_2"]):
-                        with patch.object(scanner, "validate_genes", return_value=["geneA"]):
-                            with patch.object(scanner, "validate_tfs", return_value=["tf_1"]):
-                                with patch.object(scanner, "_scan_all_combinations", return_value=[peaks]):
-                                    with patch.object(scanner, "_save_peaks_results") as mock_save:
-                                        scanner.scan(self.sample_df)
-
-            self.assertTrue(output_dir.exists())
-            mock_save.assert_called_once()
-
-
 class TestDeepCISPeakScannerRepr(_PeakScannerTestBase):
     """Tests for DeepCISPeakScanner.__repr__."""
 
@@ -675,7 +640,6 @@ class TestDeepCISPeakScannerRepr(_PeakScannerTestBase):
             tfs=["tf_1"],
             signal_type="reference",
             output_dir="out",
-            save_results=False,
             annotator_window_size=123,
             annotator_step_size=10,
             annotator_threshold_peak=0.11,
@@ -687,7 +651,6 @@ class TestDeepCISPeakScannerRepr(_PeakScannerTestBase):
         self.assertIn("genes=['geneA']", rep)
         self.assertIn("tfs=['tf_1']", rep)
         self.assertIn("signal_type='reference'", rep)
-        self.assertIn("save_results=False", rep)
         self.assertIn("annotator_window_size=123", rep)
 
 
