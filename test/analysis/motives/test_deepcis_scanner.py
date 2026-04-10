@@ -834,7 +834,7 @@ class TestScanAllGenes(unittest.TestCase):
                 overwrite=True
             )
 
-            expected_output_path = os.path.join(tmpdir, f"deepcis_window_scan_test_comprehensive.csv")
+            expected_output_path = os.path.join(tmpdir, "deepcis_scan", f"deepcis_window_scan_test_comprehensive.csv")
             self.assertTrue(os.path.exists(expected_output_path), "Output CSV file should be created")
             loaded_df = pd.read_csv(expected_output_path)
             self.assertTrue(loaded_df.equals(result_df), "Saved CSV should match returned DataFrame")
