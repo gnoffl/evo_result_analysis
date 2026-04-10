@@ -265,7 +265,7 @@ class DeepCISPeakScanner:
             mismatches = signal_df.loc[signal_df["_merge"] != "both", ["window_start", "window_end", "_merge"]]
             raise ValueError(f"Reference and mutated windows do not perfectly match for gene {gene_df['gene'].iloc[0]} and TF {tf_name}. First mismatches:\n{mismatches.head(20).to_string(index=False)}")
 
-        signal_df["signal"] = abs(signal_df[f"{tf_name}_mut"] - signal_df[tf_name])
+        signal_df["signal"] = signal_df[f"{tf_name}_mut"] - signal_df[tf_name]
         signal_df = signal_df[["signal", "window_start", "window_end"]]
         signal_df = signal_df.rename(columns={"signal": tf_name})
         return signal_df
@@ -345,14 +345,14 @@ class DeepCISPeakScanner:
                 "gene",
                 "tf",
                 "signal_type",
+                "region_idx",
+                "peak_rank",
                 "peak_start",
                 "peak_end",
                 "peak_middle_start",
                 "peak_middle_end",
-                "score",
-                "region_idx",
-                "peak_rank",
                 "edge_peak",
+                "peak_area",
             ]
         ]
 
