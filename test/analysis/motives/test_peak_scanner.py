@@ -60,7 +60,7 @@ class TestDeepCISPeakScannerInit(_PeakScannerTestBase):
             genes=["geneA"],
             tfs=["tf_1"],
             signal_type="reference",
-            output_dir="custom_dir",
+            output_path="custom_dir/custom_file.end",
             annotator_window_size=100,
             annotator_step_size=10,
             annotator_threshold_peak=0.2,
@@ -70,6 +70,7 @@ class TestDeepCISPeakScannerInit(_PeakScannerTestBase):
         self.assertEqual(scanner.genes, ["geneA"])
         self.assertEqual(scanner.tfs, ["tf_1"])
         self.assertEqual(scanner.signal_type, "reference")
+        self.assertEqual(scanner.output_path, Path("custom_dir") / "custom_file.end")
         self.assertEqual(scanner.output_dir, Path("custom_dir"))
         self.assertEqual(scanner.annotator_window_size, 100)
         self.assertEqual(scanner.annotator_step_size, 10)
@@ -410,7 +411,7 @@ class TestSavePeaksResults(_PeakScannerTestBase):
                 mock_datetime.now.return_value.strftime.return_value = "20260101_010203"
                 scanner._save_peaks_results(result_df, Path("data/input.csv"))
 
-            expected_path = Path(tmpdir) / "input_reference_20260101_010203.csv"
+            expected_path = Path(tmpdir) / "input_annotated_peaks_reference_20260101_010203.csv"
             self.assertTrue(expected_path.exists())
             loaded = pd.read_csv(expected_path)
             self.assertEqual(len(loaded), 1)
@@ -426,7 +427,7 @@ class TestSavePeaksResults(_PeakScannerTestBase):
                 mock_datetime.now.return_value.strftime.return_value = "20260101_000000"
                 scanner._save_peaks_results(result_df, self.sample_df, signal_types=[ "reference", "difference"])
 
-            expected_path = Path(tmpdir) / "peaks_difference_reference_20260101_000000.csv"
+            expected_path = Path(tmpdir) / "annotated_peaks_difference_reference_20260101_000000.csv"
             self.assertTrue(expected_path.exists())
 
 
@@ -639,7 +640,7 @@ class TestDeepCISPeakScannerRepr(_PeakScannerTestBase):
             genes=["geneA"],
             tfs=["tf_1"],
             signal_type="reference",
-            output_dir="out",
+            output_path="out",
             annotator_window_size=123,
             annotator_step_size=10,
             annotator_threshold_peak=0.11,

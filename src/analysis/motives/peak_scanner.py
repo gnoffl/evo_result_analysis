@@ -35,7 +35,7 @@ class DeepCISPeakScanner:
         genes: List of genes to scan (None = all available).
         tfs: List of TFs to scan (None = all available).
         signal_type: Which signal to analyze: 'reference', 'mutated', or 'difference'.
-        output_dir: Directory to save results.
+        output_path: Full CSV file path to save results when explicitly set.
         save_results: Whether to save results to CSV.
 
     Example:
@@ -55,7 +55,7 @@ class DeepCISPeakScanner:
         genes: Optional[List[str]] = None,
         tfs: Optional[List[str]] = None,
         signal_type: str = "difference",
-        output_dir: Optional[Union[str, Path]] = None,
+        output_path: Optional[Union[str, Path]] = None,
         annotator_window_size: int = 250,
         annotator_step_size: Optional[int] = None,
         annotator_threshold_peak: float = 0.2,
@@ -68,7 +68,8 @@ class DeepCISPeakScanner:
             genes: Genes to include (default: all from data).
             tfs: TFs to include (default: all from data).
             signal_type: 'reference', 'mutated', or 'difference' (default).
-            output_dir: Directory to save results (default: data/peak_annotations/).
+            output_path: Full CSV file path to save results (default: generated
+                under data/peak_annotations/).
             save_results: Whether to save results (default: True).
             annotator_window_size: PeakAnnotator window size in bp.
             annotator_step_size: PeakAnnotator step size in bp. If None, inferred
@@ -89,7 +90,8 @@ class DeepCISPeakScanner:
         self.genes = genes
         self.tfs = tfs
         self.signal_type = signal_type
-        self.output_dir = Path(output_dir) if output_dir else Path("data") / "peak_annotations"
+        self.output_path = Path(output_path) if output_path else None
+        self.output_dir = self.output_path.parent if self.output_path else Path("data") / "peak_annotations"
         self.annotator_window_size = annotator_window_size
         self.annotator_step_size = annotator_step_size
         self.annotator_threshold_peak = annotator_threshold_peak
@@ -363,19 +365,30 @@ class DeepCISPeakScanner:
         result_df: pd.DataFrame,
         scanner_data: Union[pd.DataFrame, str, Path],
         signal_types: Optional[List[str]] = None,
+        output_path: Optional[Union[str, Path]] = None,
     ) -> None:
-        """Save peak detection results to timestamped CSV file.
+        """Save peak detection results to a CSV file.
 
         Args:
             result_df: DataFrame with detected peaks.
         """
-        if isinstance(scanner_data, (str, Path)):
-            base_name = Path(scanner_data).stem
+        if output_path is not None:
+            output_file = Path(output_path)
+            if output_file.suffix == "":
+                output_file = output_file.with_suffix(".csv")
         else:
-            base_name = "peaks"
-        signal_type_str = "_".join(sorted(signal_types)) if signal_types else self.signal_type
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = self.output_dir / f"{base_name}_{signal_type_str}_{timestamp}.csv"
+            if isinstance(scanner_data, (str, Path)):
+                base_name = Path(scanner_data).stem
+                base_name += "_annotated_peaks"
+            else:
+                base_name = "annotated_peaks"
+            output_dir = self.output_path.parent if self.output_path else self.output_dir
+            output_dir.mkdir(parents=True, exist_ok=True)
+            signal_type_str = "_".join(sorted(signal_types)) if signal_types else self.signal_type
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = output_dir / f"{base_name}_{signal_type_str}_{timestamp}.csv"
+
+        output_file.parent.mkdir(parents=True, exist_ok=True)
         result_df.to_csv(output_file, index=False)
         logger.info(f"Saved {len(result_df)} peaks to {output_file}")
     
@@ -486,7 +499,7 @@ class DeepCISPeakScanner:
         """String representation showing configuration."""
         return (
             f"DeepCISPeakScanner(genes={self.genes}, tfs={self.tfs}, "
-            f"signal_type='{self.signal_type}', output_dir={self.output_dir}, "
+            f"signal_type='{self.signal_type}', output_path={self.output_path}, "
             f"annotator_window_size={self.annotator_window_size}, "
             f"annotator_step_size={self.annotator_step_size}, "
             f"annotator_threshold_peak={self.annotator_threshold_peak}, "
@@ -494,7 +507,7 @@ class DeepCISPeakScanner:
             f"annotator_lambda_weight={self.annotator_lambda_weight})"
         )
 
-def run(scanner_data: Union[pd.DataFrame, str, Path], output_dir: Union[Path, str], genes: Optional[List[str]] = None,
+def run(scanner_data: Union[pd.DataFrame, str, Path], output_path: Union[Path, str], genes: Optional[List[str]] = None,
         tfs: Optional[List[str]] = None, signal_types: List[str] = ["difference"], window_size: int = 250, step_size: Optional[int] = None,
         threshold_peak: float = 0.2, sigma: float = 50.0, lambda_weight: float = 2.0,) -> pd.DataFrame:
     all_results: List[pd.DataFrame] = []
@@ -505,7 +518,7 @@ def run(scanner_data: Union[pd.DataFrame, str, Path], output_dir: Union[Path, st
             genes=_parse_list_arg(genes),
             tfs=_parse_list_arg(tfs),
             signal_type=cast(str, signal_type),
-            output_dir=output_dir,
+            output_path=output_path,
             annotator_window_size=window_size,
             annotator_step_size=step_size,
             annotator_threshold_peak=threshold_peak,
@@ -517,7 +530,7 @@ def run(scanner_data: Union[pd.DataFrame, str, Path], output_dir: Union[Path, st
         all_results.append(result_df)
         logger.info("Detected %s peaks for signal_type=%s", len(result_df), signal_type)
     all_peaks = pd.concat(all_results, ignore_index=True) if all_results else pd.DataFrame()
-    scanner._save_peaks_results(all_peaks, scanner_data, signal_types=signal_types)
+    scanner._save_peaks_results(all_peaks, scanner_data, signal_types=signal_types, output_path=output_path)
     return all_peaks
 
 
@@ -542,7 +555,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--signal-type", "-s", choices=["reference", "max_mutated", "difference", "all"], default="difference",
         help=( "Which signal to scan (default: difference). " "Use 'all' to run reference, max_mutated, and difference in one call."),
     )
-    parser.add_argument( "--output-dir", "-o", default="", help="Output directory for results (default: next to input file).",)
+    parser.add_argument( "--output-path", "-o", default="", help="Full output CSV path for results (default: next to input file with annotated_peaks in the name).",)
 
     parser.add_argument( "--annotator-window-size", type=int, default=250, help="PeakAnnotator window size in bp (default: 250).",)
     parser.add_argument( "--annotator-step-size", type=int, default=None, help=( "PeakAnnotator step size in bp. If omitted, inferred from window_start for each gene/TF signal."),)
@@ -558,7 +571,7 @@ def main() -> None:
     """Run peak scanning from the command line."""
     parser = _build_parser()
     args = parser.parse_args()
-    args.output_dir = Path(args.output_dir) if args.output_dir else Path(args.scanner_data).parent / "peak_annotations"
+    args.output_path = Path(args.output_path) if args.output_path else None
 
     logging.basicConfig(
         level=getattr(logging, args.log_level),
@@ -566,9 +579,15 @@ def main() -> None:
     )
 
     signal_types = ["reference", "max_mutated", "difference"] if args.signal_type == "all" else [args.signal_type]
+    if args.output_path is None:
+        base_name = Path(args.scanner_data).stem
+        signal_type_str = "_".join(sorted(signal_types))
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        args.output_path = Path(args.scanner_data).parent / "peak_annotations" / f"{base_name}_annotated_peaks_{signal_type_str}_{timestamp}.csv"
+
     all_peaks = run(
         scanner_data=args.scanner_data,
-        output_dir=args.output_dir,
+        output_path=args.output_path,
         genes=args.genes,
         tfs=args.tfs,
         signal_types=signal_types,

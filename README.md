@@ -18,6 +18,14 @@ Import modules from the package in your Python code:
 from evo_result_analysis.analysis import analyze_mapping
 ```
 
+To visualize a random subset of compatible genes and TFs, use:
+
+```bash
+python -m analysis.motives.deepcis_visualize \
+  --input data/deepcis_window_scan_results.csv \
+  --random-subset
+```
+
 ## Project Structure
 
 - `src/analysis/` — Analysis modules
