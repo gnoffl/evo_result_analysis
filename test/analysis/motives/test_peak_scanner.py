@@ -237,8 +237,23 @@ class TestComputeDifferenceSignal(_PeakScannerTestBase):
         if result is None:
             raise AssertionError("Expected non-None result")
         self.assertEqual(list(result.columns), ["tf_1", "window_start", "window_end"])
-        self.assertAlmostEqual(result["tf_1"].tolist()[0], 0.05)
-        self.assertAlmostEqual(result["tf_1"].tolist()[1], 0.15)
+        self.assertAlmostEqual(result["tf_1"].tolist()[0], -0.05)
+        self.assertAlmostEqual(result["tf_1"].tolist()[1], -0.15)
+    
+    def test_compute_difference_signal_negative_values(self):
+        scanner = DeepCISPeakScanner(signal_type="difference")
+        gene_a_df: pd.DataFrame = self.sample_df[self.sample_df["gene"] == "geneA"] #type: ignore
+        gene_a_df.iloc[2, gene_a_df.columns.get_loc("tf_1")] = -0.1
+        gene_a_df.iloc[3, gene_a_df.columns.get_loc("tf_1")] = -0.2
+
+        result = scanner._compute_difference_signal(gene_a_df, "tf_1")
+
+        self.assertIsNotNone(result)
+        if result is None:
+            raise AssertionError("Expected non-None result")
+        self.assertEqual(list(result.columns), ["tf_1", "window_start", "window_end"])
+        self.assertAlmostEqual(result["tf_1"].tolist()[0], -0.2)
+        self.assertAlmostEqual(result["tf_1"].tolist()[1], -0.4)
 
     def test_compute_difference_signal_mismatched_windows_raises(self):
         scanner = DeepCISPeakScanner(signal_type="difference")
@@ -331,7 +346,7 @@ class TestDetectPeaksForGeneTf(_PeakScannerTestBase):
                 "peak_end": [30],
                 "peak_middle_start": [15],
                 "peak_middle_end": [25],
-                "score": [0.75],
+                "peak_area": [0.75],
                 "region_idx": [0],
                 "peak_rank": [0],
                 "edge_peak": [True],
@@ -350,14 +365,14 @@ class TestDetectPeaksForGeneTf(_PeakScannerTestBase):
             raise AssertionError("Expected non-None result")
         self.assertEqual(
             set(result.columns),
-            {"gene", "tf", "signal_type", "peak_start", "peak_end", "score", "region_idx", "peak_rank", "edge_peak", "peak_middle_start", "peak_middle_end"},
+            {"gene", "tf", "signal_type", "peak_start", "peak_end", "peak_area", "region_idx", "peak_rank", "edge_peak", "peak_middle_start", "peak_middle_end"},
         )
         self.assertEqual(result.iloc[0]["gene"], "geneA")
         self.assertEqual(result.iloc[0]["tf"], "tf_1")
         self.assertEqual(result.iloc[0]["signal_type"], "difference")
         self.assertEqual(result.iloc[0]["peak_start"], 10)
         self.assertEqual(result.iloc[0]["peak_end"], 30)
-        self.assertEqual(result.iloc[0]["score"], 0.75)
+        self.assertEqual(result.iloc[0]["peak_area"], 0.75)
         self.assertEqual(result.iloc[0]["region_idx"], 0)
         self.assertEqual(result.iloc[0]["peak_rank"], 0)
         self.assertEqual(result.iloc[0]["edge_peak"], True)
@@ -377,7 +392,7 @@ class TestDetectPeaksForGeneTf(_PeakScannerTestBase):
         scanner = DeepCISPeakScanner()
         with patch("analysis.motives.peak_scanner.PeakAnnotator") as mock_annotator_cls:
             mock_annotator = MagicMock()
-            mock_annotator.detect_peaks.return_value = pd.DataFrame(columns=["peak_start", "peak_end", "score", "region_idx", "peak_rank", "edge_peak", "peak_middle_start", "peak_middle_end"])
+            mock_annotator.detect_peaks.return_value = pd.DataFrame(columns=["peak_start", "peak_end", "peak_area", "region_idx", "peak_rank", "edge_peak", "peak_middle_start", "peak_middle_end"])
             mock_annotator_cls.return_value = mock_annotator
 
             result = scanner._detect_peaks_for_gene_tf(self.signal_df, "geneA", "tf_1")
@@ -549,9 +564,6 @@ class TestScan(_PeakScannerTestBase):
             sigma=10.0,
             lambda_weight=0.5,
         )
-        cum_sum = annotator._get_cumsum_signal(expected_signal_df["signal"].to_numpy(dtype=np.float64))
-        deriv = annotator._calculate_smooth_derivative(expected_signal_df["signal"].to_numpy(dtype=np.float64))
-        _, _, mass_norm_term, deriv_norm_term = annotator._find_multi_peak_edges(0, 5, deriv=deriv, signal_cum_sum=cum_sum)
 
         expected = pd.DataFrame([{
             "gene": "geneA",
@@ -561,14 +573,14 @@ class TestScan(_PeakScannerTestBase):
             "peak_end": 49,
             "peak_middle_start": 30,
             "peak_middle_end": 40,
-            "score": annotator._calculate_peak_score(2, 5, deriv=deriv, mass_norm_term=mass_norm_term, deriv_norm_term=deriv_norm_term, reduced_mass_score=annotator._calculate_reduced_mass_score(l=2, r=5, signal_cum_sum=cum_sum)),
+            "peak_area": 3.0,
             "region_idx": 0,
             "peak_rank": 0,
             "edge_peak": True,
         }])
 
         self.assertFalse(result.empty)
-        pd.testing.assert_frame_equal(result.reset_index(drop=True), expected)
+        pd.testing.assert_frame_equal(result, expected, check_like=True)
 
     def test_scan_returns_concatenated_results(self):
         scanner = DeepCISPeakScanner()
@@ -579,7 +591,7 @@ class TestScan(_PeakScannerTestBase):
                 "signal_type": ["difference"],
                 "peak_start": [0],
                 "peak_end": [20],
-                "score": [0.8],
+                "peak_area": [0.8],
                 "region_idx": [0],
                 "peak_rank": [1],
             }
@@ -591,7 +603,7 @@ class TestScan(_PeakScannerTestBase):
                 "signal_type": ["difference"],
                 "peak_start": [10],
                 "peak_end": [30],
-                "score": [0.9],
+                "peak_area": [0.9],
                 "region_idx": [0],
                 "peak_rank": [1],
             }
