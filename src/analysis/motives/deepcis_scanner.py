@@ -413,7 +413,7 @@ def scan_all_genes(
           (useful for downstream :func:`annotate_mutations_in_windows`).
     """
     run_name = name or os.path.basename(run_folder.rstrip(os.sep))
-    csv_path = os.path.join(output_path, f"deepcis_window_scan_{run_name}.csv")
+    csv_path = os.path.join(output_path, "deepcis_scan", f"deepcis_window_scan_{run_name}.csv")
 
     if os.path.exists(csv_path) and not overwrite:
         print_status(f"Output already exists: {csv_path}", "WARNING")
@@ -427,7 +427,7 @@ def scan_all_genes(
             f"No valid gene folders found in {run_folder}."
         )
 
-    os.makedirs(output_path, exist_ok=True)
+    os.makedirs(os.path.join(output_path, "deepcis_scan"), exist_ok=True)
     model = load_deepcis_model(model_path)
 
     all_frames: List[pd.DataFrame] = []
