@@ -358,7 +358,9 @@ class PeakAnnotator:
                 if r <= l:
                     continue
                 mass_term = signal_cum_sum[r] - signal_cum_sum[l]
-                mass_contributions[i, j] = mass_term
+                abs_mass = abs(mass_term)
+                mass_term_reduced = abs_mass - (r - l) * self.threshold_peak
+                mass_contributions[i, j] = mass_term_reduced
 
         return mass_contributions
     
@@ -423,7 +425,7 @@ class PeakAnnotator:
 
         # flank calculation
         # (a-b) / norm = (a / norm) - (b / norm) --> first diff, then norm
-        flank_delta = deriv[peak_end_idx] - deriv[peak_start_idx]
+        flank_delta = deriv[peak_start_idx] - deriv[peak_end_idx]
         flank_delta_norm = flank_delta / deriv_norm_term
         # -(a - b) = b - a --> determine whats subtracted from what here
         flank_term = flank_delta_norm if mass_term > 0 else -flank_delta_norm
