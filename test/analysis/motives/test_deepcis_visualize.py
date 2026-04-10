@@ -16,6 +16,7 @@ from analysis.motives.deepcis_visualize import (
     load_scan_results,
     load_peak_results,
     _get_padding_regions,
+    _get_padding_edge_positions,
     _get_peak_background_regions,
     _get_peak_background_regions_from_peaks,
     _validate_and_set_defaults,
@@ -334,6 +335,31 @@ class TestGetPaddingRegions(unittest.TestCase):
         regions = _get_padding_regions(df)
         # Should be sorted: (0, 250) before (100, 350)
         self.assertEqual(regions, [(0, 250), (100, 350)])
+
+    def test_get_padding_edge_positions_uses_window_centers(self):
+        """Padding markers should be centered on first and last padded windows."""
+        edges = _get_padding_edge_positions(self.sample_scan_data)
+        self.assertEqual(edges, [175.5])
+
+    def test_get_padding_edge_positions_multiple_windows(self):
+        data = pd.DataFrame(
+            {
+                "gene": ["gene1", "gene1", "gene1", "gene1"],
+                "sequence_type": ["reference", "reference", "max_mutated", "max_mutated"],
+                "window_start": [0, 50, 0, 50],
+                "window_end": [250, 300, 250, 300],
+                "contains_padding": [True, True, False, False],
+                "tf_0": [0.1, 0.2, 0.3, 0.4],
+            }
+        )
+        edges = _get_padding_edge_positions(data)
+        self.assertEqual(edges, [125.5, 175.5])
+
+    def test_get_padding_edge_positions_empty(self):
+        data = self.sample_scan_data.copy()
+        data["contains_padding"] = False
+        edges = _get_padding_edge_positions(data)
+        self.assertEqual(edges, [])
 
 
 class TestPeakBackgroundRegions(unittest.TestCase):
@@ -825,6 +851,9 @@ class TestParseArguments(unittest.TestCase):
             args = parse_arguments(["--input", input_path])
 
             self.assertTrue(args.highlight_padding)
+            self.assertTrue(args.show_tss_tts)
+            self.assertEqual(args.tss_position, 1000.0)
+            self.assertEqual(args.tts_position, 2020.0)
             self.assertTrue(args.highlight_peaks)
             self.assertIsNone(args.peak_signals)
 
@@ -853,8 +882,37 @@ class TestParseArguments(unittest.TestCase):
             ])
 
             self.assertFalse(args.highlight_padding)
+            self.assertTrue(args.show_tss_tts)
             self.assertFalse(args.highlight_peaks)
             self.assertEqual(args.peak_signals, ["reference", "difference"])
+
+    def test_parse_arguments_tss_tts_flags(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = os.path.join(tmpdir, "scan.csv")
+            pd.DataFrame(
+                {
+                    "gene": ["gene1"],
+                    "sequence_type": ["reference"],
+                    "window_start": [0],
+                    "window_end": [250],
+                    "contains_padding": [False],
+                    "tf_0": [0.1],
+                }
+            ).to_csv(input_path, index=False)
+
+            args = parse_arguments([
+                "--input",
+                input_path,
+                "--no-show-tss-tts",
+                "--tss-position",
+                "900",
+                "--tts-position",
+                "2100",
+            ])
+
+            self.assertFalse(args.show_tss_tts)
+            self.assertEqual(args.tss_position, 900.0)
+            self.assertEqual(args.tts_position, 2100.0)
 
     def test_parse_arguments_random_subset(self):
         with tempfile.TemporaryDirectory() as tmpdir:

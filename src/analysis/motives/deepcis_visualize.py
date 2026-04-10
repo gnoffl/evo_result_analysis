@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from tqdm import tqdm
 
 from analysis.utils.io import print_status
@@ -16,9 +17,9 @@ from analysis.utils.io import print_status
 PEAK_SIGNAL_TYPES = ("reference", "max_mutated", "difference")
 DIFFERENCE_DIRECTIONS = ("max_mutated_minus_reference", "reference_minus_max_mutated")
 PEAK_BACKGROUND_COLORS = {
-    "reference": "#9e9e9e",
-    "max_mutated": "#1f77b4",
-    "difference": "#ffcccc",
+    "reference": "#999999",
+    "max_mutated": "#9999ff",
+    "difference": "#ff9999",
 }
 
 PEAK_REQUIRED_COLUMNS = {
@@ -261,6 +262,46 @@ def _add_padding_background(ax: plt.Axes, padding_regions: List[Tuple[float, flo
         ax.axvspan(start, end, alpha=0.2, color="grey", zorder=0)
 
 
+def _get_padding_edge_positions(df_subset: pd.DataFrame) -> List[float]:
+    """Return center positions for first/last windows containing padding."""
+    padding_regions = _get_padding_regions(df_subset)
+    if not padding_regions:
+        return []
+
+    centers = sorted({(start + end + 1.0) / 2.0 for start, end in padding_regions})
+    if len(centers) == 1:
+        return [centers[0]]
+    return [centers[0], centers[-1]]
+
+
+def _add_vertical_markers(
+    ax: plt.Axes,
+    markers: List[Tuple[float, str]],
+    color: str,
+    linestyle: str,
+    linewidth: float,
+) -> bool:
+    """Draw vertical markers and hide them from the automatic legend."""
+    marker_drawn = False
+    for x_pos, marker_name in markers:
+        ax.axvline(
+            x=x_pos,
+            color=color,
+            linestyle=linestyle,
+            linewidth=linewidth,
+            alpha=0.9,
+            zorder=1,
+            label="_nolegend_",
+        )
+        marker_drawn = True
+    return marker_drawn
+
+
+def _create_legend_proxy(label: str, color: str, linestyle: str, linewidth: float) -> Line2D:
+    """Create a proxy artist for custom legend entries."""
+    return Line2D([0], [0], color=color, linestyle=linestyle, linewidth=linewidth, label=label)
+
+
 def _merge_intervals(regions: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
     """Merge overlapping or touching intervals."""
     if not regions:
@@ -384,6 +425,8 @@ def _set_axis_properties(
     tf_col: str,
     include_title: bool,
     show_difference: bool,
+    show_padding_marker: bool,
+    show_tss_tts_marker: bool,
 ) -> None:
     """Set axis limits, labels, title, and formatting.
 
@@ -415,7 +458,24 @@ def _set_axis_properties(
         ax.set_title(f"{gene} - {tf_name}")
 
     # Additional formatting
-    ax.legend(loc="best")
+    line_handles, line_labels = ax.get_legend_handles_labels()
+    ordered_handles = []
+    ordered_labels = []
+    for handle, label in zip(line_handles, line_labels):
+        if label and not label.startswith("_"):
+            ordered_handles.append(handle)
+            ordered_labels.append(label)
+
+    if show_padding_marker:
+        ordered_handles.append(_create_legend_proxy("Area containing Padding", "#7a7a7a", ":", 1.8))
+        ordered_labels.append("Area containing Padding")
+
+    if show_tss_tts_marker:
+        ordered_handles.append(_create_legend_proxy("TSS/TTS", "#2f4f4f", "--", 1.4))
+        ordered_labels.append("TSS/TTS")
+
+    if ordered_handles:
+        ax.legend(ordered_handles, ordered_labels, loc="best")
     ax.grid(True, alpha=0.3)
 
 
@@ -425,7 +485,10 @@ def _plot_gene_tf(
     tf_col: str,
     ax: plt.Axes,
     include_title: bool = True,
-    highlight_padding: bool = True,
+    highlight_padding: bool = False,
+    show_tss_tts: bool = True,
+    tss_position: float = 1000.0,
+    tts_position: float = 2020.0,
     highlight_peaks: bool = False,
     peak_signal_types: Optional[List[str]] = None,
     peak_df: Optional[pd.DataFrame] = None,
@@ -449,9 +512,31 @@ def _plot_gene_tf(
     )
 
     # Add optional background highlights before the lines.
+    show_padding_marker = False
     if highlight_padding:
-        padding_regions = _get_padding_regions(df_subset)
-        _add_padding_background(ax, padding_regions)
+        padding_edges = _get_padding_edge_positions(df_subset)
+        padding_markers: List[Tuple[float, str]] = []
+        if len(padding_edges) >= 1:
+            padding_markers.append((padding_edges[0], "Padding Start"))
+        if len(padding_edges) >= 2:
+            padding_markers.append((padding_edges[1], "Padding End"))
+        show_padding_marker = _add_vertical_markers(
+            ax,
+            padding_markers,
+            color="#7a7a7a",
+            linestyle=":",
+            linewidth=1.8,
+        )
+
+    show_tss_tts_marker = False
+    if show_tss_tts:
+        show_tss_tts_marker = _add_vertical_markers(
+            ax,
+            [(tss_position, "TSS"), (tts_position, "TTS")],
+            color="#2f4f4f",
+            linestyle="--",
+            linewidth=1.4,
+        )
 
     if highlight_peaks:
         if peak_df is not None:
@@ -488,6 +573,8 @@ def _plot_gene_tf(
         tf_col,
         include_title,
         show_difference,
+        show_padding_marker,
+        show_tss_tts_marker,
     )
 
 
@@ -567,6 +654,9 @@ def _process_gene_tf(
     output_format: str,
     include_title: bool,
     highlight_padding: bool,
+    show_tss_tts: bool,
+    tss_position: float,
+    tts_position: float,
     highlight_peaks: bool,
     peak_signal_types: Optional[List[str]],
     peak_df: Optional[pd.DataFrame],
@@ -604,6 +694,9 @@ def _process_gene_tf(
             ax,
             include_title=include_title,
             highlight_padding=highlight_padding,
+            show_tss_tts=show_tss_tts,
+            tss_position=tss_position,
+            tts_position=tts_position,
             highlight_peaks=highlight_peaks,
             peak_signal_types=peak_signal_types,
             peak_df=peak_df,
@@ -691,6 +784,9 @@ def visualize_scan_results(
     output_format: str = "png",
     include_title: bool = True,
     highlight_padding: bool = True,
+    show_tss_tts: bool = True,
+    tss_position: float = 1000.0,
+    tts_position: float = 2020.0,
     highlight_peaks: bool = False,
     peak_signal_types: Optional[List[str]] = None,
     show_difference: bool = True,
@@ -713,6 +809,10 @@ def visualize_scan_results(
             next to the input file (for file input) or current working directory (for DataFrame input).
         output_format: File format for saving plots. Default: "png".
         include_title: Whether to include titles in plots. Default: True.
+        highlight_padding: Whether to mark padding boundaries. Default: True.
+        show_tss_tts: Whether to show TSS/TTS vertical marker lines. Default: True.
+        tss_position: X-coordinate for TSS marker. Default: 1000.
+        tts_position: X-coordinate for TTS marker. Default: 2020.
         show_difference: Whether to display the difference line. Default: True.
         difference_direction: Direction of difference line computation.
         random_subset: If True, sample up to 3 genes and 3 TFs from the
@@ -768,6 +868,9 @@ def visualize_scan_results(
                         output_format,
                         include_title,
                         highlight_padding,
+                        show_tss_tts,
+                        tss_position,
+                        tts_position,
                         highlight_peaks,
                         [signal_type],
                         peak_df,
@@ -785,6 +888,9 @@ def visualize_scan_results(
                     output_format,
                     include_title,
                     highlight_padding,
+                    show_tss_tts,
+                    tss_position,
+                    tts_position,
                     highlight_peaks,
                     resolved_peak_signal_types,
                     peak_df,
@@ -836,6 +942,12 @@ Examples:
     --output plots \\
     --no-title
 
+    # Place TSS/TTS markers at custom coordinates
+    python -m analysis.motives.deepcis_visualize \
+        --input data/deepcis_window_scan_results.csv \
+        --tss-position 1000 \
+        --tts-position 2020
+
     # Plot a random subset of compatible genes and TFs
     python -m analysis.motives.deepcis_visualize \
         --input data/deepcis_window_scan_results.csv \
@@ -867,8 +979,15 @@ Examples:
     parser.add_argument("--no-title", action="store_true", help="Do not include titles in plots",)
 
     padding_group = parser.add_mutually_exclusive_group()
-    padding_group.add_argument("--highlight-padding", dest="highlight_padding", action="store_true", help="Highlight padded windows in the background (default).",)
-    padding_group.add_argument("--no-highlight-padding", dest="highlight_padding", action="store_false", help="Do not highlight padded windows in the background.",)
+    padding_group.add_argument("--highlight-padding", dest="highlight_padding", action="store_true", help="Show vertical boundary markers for windows affected by padding.",)
+    padding_group.add_argument("--no-highlight-padding", dest="highlight_padding", action="store_false", help="Hide vertical boundary markers for windows affected by padding.",)
+
+    tss_tts_group = parser.add_mutually_exclusive_group()
+    tss_tts_group.add_argument("--show-tss-tts", dest="show_tss_tts", action="store_true", help="Show vertical lines for TSS and TTS markers (default).",)
+    tss_tts_group.add_argument("--no-show-tss-tts", dest="show_tss_tts", action="store_false", help="Hide vertical lines for TSS and TTS markers.",)
+
+    parser.add_argument("--tss-position", type=float, default=1000.0, metavar="BP", help="X-coordinate for TSS marker (default: 1000)",)
+    parser.add_argument("--tts-position", type=float, default=2020.0, metavar="BP", help="X-coordinate for TTS marker (default: 2020)",)
 
     peak_group = parser.add_mutually_exclusive_group()
     peak_group.add_argument( "--highlight-peaks", dest="highlight_peaks", action="store_true", help="Highlight annotated peak windows in the background.",)
@@ -909,7 +1028,7 @@ Examples:
         ),
     )
 
-    parser.set_defaults(highlight_padding=True, highlight_peaks=True, show_difference=True)
+    parser.set_defaults(highlight_padding=True, show_tss_tts=True, highlight_peaks=True, show_difference=True)
 
     # Parse
     parsed_args = parser.parse_args(args)
@@ -940,6 +1059,9 @@ def run_visualization(args):
             output_format=args.format,
             include_title=not args.no_title,
             highlight_padding=args.highlight_padding,
+            show_tss_tts=args.show_tss_tts,
+            tss_position=args.tss_position,
+            tts_position=args.tts_position,
             highlight_peaks=args.highlight_peaks,
             peak_signal_types=args.peak_signals,
             show_difference=args.show_difference,
