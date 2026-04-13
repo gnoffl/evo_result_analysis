@@ -528,7 +528,7 @@ class TestScan(_PeakScannerTestBase):
     """Tests for DeepCISPeakScanner.scan."""
 
     def test_scan_end_to_end_without_patching_detects_expected_peak(self):
-        signal = [0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        signal = [0.0, 0.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, 0.0, 0.0]
         window_start = np.arange(0, len(signal) * 10, 10)
         window_end = window_start + 30
 
@@ -548,36 +548,26 @@ class TestScan(_PeakScannerTestBase):
             tfs=["tf_1"],
             signal_type="difference",
             annotator_window_size=30,
-            annotator_threshold_peak=0.2,
+            annotator_threshold_peak=0.4,
             annotator_sigma=10.0,
-            annotator_lambda_weight=0.5,
+            annotator_lambda_weight=1,
         )
 
         result = scanner.scan(scanner_df)
-        expected_signal_df = pd.DataFrame({"signal": signal, "window_start": window_start, "window_end": window_end})
 
-        annotator = PeakAnnotator(
-            df=expected_signal_df,
-            window_size=30,
-            step_size=None,
-            threshold_peak=0.2,
-            sigma=10.0,
-            lambda_weight=0.5,
-        )
-
-        expected = pd.DataFrame([{
-            "gene": "geneA",
-            "tf": "tf_1",
-            "signal_type": "difference",
-            "peak_start": 20,
-            "peak_end": 49,
-            "peak_middle_start": 30,
-            "peak_middle_end": 40,
-            "peak_area": 3.0,
-            "region_idx": 0,
-            "peak_rank": 0,
-            "edge_peak": True,
-        }])
+        expected = pd.DataFrame({
+            "gene": ["geneA", "geneA"],
+            "tf": ["tf_1", "tf_1"],
+            "signal_type": ["difference", "difference"],
+            "peak_start": [20, 50],
+            "peak_end": [49, 79],
+            "peak_middle_start": [30, 60],
+            "peak_middle_end": [40, 70],
+            "peak_area": [3.0, -3.0],
+            "region_idx": [0, 1],
+            "peak_rank": [0, 0],
+            "edge_peak": [True, True],
+        })
 
         self.assertFalse(result.empty)
         pd.testing.assert_frame_equal(result, expected, check_like=True)
