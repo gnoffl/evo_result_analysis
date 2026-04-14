@@ -382,7 +382,11 @@ def show_average_pareto_front(results_folder: str, output_format: str, output_fo
             pareto_front = json.load(f)
         
         full_front = expand_pareto_front(pareto_front, max_number_mutation=max_number_mutation)
-        normalized = normalize_front(full_front)
+        try:
+            normalized = normalize_front(full_front)
+        except ValueError as e:
+            print(f"Error normalizing pareto front for gene {gene}: {e}")
+            continue
         
         fitnesses = [item[1] for item in normalized]
         num_mutations = [item[2] for item in normalized]
