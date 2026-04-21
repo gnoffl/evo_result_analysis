@@ -1,4 +1,5 @@
 """Visualization tools for deepCIS scanning results."""
+import json
 import traceback
 import argparse
 import os
@@ -606,13 +607,13 @@ def _validate_and_set_defaults(
     available_genes = set(df["gene"].unique())
     for gene in genes:
         if gene not in available_genes:
-            raise ValueError(f"Gene '{gene}' not found in data. Available genes: {available_genes}")
+            raise ValueError(f"Gene '{gene}' not found in data.") # Available genes: {json.dumps(sorted(list(available_genes)), indent=2)}")
 
     # Validate TFs exist
     available_tfs = set(get_tf_columns(df))
     for tf in tfs:
         if tf not in available_tfs:
-            raise ValueError(f"TF column '{tf}' not found in data. Available TFs: {available_tfs}")
+            raise ValueError(f"TF column '{tf}' not found in data. Available TFs: {json.dumps(sorted(list(available_tfs)), indent=2)}")
 
     return genes, tfs
 
