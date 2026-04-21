@@ -277,8 +277,8 @@ def analyze_wrky_peak_overlaps(
             result_row["matched_peak_score"] = float(best_overlap[PEAK_SCORE_COLUMN])
             result_row["matched_peak_tf"] = str(best_overlap[PEAK_TF_COLUMN])
         
-        else:
-            print(gene_id, end=" ")
+        # else:
+        #     print(gene_id, end=" ")
 
         results.append(result_row)
 
