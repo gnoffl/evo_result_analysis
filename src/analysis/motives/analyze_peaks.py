@@ -9,10 +9,12 @@ and compared against WRKY peaks for that gene.
 import json
 from argparse import ArgumentParser
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+
+from analysis.utils.io import print_status
 
 
 PEAK_GENE_COLUMN = "gene"
@@ -21,6 +23,28 @@ PEAK_START_COLUMN = "peak_start"
 PEAK_END_COLUMN = "peak_end"
 PEAK_SCORE_COLUMN = "peak_area"
 PARAMETERS_FILE_NAME = "parameters.json"
+
+
+def _format_analysis_parameters(parameters: Dict[str, object]) -> str:
+    """Format analysis parameters for concise status logging."""
+    return ", ".join(f"{key}={value}" for key, value in parameters.items())
+
+
+def _run_logged_analysis(
+    analysis_name: str,
+    parameters: Dict[str, object],
+    action: Callable[[], Any],
+) -> Any:
+    """Run an analysis step with start, success, and failure status output."""
+    print_status(f"Starting {analysis_name} with parameters: {_format_analysis_parameters(parameters)}", "INFO")
+    try:
+        result = action()
+    except Exception as exc:
+        print_status(f"{analysis_name} failed: {exc}", "ERROR")
+        raise
+
+    print_status(f"{analysis_name} succeeded", "SUCCESS")
+    return result
 
 
 def _load_peaks(peaks_path: str, excluded_genes_path: Optional[str] = None) -> pd.DataFrame:
@@ -413,28 +437,64 @@ def main(argv: Optional[list] = None) -> None:
 
     run_overlap = args.all or args.expected_overlap
     run_summary = args.all or args.summarize_peaks
+
+    print_status(
+        "Selected analyses: "
+        f"overlap={run_overlap}, "
+        f"summary={run_summary}",
+        "INFO",
+    )
+
     if not (run_overlap or run_summary):
-        print("No analyses selected. Use --analyze_expected_overlap and/or --summarize-peaks to run analyses, or --all to run all analyses.")
+        print_status(
+            "No analyses selected. Use --expected_overlap and/or --summarize-peaks to run analyses, or --all to run all analyses.",
+            "WARNING",
+        )
         return
     
     peaks = _load_peaks(args.annotated_peak_file, args.excluded_genes_file)
+    expected_peak_locations = pd.DataFrame()
     
     if run_overlap:
-        result, expected_peak_locations = analyze_wrky_peak_overlaps(
-            peaks=peaks,
-            run_directory=args.run_directory,
-            peak_type=args.peak_type,
-            output_folder=output_folder
+        overlap_parameters = {
+            "annotated_peak_file": args.annotated_peak_file,
+            "run_directory": args.run_directory,
+            "excluded_genes_file": args.excluded_genes_file,
+            "peak_type": args.peak_type,
+            "output_folder": output_folder,
+        }
+        _, expected_peak_locations = _run_logged_analysis(
+            "WRKY overlap analysis",
+            overlap_parameters,
+            lambda: analyze_wrky_peak_overlaps(
+                peaks=peaks,
+                run_directory=args.run_directory,
+                peak_type=args.peak_type,
+                output_folder=output_folder,
+            ),
         )
 
     if run_summary:
-        if args.only_overlapping or args.expected_peak_locations:
-            if args.expected_peak_locations is not None:
-                expected_peak_locations = pd.read_csv(args.expected_peak_locations)
-            if args.only_overlapping and expected_peak_locations not in locals():
-                raise ValueError("Expected peak locations file must be provided with --expected-peak-locations when using --only_overlapping or by running the overlap analysis.")
-        expected_peak_locations = expected_peak_locations if 'expected_peak_locations' in locals() else pd.DataFrame()
-        summarize_peaks(peaks, output_folder, expected_peak_locations)
+        summary_expected_peak_locations = expected_peak_locations
+        if args.expected_peak_locations is not None:
+            summary_expected_peak_locations = pd.read_csv(args.expected_peak_locations)
+        elif args.only_overlapping and not run_overlap:
+            raise ValueError(
+                "Expected peak locations file must be provided with --expected-peak-locations when using --only_overlapping without running the overlap analysis."
+            )
+
+        summary_parameters = {
+            "annotated_peak_file": args.annotated_peak_file,
+            "output_folder": output_folder,
+            "expected_peak_locations": args.expected_peak_locations if args.expected_peak_locations is not None else ("<from overlap analysis>" if run_overlap else None),
+            "only_overlapping": args.only_overlapping,
+            "peak_type": args.peak_type,
+        }
+        _run_logged_analysis(
+            "peak summary analysis",
+            summary_parameters,
+            lambda: summarize_peaks(peaks, output_folder, summary_expected_peak_locations),
+        )
 
 
 if __name__ == "__main__":
