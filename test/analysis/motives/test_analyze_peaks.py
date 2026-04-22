@@ -300,14 +300,32 @@ class TestPeakSummarizationMode(AnalyzePeaksIntegrationBase):
 
     def test_summarization_with_expected_peak_locations(self):
         """Test summarization that filters peaks to only those overlapping expected regions."""
-        peaks_df = self._create_simple_peaks_df()
+        peaks_df = pd.DataFrame(
+            {
+                "gene": [
+                    "AT1G01_01", "AT1G01_01", "AT1G01_01", "AT1G01_01",
+                    "AT2G02_02", "AT2G02_02",
+                ],
+                "tf": [
+                    "WRKY40", "WRKY40", "bHLH74", "bHLH74",
+                    "WRKY40", "WRKY40",
+                ],
+                "peak_start": [100, 150, 200, 210, 350, 400],
+                "peak_end": [120, 170, 220, 230, 370, 420],
+                "peak_area": [0.5, 0.3, 0.7, 0.6, -0.4, 0.2],
+                "signal_type": [
+                    "reference", "difference", "max_mutated", "difference",
+                    "reference", "difference",
+                ],
+            }
+        )
 
         # Expected peak locations (mapping) - only genes with AT1G01 prefix
         expected_locations = pd.DataFrame(
             {
                 "gene_name": ["01"],
-                "target_start": [100],
-                "target_end": [180],
+                "target_start": [240],
+                "target_end": [340],
             }
         )
 
@@ -320,9 +338,10 @@ class TestPeakSummarizationMode(AnalyzePeaksIntegrationBase):
             # Should only include peaks from AT1G01_01 that overlap 100-200
             # AT1G01_01 has peaks: 100-120 (overlaps), 150-170 (overlaps)
             # AT2G02_02 should be completely filtered out
-            self.assertEqual(len(summary), 2)  # Only AT1G01_01 peaks should remain: reference and diff_added
-            self.assertEqual(summary["signal_type"].tolist(), ["diff_added", "reference"])  # Only AT1G01_01 peaks should remain: reference and diff_added
-            self.assertEqual(summary["peak_count"].tolist(), [1, 1])  # Both peaks from AT1G01_01 should be counted
+            self.assertEqual(len(summary), 4)  # Only AT1G01_01 peaks should remain: reference and diff_added
+            self.assertEqual(summary["tf"].tolist(), ["bHLH74", "bHLH74", "WRKY40", "WRKY40"])  # Only WRKY40 peaks should remain
+            self.assertEqual(summary["signal_type"].tolist(), ["diff_added", "max_mutated", "diff_added", "max_mutated"])  # Only AT1G01_01 peaks should remain: reference and diff_added
+            self.assertEqual(summary["peak_count"].tolist(), [0, 1, 1, 0])  # Both peaks from AT1G01_01 should be counted
             assert (output_dir / "peak_summary.csv").exists()
 
             # Read the summary to verify it was filtered

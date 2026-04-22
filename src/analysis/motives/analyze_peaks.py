@@ -332,20 +332,19 @@ def add_zeros(summary: pd.DataFrame) -> pd.DataFrame:
     )
     return summary
 
-def filter_overlapping_peaks(peaks_df: pd.DataFrame, mapping: pd.DataFrame) -> pd.DataFrame:
+def filter_overlapping_peaks(peaks_df: pd.DataFrame, expected_peak_locations: pd.DataFrame) -> pd.DataFrame:
     """Filter peaks to only those that overlap target regions in the mapping."""
     filtered_peaks = []
-    for _, row in mapping.iterrows():
+    for _, row in expected_peak_locations.iterrows():
         gene_name = row["gene_name"]
         target_start = row["target_start"]
         target_end = row["target_end"]
 
-        gene_peaks = peaks_df[peaks_df[PEAK_GENE_COLUMN].astype(str).str.contains(gene_name, case=False, na=False)]
-        overlap_mask = (
-            (gene_peaks[PEAK_START_COLUMN] <= target_end)
-            & (gene_peaks[PEAK_END_COLUMN] + 250 >= target_start)
-        )
-        filtered_peaks.append(gene_peaks.loc[overlap_mask])
+        gene_peaks = peaks_df[peaks_df[PEAK_GENE_COLUMN].astype(str).str.contains(gene_name, case=False, na=False)].copy()
+        # only retain peaks whose middle point lies in the expected range
+        peak_middle = (gene_peaks[PEAK_START_COLUMN] + gene_peaks[PEAK_END_COLUMN] + 250) / 2
+        middle_mask = (peak_middle >= target_start) & (peak_middle <= target_end)
+        filtered_peaks.append(gene_peaks.loc[middle_mask])
 
     if filtered_peaks:
         return pd.concat(filtered_peaks, ignore_index=True)
@@ -376,8 +375,10 @@ def summarize_peaks(peaks_df: pd.DataFrame, output_folder: Path, expected_peak_l
     diff_summary = diff_summary.rename(columns={"added": "signal_type"})
     summary = pd.concat([summary_non_diff, diff_summary], ignore_index=True)
     summary = add_zeros(summary)
+    summary["sort_TF"] = summary[PEAK_TF_COLUMN].str.lower()
 
-    summary.sort_values(by=[PEAK_TF_COLUMN, "signal_type"], inplace=True)
+    summary = summary.sort_values(by=["sort_TF", "signal_type"])
+    summary = summary.drop(columns=["sort_TF"])
     output_path = output_folder / "peak_summary.csv"
     summary.to_csv(output_path, index=False)
     return summary
@@ -475,9 +476,8 @@ def main(argv: Optional[list] = None) -> None:
         )
 
     if run_summary:
-        summary_expected_peak_locations = expected_peak_locations
-        if args.expected_peak_locations is not None:
-            summary_expected_peak_locations = pd.read_csv(args.expected_peak_locations)
+        if args.expected_peak_locations is not None and args.expected_peak_locations:
+            expected_peak_locations = pd.read_csv(args.expected_peak_locations)
         elif args.only_overlapping and not run_overlap:
             raise ValueError(
                 "Expected peak locations file must be provided with --expected-peak-locations when using --only_overlapping without running the overlap analysis."
@@ -493,7 +493,7 @@ def main(argv: Optional[list] = None) -> None:
         _run_logged_analysis(
             "peak summary analysis",
             summary_parameters,
-            lambda: summarize_peaks(peaks, output_folder, summary_expected_peak_locations),
+            lambda: summarize_peaks(peaks, output_folder, expected_peak_locations),
         )
 
 
