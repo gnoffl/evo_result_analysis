@@ -392,7 +392,8 @@ def build_parser() -> ArgumentParser:
     parser.add_argument("annotated_peak_file", help="CSV file with annotated peak-scanner output")
     parser.add_argument(
         "--run-directory",
-        required=True,
+        default="",
+        required=False,
         help="Run directory containing gene folders with parameters.json",
     )
     parser.add_argument("--excluded-genes-file", default=None, help="Optional json list of genes to exclude from analysis.")
@@ -465,6 +466,8 @@ def main(argv: Optional[list] = None) -> None:
     expected_peak_locations = pd.DataFrame()
     
     if run_overlap:
+        if not args.run_directory:
+            raise ValueError("Run directory must be provided with --run-directory to perform overlap analysis.")
         overlap_parameters = {
             "annotated_peak_file": args.annotated_peak_file,
             "run_directory": args.run_directory,
