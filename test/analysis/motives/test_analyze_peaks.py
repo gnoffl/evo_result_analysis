@@ -149,10 +149,10 @@ class TestOverlapAnalysisMode(AnalyzePeaksIntegrationBase):
             assert row_gene_1["target_end"] == 125
 
             # Validate files were written
-            assert (output_dir / "wrky_overlaps_reference.csv").exists()
-            assert (output_dir / "wrky_overlaps_reference_mapping.csv").exists()
-            loaded_res = pd.read_csv(output_dir / "wrky_overlaps_reference.csv")
-            loaded_mapping = pd.read_csv(output_dir / "wrky_overlaps_reference_mapping.csv")
+            assert (output_dir / "reference.csv").exists()
+            assert (output_dir / "reference_expected_peak_locations.csv").exists()
+            loaded_res = pd.read_csv(output_dir / "reference.csv")
+            loaded_mapping = pd.read_csv(output_dir / "reference_expected_peak_locations.csv")
             
             # Normalize results for comparison: convert pd.NA to np.nan and fix dtypes
             results_normalized = _normalize_for_csv_comparison(results)

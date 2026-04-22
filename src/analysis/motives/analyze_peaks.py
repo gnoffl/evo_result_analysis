@@ -226,12 +226,12 @@ def _select_best_overlap(
     return True, pd.Series(best_overlap_row._asdict()), len(overlapping)
 
 
-def derive_mapping(full_results_df: pd.DataFrame) -> pd.DataFrame:
+def derive_peak_locations(full_results_df: pd.DataFrame) -> pd.DataFrame:
     """Derive a mapping table from the full overlap results."""
-    mapping_copy = full_results_df.copy()
-    mapping_copy["gene_name"] = mapping_copy[PEAK_GENE_COLUMN].str.split("_").str[1]
-    mapping_copy = mapping_copy[["gene_name", "target_start", "target_end"]]
-    return mapping_copy
+    peak_locations = full_results_df.copy()
+    peak_locations["gene_name"] = peak_locations[PEAK_GENE_COLUMN].str.split("_").str[1]
+    peak_locations = peak_locations[["gene_name", "target_start", "target_end"]]
+    return peak_locations
 
 
 def analyze_wrky_peak_overlaps(
@@ -240,6 +240,7 @@ def analyze_wrky_peak_overlaps(
     output_folder: Path,
     tf_substring: str = "WRKY",
     peak_type: str = "reference",
+    base_name: str = ""
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Annotate run-directory target regions with overlapping WRKY peaks.
 
@@ -307,13 +308,14 @@ def analyze_wrky_peak_overlaps(
         results.append(result_row)
 
     result = pd.DataFrame(results)
-    mapping = derive_mapping(result)
-    output_path = output_folder / f"wrky_overlaps_{peak_type}.csv"
-    mapping_path = output_folder / f"wrky_overlaps_{peak_type}_mapping.csv"
+    expected_peak_locations = derive_peak_locations(result)
+    name = f"{base_name}_{peak_type}" if base_name else f"{peak_type}"
+    output_path = output_folder / f"{name}.csv"
+    mapping_path = output_folder / f"{name}_expected_peak_locations.csv"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result.to_csv(output_path, index=False)
-    mapping.to_csv(mapping_path, index=False)
-    return result, mapping
+    expected_peak_locations.to_csv(mapping_path, index=False)
+    return result, expected_peak_locations
 
 
 def add_zeros(summary: pd.DataFrame) -> pd.DataFrame:
@@ -351,7 +353,7 @@ def filter_overlapping_peaks(peaks_df: pd.DataFrame, expected_peak_locations: pd
     else:
         return pd.DataFrame(columns=peaks_df.columns)
 
-def summarize_peaks(peaks_df: pd.DataFrame, output_folder: Path, expected_peak_locations: pd.DataFrame) -> pd.DataFrame:
+def summarize_peaks(peaks_df: pd.DataFrame, output_folder: Path, expected_peak_locations: pd.DataFrame, base_name: str = "") -> pd.DataFrame:
     """Summarize peak counts and scores by gene."""
     if not expected_peak_locations.empty:
         peaks_df = filter_overlapping_peaks(peaks_df, expected_peak_locations)
@@ -379,7 +381,7 @@ def summarize_peaks(peaks_df: pd.DataFrame, output_folder: Path, expected_peak_l
 
     summary = summary.sort_values(by=["sort_TF", "signal_type"])
     summary = summary.drop(columns=["sort_TF"])
-    output_path = output_folder / "peak_summary.csv"
+    output_path = output_folder / f"{base_name}_peak_summary.csv" if base_name else output_folder / "peak_summary.csv"
     summary.to_csv(output_path, index=False)
     return summary
 
@@ -399,6 +401,12 @@ def build_parser() -> ArgumentParser:
         "--output-folder",
         default=None,
         help="Optional path to the folder to write the annotated overlap table. If not provided, saves as '<input_stem>_wrky_overlaps.csv' next to the input file.",
+    )
+    parser.add_argument(
+        "--base_name",
+        "-n",
+        default="",
+        help="Base name to use for output files. If not provided, uses the stem of the annotated_peak_file.",
     )
     parser.add_argument(
         "--summarize-peaks",
@@ -463,6 +471,7 @@ def main(argv: Optional[list] = None) -> None:
             "excluded_genes_file": args.excluded_genes_file,
             "peak_type": args.peak_type,
             "output_folder": output_folder,
+            "base_name": args.base_name,
         }
         _, expected_peak_locations = _run_logged_analysis(
             "WRKY overlap analysis",
@@ -472,6 +481,7 @@ def main(argv: Optional[list] = None) -> None:
                 run_directory=args.run_directory,
                 peak_type=args.peak_type,
                 output_folder=output_folder,
+                base_name=args.base_name,
             ),
         )
 
@@ -489,11 +499,12 @@ def main(argv: Optional[list] = None) -> None:
             "expected_peak_locations": args.expected_peak_locations if args.expected_peak_locations is not None else ("<from overlap analysis>" if run_overlap else None),
             "only_overlapping": args.only_overlapping,
             "peak_type": args.peak_type,
+            "base_name": args.base_name,
         }
         _run_logged_analysis(
             "peak summary analysis",
             summary_parameters,
-            lambda: summarize_peaks(peaks, output_folder, expected_peak_locations),
+            lambda: summarize_peaks(peaks, output_folder, expected_peak_locations, base_name=args.base_name),
         )
 
 
