@@ -199,7 +199,32 @@ def fig4():
         label_fontsize=14.0,
     )
 
+def fig_5_starrseq():
+    images = [
+        "/home/gernot/ARCitect/ARCs/genRE/assays/Evolution/protocols/Tobias/motif_mutation/analysis/medium_window_WRKY/sequence_heat_map_positive_reverse_mutation_only_only_core.png",
+        "/home/gernot/ARCitect/ARCs/genRE/assays/Evolution/protocols/Tobias/motif_mutation/analysis/medium_window_WRKY/sequence_heat_map_reverse_flank_impacted.png",
+    ]
+    panels = [
+        {
+            "path": images[0],
+            "rect": (0, 0, 0.5, 1)
+        },
+        {
+            "path": images[1],
+            "rect": (0.5, 0, 1, 1)
+        },
+    ]
+    FIGSIZE = (12, 6)
+    compose_figures(
+        panels=panels,
+        output_path="src/workflows/paper_plots/figures/fig5_starrseq_composed.svg",
+        figsize=FIGSIZE,
+        labels=True,
+        label_fontsize=14.0,
+    )
+
 if __name__ == "__main__":
-    fig2()
-    fig3()
-    fig4()
+    # fig2()
+    # fig3()
+    # fig4()
+    fig_5_starrseq()
