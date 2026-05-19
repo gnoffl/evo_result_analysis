@@ -9,6 +9,7 @@ run_mutations_analysis.sh
 *.fai
 src/workflows/hoffie/data/*
 src/workflows/paper_plots/figures/*
+src/workflows/overlap_analysis/correlation/*
 
 # C extensions
 *.so
