@@ -11,10 +11,11 @@ from analysis.motives.deepcis_scanner import (
     DEFAULT_EXTRAGENIC,
     DEFAULT_INTRAGENIC,
     DEFAULT_CENTRAL_PADDING,
+    DEFAULT_WINDOW_SIZE,
+    DEFAULT_STEP_SIZE,
     GeneRunData,
     _get_max_mutation_entry,
     get_full_sequence,
-    _get_zero_mutation_entry,
 )
 from evolution.sequences import one_hot_encode, one_hot_decode, compare_sequences
 
@@ -130,14 +131,8 @@ def annotate_mutations_in_windows(
             continue
 
         max_entry = _get_max_mutation_entry(gd.pareto_front)
-        zero_entry = _get_zero_mutation_entry(gd.pareto_front)
         
-        ref_full = get_full_sequence(
-            zero_entry[0],
-            gd.reference_sequence_full,
-            gd.mutation_start,
-            gd.mutation_end,
-        )
+        ref_full = gd.reference_sequence_full
         max_full = get_full_sequence(
             max_entry[0],
             gd.reference_sequence_full,
@@ -224,4 +219,3 @@ def add_genomic_coordinates(
 
     coord_df = pd.DataFrame(records, index=df.index)
     return pd.concat([df, coord_df], axis=1)
-
