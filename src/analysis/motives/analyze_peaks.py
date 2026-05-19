@@ -498,10 +498,10 @@ def main(argv: Optional[list] = None) -> None:
 
         summary_parameters = {
             "annotated_peak_file": args.annotated_peak_file,
+            "excluded_genes_file": args.excluded_genes_file,
             "output_folder": output_folder,
             "expected_peak_locations": args.expected_peak_locations if args.expected_peak_locations is not None else ("<from overlap analysis>" if run_overlap else None),
             "only_overlapping": args.only_overlapping,
-            "peak_type": args.peak_type,
             "base_name": args.base_name,
         }
         _run_logged_analysis(
