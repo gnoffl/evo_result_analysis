@@ -201,7 +201,12 @@ def _plot_bucketed_correlation(
     use_buckets: bool = True,
     add_overall_fit_line: bool = True,
     delta: bool = False,
+    subset_label: str = "",
 ) -> List[Dict[str, Union[str, int, float]]]:
+    effective_analysis = f"{analysis_name}_{subset_label}" if subset_label else analysis_name
+    effective_title = f"{title} ({subset_label})" if subset_label else title
+    effective_save = save_name.replace(".png", f"_{subset_label}.png") if subset_label else save_name
+
     plt.clf()
     working_df = prediction_df.copy()
     if delta:
@@ -212,15 +217,15 @@ def _plot_bucketed_correlation(
     if working_df.empty:
         plt.xlabel(x_label)
         plt.ylabel(y_label)
-        plt.title(title)
-        plt.savefig(os.path.join(_get_analysis_output_dir(analysis_name), save_name), bbox_inches="tight", dpi=OUTPUT_DPI)
+        plt.title(effective_title)
+        plt.savefig(os.path.join(_get_analysis_output_dir(effective_analysis), effective_save), bbox_inches="tight", dpi=OUTPUT_DPI)
         return summary_rows
 
     overall_dedup = _deduplicate_bucket_rows(working_df, x_col, y_col, include_differences, delta)
     overall_slope, overall_intercept, overall_corr, overall_p = _fit_linear_model(overall_dedup[x_col], overall_dedup[y_col])
     summary_rows.append(
         _make_stats_row(
-            analysis_name,
+            effective_analysis,
             "all",
             -1,
             -1,
@@ -242,9 +247,9 @@ def _plot_bucketed_correlation(
             ax.plot(line_x, overall_slope * line_x + overall_intercept, color="black", linewidth=2, label="overall fit")
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
-        ax.set_title(title)
+        ax.set_title(effective_title)
         ax.legend(title="Dataset", fontsize=14)
-        fig.savefig(os.path.join(_get_analysis_output_dir(analysis_name), save_name), bbox_inches="tight", dpi=OUTPUT_DPI)
+        fig.savefig(os.path.join(_get_analysis_output_dir(effective_analysis), effective_save), bbox_inches="tight", dpi=OUTPUT_DPI)
         plt.close(fig)
         return summary_rows
 
@@ -280,7 +285,7 @@ def _plot_bucketed_correlation(
 
         summary_rows.append(
             _make_stats_row(
-                analysis_name,
+                effective_analysis,
                 bucket_label,
                 int(bucket_start),
                 int(bucket_start + BUCKET_SIZE - 1),
@@ -300,9 +305,9 @@ def _plot_bucketed_correlation(
 
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
-    ax.set_title(title)
+    ax.set_title(effective_title)
     ax.legend(title="Overlap bucket", fontsize=14, loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0.0)
-    fig.savefig(os.path.join(_get_analysis_output_dir(analysis_name), save_name), bbox_inches="tight", dpi=OUTPUT_DPI)
+    fig.savefig(os.path.join(_get_analysis_output_dir(effective_analysis), effective_save), bbox_inches="tight", dpi=OUTPUT_DPI)
     plt.close(fig)
     return summary_rows
 
@@ -319,7 +324,12 @@ def _plot_individual_bucket_correlation(
     bucket_label: str,
     include_differences: bool,
     delta: bool = False,
+    subset_label: str = "",
 ) -> None:
+    effective_analysis = f"{analysis_name}_{subset_label}" if subset_label else analysis_name
+    effective_title = f"{title} ({subset_label})" if subset_label else title
+    effective_save = save_name.replace(".png", f"_{subset_label}.png") if subset_label else save_name
+
     working_df = prediction_df.copy()
     if delta:
         working_df = working_df[working_df["starr_reference"] == False].copy()
@@ -327,12 +337,12 @@ def _plot_individual_bucket_correlation(
     working_df = working_df.loc[working_df[x_col].notna() & working_df[y_col].notna(), :]
 
     if working_df.empty:
-        print(f"No entries found for bucket {bucket_label} in {save_name}; skipping plot.")
+        print(f"No entries found for bucket {bucket_label} in {effective_save}; skipping plot.")
         return
 
     dedup = _deduplicate_bucket_rows(working_df, x_col, y_col, include_differences, delta)
     if dedup.empty:
-        print(f"No plottable points found for bucket {bucket_label} in {save_name}; skipping plot.")
+        print(f"No plottable points found for bucket {bucket_label} in {effective_save}; skipping plot.")
         return
 
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -340,7 +350,6 @@ def _plot_individual_bucket_correlation(
     for i, gene in enumerate(genes):
         gene_df = dedup[dedup["gene"] == gene] if gene is not None else dedup
         color = BUCKET_COLOR_PALETTE[i % len(BUCKET_COLOR_PALETTE)]
-        #increase size of points
         ax.scatter(
             gene_df[x_col],
             gene_df[y_col],
@@ -358,12 +367,12 @@ def _plot_individual_bucket_correlation(
 
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
-    ax.set_title(f"{title}")
-    fig.savefig(os.path.join(_get_analysis_output_dir(analysis_name), save_name), bbox_inches="tight", dpi=OUTPUT_DPI)
+    ax.set_title(effective_title)
+    fig.savefig(os.path.join(_get_analysis_output_dir(effective_analysis), effective_save), bbox_inches="tight", dpi=OUTPUT_DPI)
     plt.close(fig)
 
 
-def plot_individual_bucket_views(prediction_df: pd.DataFrame, bucket_label: str) -> None:
+def plot_individual_bucket_views(prediction_df: pd.DataFrame, bucket_label: str, subset_label: str = "") -> None:
     suffix = _sanitize_bucket_label(bucket_label)
     _plot_individual_bucket_correlation(
         prediction_df,
@@ -377,6 +386,7 @@ def plot_individual_bucket_views(prediction_df: pd.DataFrame, bucket_label: str)
         bucket_label,
         include_differences=True,
         delta=False,
+        subset_label=subset_label,
     )
     _plot_individual_bucket_correlation(
         prediction_df,
@@ -390,6 +400,7 @@ def plot_individual_bucket_views(prediction_df: pd.DataFrame, bucket_label: str)
         bucket_label,
         include_differences=False,
         delta=False,
+        subset_label=subset_label,
     )
     _plot_individual_bucket_correlation(
         prediction_df,
@@ -403,6 +414,7 @@ def plot_individual_bucket_views(prediction_df: pd.DataFrame, bucket_label: str)
         bucket_label,
         include_differences=False,
         delta=False,
+        subset_label=subset_label,
     )
 
 def load_starrseq_data(starrseq_file):
@@ -610,7 +622,7 @@ def merge_with_starrseq_results(predictions_df: pd.DataFrame, starr_seq_results:
     merged_df.drop(columns=["id"], inplace=True)
     return merged_df
 
-def plot_deepcre_starrseq_correlation(prediction_df: pd.DataFrame, colored: bool = False, delta: bool = False):
+def plot_deepcre_starrseq_correlation(prediction_df: pd.DataFrame, colored: bool = False, delta: bool = False, subset_label: str = ""):
     prediction_col = "delta_prediction" if delta else "prediction_mutated"
     enrichment_col = "delta_enrichment" if delta else "enrichment"
     delta_description = "delta_" if delta else ""
@@ -628,10 +640,11 @@ def plot_deepcre_starrseq_correlation(prediction_df: pd.DataFrame, colored: bool
         use_buckets=ENABLE_BUCKETED_ANALYSIS,
         add_overall_fit_line=ADD_OVERALL_FIT_TO_BUCKETED_PLOTS,
         delta=delta,
+        subset_label=subset_label,
     )
 
 
-def plot_mutation_starrseq_correlation(prediction_df: pd.DataFrame, delta: bool = False):
+def plot_mutation_starrseq_correlation(prediction_df: pd.DataFrame, delta: bool = False, subset_label: str = ""):
     enrichment_col = "delta_enrichment" if delta else "enrichment"
     delta_description = "delta_" if delta else ""
     save_name = f"{delta_description}mutation_starrseq_correlation.png"
@@ -648,9 +661,10 @@ def plot_mutation_starrseq_correlation(prediction_df: pd.DataFrame, delta: bool 
         use_buckets=ENABLE_BUCKETED_ANALYSIS,
         add_overall_fit_line=ADD_OVERALL_FIT_TO_BUCKETED_PLOTS,
         delta=delta,
+        subset_label=subset_label,
     )
 
-def plot_mutation_deepcre_correlation(prediction_df: pd.DataFrame, delta: bool = False):
+def plot_mutation_deepcre_correlation(prediction_df: pd.DataFrame, delta: bool = False, subset_label: str = ""):
     prediction_col = "delta_prediction" if delta else "prediction_mutated"
     delta_description = "delta_" if delta else ""
     save_name = f"{delta_description}mutation_deepcre_correlation.png"
@@ -667,6 +681,7 @@ def plot_mutation_deepcre_correlation(prediction_df: pd.DataFrame, delta: bool =
         use_buckets=ENABLE_BUCKETED_ANALYSIS,
         add_overall_fit_line=ADD_OVERALL_FIT_TO_BUCKETED_PLOTS,
         delta=delta,
+        subset_label=subset_label,
     )
 
 
@@ -790,13 +805,19 @@ def main():
     enrichment_df = add_length_corrected_overlap_buckets(enrichment_df)
     # plot_correlation_over_positions_fixed_window(enrichment_df)
     # plot_correlation_over_positions_fixed_number_elements(enrichment_df)
-    bucket_stats: List[Dict[str, Union[str, int, float]]] = []
-    bucket_stats.extend(plot_deepcre_starrseq_correlation(enrichment_df, colored=True, delta=False))
-    bucket_stats.extend(plot_mutation_starrseq_correlation(enrichment_df, delta=False))
-    bucket_stats.extend(plot_mutation_deepcre_correlation(enrichment_df, delta=False))
-    for bucket_label in INDIVIDUAL_BUCKET_LABELS_TO_PLOT:
-        plot_individual_bucket_views(enrichment_df, bucket_label)
-    save_bucket_statistics(bucket_stats)
+    subsets = [
+        ("", enrichment_df),
+        ("reference", enrichment_df[enrichment_df["starr_reference"] == True]),
+        ("synthetic", enrichment_df[enrichment_df["starr_reference"] == False]),
+    ]
+    for subset_label, subset_df in subsets:
+        bucket_stats: List[Dict[str, Union[str, int, float]]] = []
+        bucket_stats.extend(plot_deepcre_starrseq_correlation(subset_df, colored=True, delta=False, subset_label=subset_label))
+        bucket_stats.extend(plot_mutation_starrseq_correlation(subset_df, delta=False, subset_label=subset_label))
+        bucket_stats.extend(plot_mutation_deepcre_correlation(subset_df, delta=False, subset_label=subset_label))
+        for bucket_label in INDIVIDUAL_BUCKET_LABELS_TO_PLOT:
+            plot_individual_bucket_views(subset_df, bucket_label, subset_label=subset_label)
+        save_bucket_statistics(bucket_stats)
 
 
 if __name__ == "__main__":
