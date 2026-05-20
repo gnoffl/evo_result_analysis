@@ -152,10 +152,12 @@ def _deduplicate_bucket_rows(
         dedup_columns.append("differences")
     if "starr_reference" in bucket_df.columns:
         dedup_columns.append("starr_reference")
-    dedup = bucket_df[dedup_columns].drop_duplicates().dropna()
+    if "gene" in bucket_df.columns:
+        dedup_columns.append("gene")
+    dedup = bucket_df[dedup_columns].drop_duplicates().dropna(subset=[x_col, y_col])
     if delta:
         dedup = dedup[dedup["starr_reference"] == False]
-    return dedup[[x_col, y_col]].dropna()
+    return dedup.dropna(subset=[x_col, y_col])
 
 
 def _make_stats_row(
@@ -333,29 +335,30 @@ def _plot_individual_bucket_correlation(
         print(f"No plottable points found for bucket {bucket_label} in {save_name}; skipping plot.")
         return
 
-    point_color = BUCKET_COLOR_PALETTE[0]
-    fit_color = _darken_hex_color(point_color)
-
     fig, ax = plt.subplots(figsize=(8, 6))
-    ax.scatter(
-        dedup[x_col],
-        dedup[y_col],
-        color=point_color,
-        alpha=0.65,
-        edgecolors="white",
-        linewidths=0.3,
-        label=f"{bucket_label} (n={len(working_df)})",
-    )
-
+    genes = sorted(dedup["gene"].unique()) if "gene" in dedup.columns else [None]
+    for i, gene in enumerate(genes):
+        gene_df = dedup[dedup["gene"] == gene] if gene is not None else dedup
+        color = BUCKET_COLOR_PALETTE[i % len(BUCKET_COLOR_PALETTE)]
+        #increase size of points
+        ax.scatter(
+            gene_df[x_col],
+            gene_df[y_col],
+            s=70,
+            color=color,
+            alpha=0.65,
+            edgecolors="white",
+            linewidths=0.3,
+            label=gene if gene is not None else f"{bucket_label} (n={len(working_df)})",
+        )
     slope, intercept, _, _ = _fit_linear_model(dedup[x_col], dedup[y_col])
     if np.isfinite(slope) and np.isfinite(intercept):
         line_x = np.linspace(dedup[x_col].min(), dedup[x_col].max(), 100)
-        ax.plot(line_x, slope * line_x + intercept, color=fit_color, linewidth=2.8, label="fit")
+        ax.plot(line_x, slope * line_x + intercept, color=_darken_hex_color(BUCKET_COLOR_PALETTE[0]), linewidth=2.8)
 
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
     ax.set_title(f"{title}")
-    ax.legend(title="Bucket view", fontsize=14, loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0.0)
     fig.savefig(os.path.join(_get_analysis_output_dir(analysis_name), save_name), bbox_inches="tight", dpi=OUTPUT_DPI)
     plt.close(fig)
 
@@ -785,15 +788,15 @@ def main():
     enrichment_df = enrichment_df.dropna(subset=["enrichment"]).reset_index(drop=True)
     enrichment_df = calculate_deltas(enrichment_df)
     enrichment_df = add_length_corrected_overlap_buckets(enrichment_df)
-    plot_correlation_over_positions_fixed_window(enrichment_df)
-    plot_correlation_over_positions_fixed_number_elements(enrichment_df)
-    # bucket_stats: List[Dict[str, Union[str, int, float]]] = []
-    # bucket_stats.extend(plot_deepcre_starrseq_correlation(enrichment_df, colored=True, delta=False))
-    # bucket_stats.extend(plot_mutation_starrseq_correlation(enrichment_df, delta=False))
-    # bucket_stats.extend(plot_mutation_deepcre_correlation(enrichment_df, delta=False))
-    # for bucket_label in INDIVIDUAL_BUCKET_LABELS_TO_PLOT:
-    #     plot_individual_bucket_views(enrichment_df, bucket_label)
-    # save_bucket_statistics(bucket_stats)
+    # plot_correlation_over_positions_fixed_window(enrichment_df)
+    # plot_correlation_over_positions_fixed_number_elements(enrichment_df)
+    bucket_stats: List[Dict[str, Union[str, int, float]]] = []
+    bucket_stats.extend(plot_deepcre_starrseq_correlation(enrichment_df, colored=True, delta=False))
+    bucket_stats.extend(plot_mutation_starrseq_correlation(enrichment_df, delta=False))
+    bucket_stats.extend(plot_mutation_deepcre_correlation(enrichment_df, delta=False))
+    for bucket_label in INDIVIDUAL_BUCKET_LABELS_TO_PLOT:
+        plot_individual_bucket_views(enrichment_df, bucket_label)
+    save_bucket_statistics(bucket_stats)
 
 
 if __name__ == "__main__":
