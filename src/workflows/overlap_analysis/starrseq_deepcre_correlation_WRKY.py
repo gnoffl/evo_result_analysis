@@ -14,9 +14,13 @@ from evolution.sequences import one_hot_encode
 BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
+USE_NEW_DATA = True  # Set True to use new light+dark file; False to use old dark-only file
+
 STARRSEQ_INPUT_FILE = os.path.join(DATA_DIR, "dCIS_WRKY_in_silico_mutated_GS2025d.fasta")
 DEEP_CRE_RUN_FOLDER = "/home/gernot/ARCitect/ARCs/dream/assays/Evolution_runs/dataset/overlap/overlap_max_260326_201255_889602/all_positions_all"
-STARR_SEQ_RESULTS = os.path.join(DATA_DIR, "plantstarr-seq_main_dark_simon_gernot(1).csv")
+_STARR_SEQ_OLD = os.path.join(DATA_DIR, "plantstarr-seq_main_dark_simon_gernot(1).csv")
+_STARR_SEQ_NEW = os.path.join(DATA_DIR, "plantstarr-seq_main_light_and_dark_simon_gernot.csv")
+STARR_SEQ_RESULTS = _STARR_SEQ_NEW if USE_NEW_DATA else _STARR_SEQ_OLD
 MAPPING_FILE = os.path.join(DATA_DIR, "WRKY_dCIS_dCRE_overlaps.csv")
 REF_SEQ_FILE = "reference_sequence.fa"
 DEEPCRE_PATH = "/home/gernot/Code/PhD_Code/Evolution/models/Atha_S0X0.75dP7K25g_NC_003075.7_ssr_train_models_250705_211854.h5"
@@ -30,7 +34,8 @@ FULL_SEQUENCE_LENGTH = 2 * PADDING_START + PADDING
 FULL_OVERLAP_LENGTH = 170
 BUCKET_SIZE = 200
 EDGE_POSITIONS = {0, PADDING_START, PADDING_END, FULL_SEQUENCE_LENGTH}
-CORRELATION_OUTPUT_ROOT = os.path.join(BASE_DIR, "correlation")
+_DATA_VERSION = "new" if USE_NEW_DATA else "old"
+CORRELATION_OUTPUT_ROOT = os.path.join(BASE_DIR, "correlation", _DATA_VERSION)
 BUCKET_SUMMARY_FILE_NAME = "overlap_bucket_fit_parameters.csv"
 OUTPUT_DPI = 600
 ENABLE_BUCKETED_ANALYSIS = True
@@ -617,7 +622,8 @@ def make_deepcre_predictions(seqs: np.ndarray, meta_data: List[Dict]) -> pd.Data
 def merge_with_starrseq_results(predictions_df: pd.DataFrame, starr_seq_results: pd.DataFrame) -> pd.DataFrame:
     # add the "enrichment" column from starr_seq_results to predictions_df.
     # compatible columns are "starr_full_name" in predictions_df and "id" in starr_seq_results
-    rel_results_df = starr_seq_results[["id", "enrichment"]]
+    condition_cols = ["id", "enrichment"] + (["condition"] if "condition" in starr_seq_results.columns else [])
+    rel_results_df = starr_seq_results[condition_cols]
     merged_df = pd.merge(predictions_df, rel_results_df, left_on="starr_full_name", right_on="id", how="left")
     merged_df.drop(columns=["id"], inplace=True)
     return merged_df
@@ -810,6 +816,11 @@ def main():
         ("reference", enrichment_df[enrichment_df["starr_reference"] == True]),
         ("synthetic", enrichment_df[enrichment_df["starr_reference"] == False]),
     ]
+    if "condition" in enrichment_df.columns and len(enrichment_df["condition"].unique()) > 1:
+        subsets += [
+            ("light", enrichment_df[enrichment_df["condition"].str.lower() == "light"]),
+            ("dark", enrichment_df[enrichment_df["condition"].str.lower() == "dark"]),
+        ]
     for subset_label, subset_df in subsets:
         bucket_stats: List[Dict[str, Union[str, int, float]]] = []
         bucket_stats.extend(plot_deepcre_starrseq_correlation(subset_df, colored=True, delta=False, subset_label=subset_label))
