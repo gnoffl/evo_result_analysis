@@ -1,7 +1,7 @@
 """Analyze correlation between deepCRE model predictions and RNA-seq TPM measurements."""
 
 import os
-from typing import Tuple, List
+from typing import Dict, Tuple, List
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -55,37 +55,50 @@ def analyze_model(
         "corr_pval": corr_pval,
     }
 
+def plot_single_dataset(results: Dict, model_col: str, ax: plt.Axes) -> None:
+    data = results[model_col]["data"]
+    x = data[model_col].values
+    y = data["logMaxTPM"].values
+
+    ax.scatter(x, y, alpha=0.1, s=30, color="blue")
+
+    x_line = np.array([x.min(), x.max()])
+    y_line = (results[model_col]["slope"] * x_line + results[model_col]["intercept"])
+    ax.plot(x_line, y_line, "r-", linewidth=2, label="Linear fit")
 
 def create_plots(results: dict, model_cols: List[str]) -> None:
     """Create and save separate scatter plots with regression lines for each model."""
-    for idx, model_col in enumerate(model_cols):
+    #copy model_cols
+    local_model_cols = model_cols.copy()
+    while True:
+        if not local_model_cols:
+            break
+        model_col = local_model_cols.pop(0)
         plt.clf()
         fig, ax = plt.subplots(figsize=(8, 6))
 
-        data = results[model_col]["data"]
-        x = data[model_col].values
-        y = data["logMaxTPM"].values
+        plot_single_dataset(results, model_col, ax)
+        high_low = False
+        if model_col.endswith("_low"):
+            other_model_col = model_col.replace("_low", "_high")
+            high_low = True
+        elif model_col.endswith("_high"):
+            other_model_col = model_col.replace("_high", "_low")
+            high_low = True
+        else:
+            other_model_col = None
+        
+        if other_model_col is not None and other_model_col in results:
+            local_model_cols.remove(other_model_col)
+            plot_single_dataset(results=results, model_col=other_model_col, ax=ax)
 
-        ax.scatter(x, y, alpha=0.5, s=30)
-
-        x_line = np.array([x.min(), x.max()])
-        y_line = (
-            results[model_col]["slope"] * x_line +
-            results[model_col]["intercept"]
-        )
-        ax.plot(x_line, y_line, "r-", linewidth=2, label="Linear fit")
-
-        ax.set_xlabel("Model Prediction")
-        ax.set_ylabel("logMaxTPM")
-        ax.set_title(
-            f"Model {idx + 1}\n"
-            f"R² = {results[model_col]['r_value'] ** 2:.4f}, "
-            f"r = {results[model_col]['r_value']:.4f}, "
-            f"p = {results[model_col]['corr_pval']:.2e}"
-        )
+        title = "msr" if "_M0X0." in model_col else "ssr"
+        title = title + " (only high and low predictions)" if high_low else title + " (all predictions)"
+        ax.set_title(title)
         ax.legend(loc="best")
         ax.grid(True, alpha=0.3)
-
+        ax.set_xlabel("Model Prediction")
+        ax.set_ylabel("logMaxTPM")
         plt.tight_layout()
         filename = f"deepcre_tpm_correlation_model_{model_col}.png"
         out_path = os.path.join("src/workflows/deepCRE_TPM_correlation", filename)
@@ -94,13 +107,18 @@ def create_plots(results: dict, model_cols: List[str]) -> None:
         plt.close(fig)
 
 
-def analyze_subset(
-    results: dict, model_col: str, subset_name: str, pred_min: float,
-    pred_max: float
-) -> dict:
+def analyze_subset(results: dict, model_col: str, subset_name: str, filter_low: bool = False) -> dict:
     """Analyze a subset of predictions."""
+    if subset_name == "low":
+        pred_min, pred_max = 0, 0.4
+    elif subset_name == "high":
+        pred_min, pred_max = 0.6, 1.0
+    else:
+        raise ValueError("subset_name must be 'low' or 'high'")
+
     data = results[model_col]["data"]
     subset = data[(data[model_col] >= pred_min) & (data[model_col] <= pred_max)]
+    subset = subset[subset["logMaxTPM"] > 0.2]
     subset = subset.rename(columns={model_col: f"{model_col}_{subset_name}"})
 
     if len(subset) < 2:
@@ -147,15 +165,15 @@ def main() -> None:
 
 
     for model_col in model_cols:
-        low_pred = analyze_subset(results, model_col, "low", 0.0, 0.4)
-        high_pred = analyze_subset(results, model_col, "high", 0.6, 1.0)
+        low_pred = analyze_subset(results, model_col, "low")
+        high_pred = analyze_subset(results, model_col, "high")
         results[f"{model_col}_low"] = low_pred
         results[f"{model_col}_high"] = high_pred
 
     model_cols = [[col, f"{col}_low", f"{col}_high"] for col in model_cols]
     model_cols = [item for sublist in model_cols for item in sublist]
-    create_plots(results, model_cols)
     save_summary(results, model_cols)
+    create_plots(results, model_cols)
 
 
 if __name__ == "__main__":
