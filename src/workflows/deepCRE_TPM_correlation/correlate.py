@@ -45,20 +45,6 @@ def analyze_model(
     slope, intercept, r_value, p_value, std_err = linregress(x, y)
     corr_coef, corr_pval = pearsonr(x, y)
 
-    print(f"\n{'='*60}")
-    print(f"Analysis for: {model_col}")
-    print(f"{'='*60}")
-    print(f"Number of genes analyzed: {len(data)}")
-    print(f"\nLinear Regression:")
-    print(f"  Slope: {slope:.6f}")
-    print(f"  Intercept: {intercept:.6f}")
-    print(f"  R-value: {r_value:.6f}")
-    print(f"  P-value: {p_value:.2e}")
-    print(f"  Standard error: {std_err:.6f}")
-    print(f"\nPearson Correlation:")
-    print(f"  Correlation coefficient: {corr_coef:.6f}")
-    print(f"  P-value: {corr_pval:.2e}")
-
     return {
         "data": data,
         "slope": slope,
@@ -108,6 +94,30 @@ def create_plots(results: dict, model_cols: List[str]) -> None:
         plt.close(fig)
 
 
+def analyze_subset(
+    results: dict, model_col: str, subset_name: str, pred_min: float,
+    pred_max: float
+) -> dict:
+    """Analyze a subset of predictions."""
+    data = results[model_col]["data"]
+    subset = data[(data[model_col] >= pred_min) & (data[model_col] <= pred_max)]
+    subset = subset.rename(columns={model_col: f"{model_col}_{subset_name}"})
+
+    if len(subset) < 2:
+        return {
+            "model": model_col + f"_{subset_name}",
+            "n_genes": len(subset),
+            "slope": None,
+            "intercept": None,
+            "r_value": None,
+            "p_value": None,
+            "corr_coef": None,
+            "corr_pval": None,
+        }
+
+    return analyze_model(subset, f"{model_col}_{subset_name}")
+
+
 def save_summary(results: dict, model_cols: List[str]) -> None:
     """Save correlation analysis results to CSV."""
     summary_df = pd.DataFrame({
@@ -122,8 +132,6 @@ def save_summary(results: dict, model_cols: List[str]) -> None:
     })
 
     summary_df.to_csv("src/workflows/deepCRE_TPM_correlation/correlation_analysis_summary.csv", index=False)
-    print(f"Summary saved to: correlation_analysis_summary.csv\n")
-    print(summary_df.to_string(index=False))
 
 
 def main() -> None:
@@ -137,6 +145,15 @@ def main() -> None:
 
     results = {col: analyze_model(merged, col) for col in model_cols}
 
+
+    for model_col in model_cols:
+        low_pred = analyze_subset(results, model_col, "low", 0.0, 0.4)
+        high_pred = analyze_subset(results, model_col, "high", 0.6, 1.0)
+        results[f"{model_col}_low"] = low_pred
+        results[f"{model_col}_high"] = high_pred
+
+    model_cols = [[col, f"{col}_low", f"{col}_high"] for col in model_cols]
+    model_cols = [item for sublist in model_cols for item in sublist]
     create_plots(results, model_cols)
     save_summary(results, model_cols)
 
