@@ -37,6 +37,11 @@ EDGE_POSITIONS = {0, PADDING_START, PADDING_END, FULL_SEQUENCE_LENGTH}
 _DATA_VERSION = "new" if USE_NEW_DATA else "old"
 CORRELATION_OUTPUT_ROOT = os.path.join(BASE_DIR, "correlation", _DATA_VERSION)
 BUCKET_SUMMARY_FILE_NAME = "overlap_bucket_fit_parameters.csv"
+POSITION_SERIES_COLORS = {
+    "all": "#555555",
+    "light": "#e6a817",
+    "dark": "#2166ac",
+}
 OUTPUT_DPI = 600
 ENABLE_BUCKETED_ANALYSIS = True
 ADD_OVERALL_FIT_TO_BUCKETED_PLOTS = True
@@ -691,21 +696,43 @@ def plot_mutation_deepcre_correlation(prediction_df: pd.DataFrame, delta: bool =
     )
 
 
-def simply_plot(x_vals, y_vals, x_axis_name, y_axis_name, elements, title, output_name, subfolder: str, log: bool = False) -> None:
-    plt.clf()
+def simply_plot_multi(
+    series: List[Tuple[List, List, str, str]],
+    x_axis_name: str,
+    y_axis_name: str,
+    title: str,
+    output_name: str,
+    subfolder: str,
+    log: bool = False,
+    rolling_window: int = 11,
+) -> None:
+    """Plot multiple series of position-correlation data on a single figure.
+
+    Args:
+        series: List of (x_vals, y_vals, label, color) tuples, one per subset.
+        x_axis_name: X-axis label.
+        y_axis_name: Y-axis label.
+        title: Plot title.
+        output_name: Output filename stem (without extension).
+        subfolder: Subdirectory under CORRELATION_OUTPUT_ROOT.
+        log: Whether to use a log scale for the y-axis.
+        rolling_window: Window size for the rolling average line.
+    """
     fig, ax = plt.subplots(figsize=(8, 6))
-    x_vals = np.array(x_vals)
-    y_vals = np.array(y_vals)
-    rolling_window = 11
-    x_vals_rolling = np.convolve(x_vals, np.ones(rolling_window)/rolling_window, mode='valid')
-    y_vals_rolling = np.convolve(y_vals, np.ones(rolling_window)/rolling_window, mode='valid')
-    ax.plot(x_vals_rolling, y_vals_rolling, color="black", linestyle="-", linewidth=3, label=f"{rolling_window}-point rolling average")
-    # ax.plot(x_vals, y_vals, color="black", linestyle="-", label="original values")
-    sc = ax.scatter(x_vals, y_vals, c=elements, alpha=0.85, cmap="inferno", s=40)
-    fig.colorbar(sc, ax=ax, label="Number of data points in bucket")
+    for x_vals, y_vals, label, color in series:
+        x_arr = np.array(x_vals)
+        y_arr = np.array(y_vals)
+        ax.scatter(x_arr, y_arr, color=color, alpha=0.15, s=30, zorder=1)
+        if len(x_arr) >= rolling_window:
+            x_rolling = np.convolve(x_arr, np.ones(rolling_window) / rolling_window, mode="valid")
+            y_rolling = np.convolve(y_arr, np.ones(rolling_window) / rolling_window, mode="valid")
+            ax.plot(x_rolling, y_rolling, color=color, linestyle="-", linewidth=3, label=label, zorder=2)
+        else:
+            ax.plot(x_arr, y_arr, color=color, linestyle="-", linewidth=3, label=label, zorder=2)
     ax.set_xlabel(x_axis_name)
     ax.set_ylabel(y_axis_name)
     ax.set_title(title)
+    ax.legend()
     if log:
         ax.set_yscale("log")
     output_folder = os.path.join(CORRELATION_OUTPUT_ROOT, subfolder)
@@ -715,46 +742,72 @@ def simply_plot(x_vals, y_vals, x_axis_name, y_axis_name, elements, title, outpu
 
 
 
-def plot_correlation_over_positions_fixed_window(prediction_df: pd.DataFrame) -> None:
-    sorted_df = prediction_df.sort_values("group_overlap_start").reset_index(drop=True)
-    slopes, correlations, p_values, x_pos, elements = [], [], [], [], []
-    start_vals = sorted_df["group_overlap_start"].unique()
-    for start in start_vals:
-        end = start + BUCKET_SIZE
-        bucket_df = sorted_df[(sorted_df["group_overlap_start"] >= start) & (sorted_df["group_overlap_start"] < end)]
-        n_elements = len(bucket_df)
-        if n_elements > 10:
-            slope, intercept, correlation, p_value = _fit_linear_model(bucket_df["prediction_mutated"], bucket_df["enrichment"])
-            slopes.append(slope)
-            correlations.append(correlation)
-            p_values.append(p_value)
-            x_pos.append((start + end) / 2)
-            elements.append(n_elements)
-    
-    simply_plot(x_vals=x_pos, y_vals=correlations, subfolder="correlation_by_position_fixed_window", x_axis_name="Overlap start position", y_axis_name="Spearman correlation", elements=elements, title="Correlation between deepCRE predictions and STARR-seq enrichment by overlap position", output_name="correlation_by_position")
-    simply_plot(x_vals=x_pos, y_vals=slopes, subfolder="correlation_by_position_fixed_window",x_axis_name="Overlap start position", y_axis_name="Slope of linear fit", elements=elements, title="Slope of linear fit between deepCRE predictions and STARR-seq enrichment by overlap position", output_name="slope_by_position")
-    simply_plot(x_vals=x_pos, y_vals=p_values, subfolder="correlation_by_position_fixed_window", x_axis_name="Overlap start position", y_axis_name="P-value of Spearman correlation", elements=elements, title="P-value of correlation between deepCRE predictions and STARR-seq enrichment by overlap position", output_name="pvalue_by_position", log=True)
+def plot_correlation_over_positions_fixed_window(
+    named_dfs: List[Tuple[pd.DataFrame, str, str]],
+) -> None:
+    """Plot Spearman correlation, slope, and p-value by fixed-width position windows.
+
+    Args:
+        named_dfs: List of (dataframe, label, color) tuples, one per subset to overlay.
+    """
+    corr_series, slope_series, pval_series = [], [], []
+    for df, label, color in named_dfs:
+        sorted_df = df.sort_values("group_overlap_start").reset_index(drop=True)
+        slopes, correlations, p_values, x_pos = [], [], [], []
+        for start in sorted_df["group_overlap_start"].unique():
+            end = start + BUCKET_SIZE
+            bucket_df = sorted_df[
+                (sorted_df["group_overlap_start"] >= start) & (sorted_df["group_overlap_start"] < end)
+            ]
+            if len(bucket_df) > 10:
+                slope, _, correlation, p_value = _fit_linear_model(
+                    bucket_df["prediction_mutated"], bucket_df["enrichment"]
+                )
+                slopes.append(slope)
+                correlations.append(correlation)
+                p_values.append(p_value)
+                x_pos.append((start + end) / 2)
+        corr_series.append((x_pos, correlations, label, color))
+        slope_series.append((x_pos, slopes, label, color))
+        pval_series.append((x_pos, p_values, label, color))
+
+    subfolder = "correlation_by_position_fixed_window"
+    simply_plot_multi(corr_series, "Overlap start position", "Spearman correlation", "Correlation between deepCRE predictions and STARR-seq enrichment by overlap position", "correlation_by_position", subfolder)
+    simply_plot_multi(slope_series, "Overlap start position", "Slope of linear fit", "Slope of linear fit between deepCRE predictions and STARR-seq enrichment by overlap position", "slope_by_position", subfolder)
+    simply_plot_multi(pval_series, "Overlap start position", "P-value of Spearman correlation", "P-value of correlation between deepCRE predictions and STARR-seq enrichment by overlap position", "pvalue_by_position", subfolder, log=True)
     
 
 
-def plot_correlation_over_positions_fixed_number_elements(prediction_df: pd.DataFrame) -> None:
-    sorted_df = prediction_df.sort_values("group_overlap_start").reset_index(drop=True)
-    slopes, correlations, p_values, x_pos, elements = [], [], [], [], []
-    for i, start in enumerate(sorted_df["group_overlap_start"].iloc[:-BUCKET_SIZE]):
-        end_index = i + BUCKET_SIZE
-        bucket_df = sorted_df.iloc[i:end_index]
-        n_elements = len(bucket_df)
-        if n_elements > 10:
-            slope, intercept, correlation, p_value = _fit_linear_model(bucket_df["prediction_mutated"], bucket_df["enrichment"])
-            slopes.append(slope)
-            correlations.append(correlation)
-            p_values.append(p_value)
-            x_pos.append(bucket_df["group_overlap_start"].mean())
-            elements.append(n_elements)
-    
-    simply_plot(x_vals=x_pos, y_vals=correlations, subfolder="correlation_by_position_fixed_number_elements", x_axis_name="Overlap start position", y_axis_name="Spearman correlation", elements=elements, title="Correlation between deepCRE predictions and STARR-seq enrichment by overlap position", output_name="correlation_by_position")
-    simply_plot(x_vals=x_pos, y_vals=slopes, subfolder="correlation_by_position_fixed_number_elements", x_axis_name="Overlap start position", y_axis_name="Slope of linear fit", elements=elements, title="Slope of linear fit between deepCRE predictions and STARR-seq enrichment by overlap position", output_name="slope_by_position")
-    simply_plot(x_vals=x_pos, y_vals=p_values, subfolder="correlation_by_position_fixed_number_elements", x_axis_name="Overlap start position", y_axis_name="P-value of Spearman correlation", elements=elements, title="P-value of correlation between deepCRE predictions and STARR-seq enrichment by overlap position", output_name="pvalue_by_position", log=True)
+def plot_correlation_over_positions_fixed_number_elements(
+    named_dfs: List[Tuple[pd.DataFrame, str, str]],
+) -> None:
+    """Plot Spearman correlation, slope, and p-value using fixed-size rolling element windows.
+
+    Args:
+        named_dfs: List of (dataframe, label, color) tuples, one per subset to overlay.
+    """
+    corr_series, slope_series, pval_series = [], [], []
+    for df, label, color in named_dfs:
+        sorted_df = df.sort_values("group_overlap_start").reset_index(drop=True)
+        slopes, correlations, p_values, x_pos = [], [], [], []
+        for i in range(len(sorted_df) - BUCKET_SIZE):
+            bucket_df = sorted_df.iloc[i: i + BUCKET_SIZE]
+            if len(bucket_df) > 10:
+                slope, _, correlation, p_value = _fit_linear_model(
+                    bucket_df["prediction_mutated"], bucket_df["enrichment"]
+                )
+                slopes.append(slope)
+                correlations.append(correlation)
+                p_values.append(p_value)
+                x_pos.append(bucket_df["group_overlap_start"].mean())
+        corr_series.append((x_pos, correlations, label, color))
+        slope_series.append((x_pos, slopes, label, color))
+        pval_series.append((x_pos, p_values, label, color))
+
+    subfolder = "correlation_by_position_fixed_number_elements"
+    simply_plot_multi(corr_series, "Overlap start position", "Spearman correlation", "Correlation between deepCRE predictions and STARR-seq enrichment by overlap position", "correlation_by_position", subfolder)
+    simply_plot_multi(slope_series, "Overlap start position", "Slope of linear fit", "Slope of linear fit between deepCRE predictions and STARR-seq enrichment by overlap position", "slope_by_position", subfolder)
+    simply_plot_multi(pval_series, "Overlap start position", "P-value of Spearman correlation", "P-value of correlation between deepCRE predictions and STARR-seq enrichment by overlap position", "pvalue_by_position", subfolder, log=True)
 
 def calculate_deltas(prediction_df: pd.DataFrame) -> pd.DataFrame:
     # calculate the delta between the deepCRE prediction for the mutated sequence and the deepCRE prediction for the reference sequence
@@ -784,7 +837,6 @@ def save_bucket_statistics(stat_rows: List[Dict[str, Union[str, int, float]]]) -
         "spearman_r",
         "spearman_p",
     ]
-
     if stats_df.empty:
         # Preserve stable file layout even when there are no rows.
         for analysis_name in ["deepcre_starrseq", "mutation_starrseq", "mutation_deepcre"]:
@@ -809,12 +861,22 @@ def main():
     enrichment_df = enrichment_df.dropna(subset=["enrichment"]).reset_index(drop=True)
     enrichment_df = calculate_deltas(enrichment_df)
     enrichment_df = add_length_corrected_overlap_buckets(enrichment_df)
-    # plot_correlation_over_positions_fixed_window(enrichment_df)
-    # plot_correlation_over_positions_fixed_number_elements(enrichment_df)
+    if "condition" in enrichment_df.columns and len(enrichment_df["condition"].unique()) > 1:
+        position_series: List[Tuple[pd.DataFrame, str, str]] = [
+            (enrichment_df, "all", POSITION_SERIES_COLORS["all"]),
+            (enrichment_df[enrichment_df["condition"].str.lower() == "light"].copy(), "light", POSITION_SERIES_COLORS["light"]),
+            (enrichment_df[enrichment_df["condition"].str.lower() == "dark"].copy(), "dark", POSITION_SERIES_COLORS["dark"]),
+        ]   #type: ignore
+    else:
+        position_series = [(enrichment_df, "all", POSITION_SERIES_COLORS["all"])]
+    # plot_correlation_over_positions_fixed_window(position_series)
+    # plot_correlation_over_positions_fixed_number_elements(position_series)
     subsets = [
         ("", enrichment_df),
         ("reference", enrichment_df[enrichment_df["starr_reference"] == True]),
         ("synthetic", enrichment_df[enrichment_df["starr_reference"] == False]),
+        ("binding", enrichment_df[enrichment_df["starr_binding_status"] == "binding"]),
+        ("non_binding", enrichment_df[enrichment_df["starr_binding_status"] == "non_binding"]),
     ]
     if "condition" in enrichment_df.columns and len(enrichment_df["condition"].unique()) > 1:
         subsets += [
