@@ -141,12 +141,10 @@ def test_gene_stats_derived_correctly():
     stats_by_gene = pool.gene_stats.set_index("gene_id")
 
     assert stats_by_gene.loc["gene_a", "n_mutations"] == 2
-    assert stats_by_gene.loc["gene_a", "reference_length"] == len(reference_a)
     assert stats_by_gene.loc["gene_a", "initial_fitness"] == pytest.approx(0.2)
     assert stats_by_gene.loc["gene_a", "final_fitness"] == pytest.approx(0.7)
 
     assert stats_by_gene.loc["gene_b", "n_mutations"] == 1
-    assert stats_by_gene.loc["gene_b", "reference_length"] == len(reference_b)
     assert stats_by_gene.loc["gene_b", "initial_fitness"] == pytest.approx(0.4)
     assert stats_by_gene.loc["gene_b", "final_fitness"] == pytest.approx(0.4)
 
@@ -360,7 +358,6 @@ def test_build_gene_stats_row_populates_all_columns():
         "n_mutations": 2,
         "initial_fitness": pytest.approx(0.2),
         "final_fitness": pytest.approx(0.7),
-        "reference_length": len(reference),
     }
 
 

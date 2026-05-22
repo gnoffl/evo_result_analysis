@@ -40,7 +40,6 @@ GENE_STATS_COLUMNS = [
     "n_mutations",
     "initial_fitness",
     "final_fitness",
-    "reference_length",
 ]
 
 
@@ -137,7 +136,6 @@ def _build_gene_stats_row(
         "n_mutations": n_mutations,
         "initial_fitness": initial_fitness,
         "final_fitness": final_fitness,
-        "reference_length": len(gene.reference_sequence),
     }
 
 
@@ -149,7 +147,7 @@ class MutationPool:
         mutations: Long-format DataFrame with one row per SNP across all genes.
             Columns: ``gene_id``, ``position``, ``source_base``, ``new_base``.
         gene_stats: One row per gene. Columns: ``gene_id``, ``n_mutations``,
-            ``initial_fitness``, ``final_fitness``, ``reference_length``.
+            ``initial_fitness``, ``final_fitness``.
             ``initial_fitness`` is the fitness of the pareto-front sequence with
             the fewest mutations; ``final_fitness`` is the fitness of the
             sequence with the most mutations (highest fitness on the front).
@@ -202,9 +200,7 @@ class MutationPool:
                 )
 
             mutation_rows.extend(_build_mutation_rows(gene_id, kept))
-            gene_stats_rows.append(
-                _build_gene_stats_row(gene_id, gene, len(kept), generation)
-            )
+            gene_stats_rows.append(_build_gene_stats_row(gene_id, gene, len(kept), generation))
             references[gene_id] = gene.reference_sequence
 
         mutations_df = pd.DataFrame(mutation_rows, columns=MUTATION_COLUMNS)
@@ -260,80 +256,55 @@ class MutationPool:
 
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for the mutation-pool extraction entry point."""
-    parser = argparse.ArgumentParser(
-        description=(
-            "Extract a MutationPool from a summarized-mutations JSON file "
-            "and persist it for downstream PMF construction."
-        )
-    )
-    parser.add_argument(
-        "--input",
-        "-i",
-        type=str,
-        required=True,
-        help="Path to a summarized-mutations JSON (all_mutated_sequences_*.json).",
-    )
-    parser.add_argument(
-        "--output",
-        "-o",
-        type=str,
-        required=True,
-        help="Path for the output mutation_pool JSON.",
-    )
-    parser.add_argument(
-        "--generation",
-        "-g",
-        type=int,
-        default=1999,
-        help="Generation to extract from each gene's generation dict.",
-    )
+    parser = argparse.ArgumentParser( description="Extract a MutationPool from a summarized-mutations JSON file and persist it for downstream PMF construction.")
+    parser.add_argument("--input", "-i", type=str, required=True, help="Path to a summarized-mutations JSON (all_mutated_sequences_*.json).",)
+    parser.add_argument("--output", "-o", type=str, required=True, help="Path for the output mutation_pool JSON.",)
+    parser.add_argument("--generation", "-g", type=int, default=1999, help="Generation to extract from each gene's generation dict.",)
     args = parser.parse_args()
     if not os.path.isfile(args.input):
-        raise ValueError(
-            f"Input file '{args.input}' does not exist or is not a file."
-        )
+        raise ValueError(f"Input file '{args.input}' does not exist or is not a file.")
     return args
 
 
 def main() -> None:
     """CLI entry point: build a MutationPool and persist it to disk."""
-    print_section_header("MUTATION POOL EXTRACTION", "=")
-    print_status(f"Started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    # print_section_header("MUTATION POOL EXTRACTION", "=")
+    # print_status(f"Started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     args = parse_args()
 
-    print_subsection("Configuration")
-    print(f"  Input:      {args.input}")
-    print(f"  Output:     {args.output}")
-    print(f"  Generation: {args.generation}")
+    # print_subsection("Configuration")
+    # print(f"  Input:      {args.input}")
+    # print(f"  Output:     {args.output}")
+    # print(f"  Generation: {args.generation}")
 
     try:
-        print_subsection("Building Mutation Pool")
+        # print_subsection("Building Mutation Pool")
         pool = MutationPool.from_summarized_json(
             args.input, generation=args.generation
         )
-        print_status(
-            f"Collected {len(pool.mutations)} mutations across "
-            f"{len(pool.gene_stats)} genes",
-            "SUCCESS",
-        )
+        # print_status(
+        #     f"Collected {len(pool.mutations)} mutations across "
+        #     f"{len(pool.gene_stats)} genes",
+        #     "SUCCESS",
+        # )
 
         output_dir = os.path.dirname(os.path.abspath(args.output))
         os.makedirs(output_dir, exist_ok=True)
 
-        print_subsection("Saving Pool")
-        print_status(f"Writing pool to {args.output}")
+        # print_subsection("Saving Pool")
+        # print_status(f"Writing pool to {args.output}")
         pool.save(args.output)
-        print_status("Saved successfully", "SUCCESS")
+        # print_status("Saved successfully", "SUCCESS")
 
-        print_section_header("EXTRACTION COMPLETE", "=")
-        print_status(
-            f"Finished at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        print(f"\nOUTPUT_FILE={args.output}\n")
+        # print_section_header("EXTRACTION COMPLETE", "=")
+        # print_status(
+        #     f"Finished at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        # )
+        # print(f"\nOUTPUT_FILE={args.output}\n")
     except Exception as e:
-        print_section_header("EXTRACTION FAILED", "=")
-        print_status(f"Error: {e}", "ERROR")
+        # print_section_header("EXTRACTION FAILED", "=")
+        # print_status(f"Error: {e}", "ERROR")
         raise
 
 
