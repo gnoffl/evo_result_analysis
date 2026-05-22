@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 from analysis.utils.io import print_status
+from tqdm import tqdm
 from workflows.mutation_distribution_analysis.mutation_pool import MutationPool
 
 
@@ -196,7 +197,7 @@ def generate_baselines_fasta(
     gene_stats_by_id = pool.gene_stats.set_index("gene_id")
 
     with open(output_path, "w") as fasta:
-        for gene_id, wildtype in pool.references.items():
+        for gene_id, wildtype in tqdm(pool.references.items(), desc="Generating baselines"):
             k = int(gene_stats_by_id.loc[gene_id, "n_mutations"])
             applicable = _filter_applicable(pool.mutations, wildtype)
             unique_positions = applicable["position"].nunique()
