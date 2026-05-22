@@ -21,6 +21,8 @@ pip install -e .   # editable install (recommended for development)
 
 Python ≥ 3.8 required. Key dependencies: numpy, pandas, scipy, matplotlib, seaborn, tensorflow, pyfaidx, sklearn.
 
+All necessary dependencies are installed in the conda environment "deepCREshap".
+
 ## Running Tests
 
 ```bash

@@ -101,7 +101,7 @@ Before using baselines in downstream analysis, verify the sampler is well-calibr
 ## Key Design Decisions
 
 | Decision | Choice | Rationale |
-|---|---|---|
+| --- | --- | --- |
 | Indels | Excluded | Algorithm only introduces SNPs |
 | Pooling | Across all genes | ~75k mutations gives reliable empirical estimates |
 | Source base | Included | Genes have different sequences; conflating source bases is incorrect |
