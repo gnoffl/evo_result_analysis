@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from typing import Dict, List, Tuple
 from unittest import mock
+import pandas as pd
 
 import pandas.testing as pdt
 
@@ -54,11 +55,7 @@ class TestFromSummarizedJson(unittest.TestCase):
         reference = "ACGT" * 10
         low = _make_sequence(reference, [(0, "A", "T")], fitness=0.10)
         mid = _make_sequence(reference, [(0, "A", "T"), (5, "C", "G")], fitness=0.50)
-        high = _make_sequence(
-            reference,
-            [(0, "A", "T"), (5, "C", "G"), (9, "T", "A")],
-            fitness=0.99,
-        )
+        high = _make_sequence(reference, [(0, "A", "T"), (5, "C", "G"), (9, "T", "A")], fitness=0.99,)
         gene = _make_gene(reference, {1999: [low, mid, high]})
 
         with mock.patch.object(
@@ -108,18 +105,20 @@ class TestFromSummarizedJson(unittest.TestCase):
             reference_a,
             {
                 1999: [
-                    _make_sequence(reference_a, [(0, "A", "T")], fitness=0.2),
-                    _make_sequence(
-                        reference_a,
-                        [(0, "A", "T"), (4, "A", "G")],
-                        fitness=0.7,
-                    ),
+                    _make_sequence(reference_a, [], fitness=0.2),
+                    _make_sequence(reference_a, [(0, "A", "T")], fitness=0.3),
+                    _make_sequence(reference_a, [(0, "A", "T"), (4, "A", "G"), (2, "G", "C")], fitness=0.7,),
                 ]
             },
         )
         gene_b = _make_gene(
             reference_b,
-            {1999: [_make_sequence(reference_b, [(1, "G", "A")], fitness=0.4)]},
+            {
+                1999: [
+                    _make_sequence(reference_b, [], fitness=0.2),
+                    _make_sequence(reference_b, [(1, "G", "A")], fitness=0.4)
+                ]
+            },
         )
 
         with mock.patch.object(
@@ -131,41 +130,19 @@ class TestFromSummarizedJson(unittest.TestCase):
 
         stats_by_gene = pool.gene_stats.set_index("gene_id")
 
-        self.assertEqual(stats_by_gene.loc["gene_a", "n_mutations"], 2)
+        self.assertEqual(stats_by_gene.loc["gene_a", "n_mutations"], 3)
         self.assertAlmostEqual(stats_by_gene.loc["gene_a", "initial_fitness"], 0.2)
         self.assertAlmostEqual(stats_by_gene.loc["gene_a", "final_fitness"], 0.7)
 
         self.assertEqual(stats_by_gene.loc["gene_b", "n_mutations"], 1)
-        self.assertAlmostEqual(stats_by_gene.loc["gene_b", "initial_fitness"], 0.4)
+        self.assertAlmostEqual(stats_by_gene.loc["gene_b", "initial_fitness"], 0.2)
         self.assertAlmostEqual(stats_by_gene.loc["gene_b", "final_fitness"], 0.4)
 
     def test_mutations_dataframe_shape_and_columns(self) -> None:
         """mutations DataFrame has expected columns and total row count."""
         reference = "ACGT" * 10
-        gene_a = _make_gene(
-            reference,
-            {
-                1999: [
-                    _make_sequence(
-                        reference,
-                        [(0, "A", "T"), (4, "A", "G"), (8, "A", "C")],
-                        fitness=0.9,
-                    )
-                ]
-            },
-        )
-        gene_b = _make_gene(
-            reference,
-            {
-                1999: [
-                    _make_sequence(
-                        reference,
-                        [(1, "C", "G"), (5, "C", "A")],
-                        fitness=0.8,
-                    )
-                ]
-            },
-        )
+        gene_a = _make_gene(reference, {1999: [_make_sequence(reference, [(0, "A", "T"), (4, "A", "G"), (8, "A", "C")], fitness=0.9,) ]},)
+        gene_b = _make_gene(reference, {1999: [_make_sequence(reference, [(1, "C", "G"), (5, "C", "A")], fitness=0.8,)]},)
 
         with mock.patch.object(
             mp,
@@ -181,7 +158,57 @@ class TestFromSummarizedJson(unittest.TestCase):
         self.assertEqual(len(pool.mutations), 5)  # 3 + 2
         per_gene = pool.mutations.groupby("gene_id").size().to_dict()
         self.assertEqual(per_gene, {"gene_a": 3, "gene_b": 2})
+    
+    def test_check_results(self) -> None:
+        """Check that the results are correct for a simple case."""
+        reference = "ACGT" * 10
+        gene_a = _make_gene(reference, {1999: [
+            _make_sequence(reference, [], fitness=0.5,),
+            _make_sequence(reference, [(0, "A", "T"), (4, "A", "G")], fitness=0.9,),
+        ]})
+        gene_b = _make_gene(reference, {1999: [
+            _make_sequence(reference, [], fitness=0.3,),
+            _make_sequence(reference, [(0, "A", "T"), (4, "A", "C"), (8, "A", "G"), (12, "A", "T"), (17, "C", "G")], fitness=0.9,),
+        ]})
 
+        with mock.patch.object(
+            mp, "load_mutations_from_json", return_value={"gene_a": gene_a, "gene_b": gene_b}
+        ):
+            pool = MutationPool.from_summarized_json("ignored.json", generation=1999)
+
+        expected_mutations = pd.DataFrame(
+            {
+                "gene_id": ["gene_a", "gene_a", "gene_b", "gene_b", "gene_b", "gene_b", "gene_b"],
+                "position": [0, 4, 0, 4, 8, 12, 17],
+                "source_base": ["A", "A", "A", "A", "A", "A", "C"],
+                "new_base": ["T", "G", "T", "C", "G", "T", "G"],
+            }
+        )
+        expected_gene_stats = pd.DataFrame(
+            {
+                "gene_id": ["gene_a", "gene_b"],
+                "n_mutations": [2, 5],
+                "initial_fitness": [0.5, 0.3],
+                "final_fitness": [0.9, 0.9],
+            }
+        )
+        expected_references = {"gene_a": reference, "gene_b": reference}
+        pdt.assert_frame_equal(pool.mutations.reset_index(drop=True), expected_mutations)
+        pdt.assert_frame_equal(pool.gene_stats.reset_index(drop=True), expected_gene_stats)
+        self.assertEqual(pool.references, expected_references)
+
+    def test_empty_generation(self) -> None:
+        """If the specified generation is empty for a gene, that gene is skipped."""
+        reference = "ACGT" * 10
+        gene_a = _make_gene(reference, {1999: []})
+
+        with mock.patch.object(
+            mp,
+            "load_mutations_from_json",
+            return_value={"gene_a": gene_a},
+        ):
+            with self.assertRaises(ValueError) as context:
+                pool = MutationPool.from_summarized_json("ignored.json", generation=1999)
 
 # ---------------------------------------------------------------------------
 # _select_best_sequence
@@ -277,9 +304,9 @@ class TestBuildMutationRows(unittest.TestCase):
 
     def test_returns_long_format_dicts(self) -> None:
         """Each tuple becomes a dict with the expected keys and the given gene_id."""
-        kept = [(0, "A", "C"), (5, "G", "T")]
+        mutations = [(0, "A", "C"), (5, "G", "T")]
 
-        rows = mp._build_mutation_rows("gene_a", kept)
+        rows = mp._build_mutation_rows("gene_a", mutations)
 
         self.assertEqual(rows, [
             {"gene_id": "gene_a", "position": 0, "source_base": "A", "new_base": "C"},
@@ -287,7 +314,7 @@ class TestBuildMutationRows(unittest.TestCase):
         ])
 
     def test_empty_input_returns_empty_list(self) -> None:
-        """An empty kept list yields an empty row list."""
+        """An empty mutations list yields an empty row list."""
         rows = mp._build_mutation_rows("gene_a", [])
 
         self.assertEqual(rows, [])
@@ -304,17 +331,10 @@ class TestBuildGeneStatsRow(unittest.TestCase):
     def test_populates_all_columns(self) -> None:
         """The returned dict matches GENE_STATS_COLUMNS with derived values."""
         reference = "ACGT" * 25  # length 100
-        gene = _make_gene(
-            reference,
-            {
-                1999: [
-                    _make_sequence(reference, [(0, "A", "T")], fitness=0.2),
-                    _make_sequence(
-                        reference, [(0, "A", "T"), (4, "A", "G")], fitness=0.7
-                    ),
-                ]
-            },
-        )
+        gene = _make_gene(reference,{1999: [
+            _make_sequence(reference, [], fitness=0.2),
+            _make_sequence(reference, [(0, "A", "T"), (4, "A", "G")], fitness=0.7),
+        ]})
 
         row = mp._build_gene_stats_row("gene_a", gene, n_mutations=2, generation=1999)
 
@@ -326,19 +346,8 @@ class TestBuildGeneStatsRow(unittest.TestCase):
     def test_uses_provided_n_mutations(self) -> None:
         """``n_mutations`` is taken from the argument, not recomputed from the gene."""
         reference = "ACGT" * 10
-        gene = _make_gene(
-            reference,
-            {
-                1999: [
-                    _make_sequence(
-                        reference, [(0, "A", "T"), (1, "C", "G")], fitness=0.5
-                    )
-                ]
-            },
-        )
-
+        gene = _make_gene(reference,{1999: [_make_sequence(reference, [(0, "A", "T"), (1, "C", "G")], fitness=0.5)]})
         row = mp._build_gene_stats_row("gene_a", gene, n_mutations=7, generation=1999)
-
         self.assertEqual(row["n_mutations"], 7)
 
 
@@ -353,18 +362,7 @@ class TestSaveLoadRoundtrip(unittest.TestCase):
     def test_roundtrip(self) -> None:
         """Saving a pool and reloading reproduces the original tables and refs."""
         reference = "ACGT" * 10
-        gene = _make_gene(
-            reference,
-            {
-                1999: [
-                    _make_sequence(
-                        reference,
-                        [(0, "A", "T"), (4, "A", "G")],
-                        fitness=0.9,
-                    )
-                ]
-            },
-        )
+        gene = _make_gene(reference, {1999: [_make_sequence(reference, [(0, "A", "T"), (4, "A", "G")], fitness=0.9,)]})
 
         with mock.patch.object(
             mp, "load_mutations_from_json", return_value={"gene_a": gene}

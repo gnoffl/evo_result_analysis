@@ -91,13 +91,13 @@ def _filter_valid_mutations(
 
 
 def _build_mutation_rows(
-    gene_id: str, kept: List[Tuple[int, str, str]]
+    gene_id: str, mutations: List[Tuple[int, str, str]]
 ) -> List[Dict[str, object]]:
     """Convert kept mutation tuples into long-format row dicts.
 
     Args:
         gene_id: Gene identifier to attach to every emitted row.
-        kept: List of ``(position, source_base, new_base)`` tuples.
+        mutations: List of ``(position, source_base, new_base)`` tuples.
 
     Returns:
         One dict per input tuple, matching ``MUTATION_COLUMNS``.
@@ -109,7 +109,7 @@ def _build_mutation_rows(
             "source_base": ref_base,
             "new_base": mut_base,
         }
-        for position, ref_base, mut_base in kept
+        for position, ref_base, mut_base in mutations
     ]
 
 
@@ -191,13 +191,13 @@ class MutationPool:
 
         for gene_id, gene in genes.items():
             best_sequence = _select_best_sequence(gene_id, gene, generation)
-            kept, dropped = _filter_valid_mutations(best_sequence.mutations)
+            mutations, invalid_mutation_count = _filter_valid_mutations(best_sequence.mutations)
 
-            if dropped:
-                print_status(f"{gene_id}: dropped {dropped} non-ACGT mutation(s)", "WARNING",)
+            if invalid_mutation_count:
+                print_status(f"{gene_id}: dropped {invalid_mutation_count} non-ACGT mutation(s)", "WARNING",)
 
-            mutation_rows.extend(_build_mutation_rows(gene_id, kept))
-            gene_stats_rows.append(_build_gene_stats_row(gene_id, gene, len(kept), generation))
+            mutation_rows.extend(_build_mutation_rows(gene_id, mutations))
+            gene_stats_rows.append(_build_gene_stats_row(gene_id, gene, len(mutations), generation))
             references[gene_id] = gene.reference_sequence
 
         mutations_df = pd.DataFrame(mutation_rows, columns=MUTATION_COLUMNS)
