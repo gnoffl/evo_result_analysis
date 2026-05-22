@@ -194,10 +194,7 @@ class MutationPool:
             kept, dropped = _filter_valid_mutations(best_sequence.mutations)
 
             if dropped:
-                print_status(
-                    f"{gene_id}: dropped {dropped} non-ACGT mutation(s)",
-                    "WARNING",
-                )
+                print_status(f"{gene_id}: dropped {dropped} non-ACGT mutation(s)", "WARNING",)
 
             mutation_rows.extend(_build_mutation_rows(gene_id, kept))
             gene_stats_rows.append(_build_gene_stats_row(gene_id, gene, len(kept), generation))

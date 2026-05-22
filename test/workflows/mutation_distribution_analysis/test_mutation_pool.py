@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import tempfile
+import unittest
 from typing import Dict, List, Tuple
 from unittest import mock
 
-import pandas as pd
 import pandas.testing as pdt
-import pytest
 
 from analysis.mutations.summarize_mutations import MutatedSequence, MutationsGene
 from workflows.mutation_distribution_analysis import mutation_pool as mp
@@ -46,156 +46,141 @@ def _make_gene(
 # ---------------------------------------------------------------------------
 
 
-def test_from_summarized_json_selects_highest_fitness():
-    """The highest-fitness pareto-front sequence is picked for each gene."""
-    # Arrange
-    reference = "ACGT" * 10
-    low = _make_sequence(reference, [(0, "A", "T")], fitness=0.10)
-    mid = _make_sequence(reference, [(0, "A", "T"), (5, "C", "G")], fitness=0.50)
-    high = _make_sequence(
-        reference,
-        [(0, "A", "T"), (5, "C", "G"), (9, "T", "A")],
-        fitness=0.99,
-    )
-    gene = _make_gene(reference, {1999: [low, mid, high]})
+class TestFromSummarizedJson(unittest.TestCase):
+    """Tests for MutationPool.from_summarized_json."""
 
-    with mock.patch.object(
-        mp, "load_mutations_from_json", return_value={"gene_a": gene}
-    ):
-        # Act
-        pool = MutationPool.from_summarized_json("ignored.json", generation=1999)
+    def test_selects_highest_fitness(self) -> None:
+        """The highest-fitness pareto-front sequence is picked for each gene."""
+        reference = "ACGT" * 10
+        low = _make_sequence(reference, [(0, "A", "T")], fitness=0.10)
+        mid = _make_sequence(reference, [(0, "A", "T"), (5, "C", "G")], fitness=0.50)
+        high = _make_sequence(
+            reference,
+            [(0, "A", "T"), (5, "C", "G"), (9, "T", "A")],
+            fitness=0.99,
+        )
+        gene = _make_gene(reference, {1999: [low, mid, high]})
 
-    # Assert
-    assert len(pool.mutations) == 3
-    assert set(pool.mutations["position"]) == {0, 5, 9}
-    assert pool.gene_stats.loc[0, "n_mutations"] == 3
-    assert pool.gene_stats.loc[0, "initial_fitness"] == pytest.approx(0.10)
-    assert pool.gene_stats.loc[0, "final_fitness"] == pytest.approx(0.99)
+        with mock.patch.object(
+            mp, "load_mutations_from_json", return_value={"gene_a": gene}
+        ):
+            pool = MutationPool.from_summarized_json("ignored.json", generation=1999)
 
+        self.assertEqual(len(pool.mutations), 3)
+        self.assertEqual(set(pool.mutations["position"]), {0, 5, 9})
+        self.assertEqual(pool.gene_stats.loc[0, "n_mutations"], 3)
+        self.assertAlmostEqual(pool.gene_stats.loc[0, "initial_fitness"], 0.10)
+        self.assertAlmostEqual(pool.gene_stats.loc[0, "final_fitness"], 0.99)
 
-def test_filters_non_acgt_mutations():
-    """Mutations with non-ACGT source or new bases are dropped."""
-    # Arrange
-    reference = "ACGT" * 10
-    seq = _make_sequence(
-        reference,
-        [
-            (1, "N", "A"),   # invalid source -> drop
-            (2, "A", "N"),   # invalid new -> drop
-            (3, "A", "C"),   # valid -> keep
-            (4, "C", "T"),   # valid -> keep
-        ],
-        fitness=0.8,
-    )
-    gene = _make_gene(reference, {1999: [seq]})
+    def test_filters_non_acgt_mutations(self) -> None:
+        """Mutations with non-ACGT source or new bases are dropped."""
+        reference = "ACGT" * 10
+        seq = _make_sequence(
+            reference,
+            [
+                (1, "N", "A"),  # invalid source -> drop
+                (2, "A", "N"),  # invalid new -> drop
+                (3, "A", "C"),  # valid -> keep
+                (4, "C", "T"),  # valid -> keep
+            ],
+            fitness=0.8,
+        )
+        gene = _make_gene(reference, {1999: [seq]})
 
-    with mock.patch.object(
-        mp, "load_mutations_from_json", return_value={"gene_a": gene}
-    ):
-        # Act
-        pool = MutationPool.from_summarized_json("ignored.json", generation=1999)
+        with mock.patch.object(
+            mp, "load_mutations_from_json", return_value={"gene_a": gene}
+        ):
+            pool = MutationPool.from_summarized_json("ignored.json", generation=1999)
 
-    # Assert
-    assert len(pool.mutations) == 2
-    kept_positions = sorted(pool.mutations["position"].tolist())
-    assert kept_positions == [3, 4]
-    assert set(pool.mutations["source_base"]).issubset({"A", "C", "G", "T"})
-    assert set(pool.mutations["new_base"]).issubset({"A", "C", "G", "T"})
-    # gene_stats should reflect kept mutations only
-    assert pool.gene_stats.loc[0, "n_mutations"] == 2
+        self.assertEqual(len(pool.mutations), 2)
+        kept_positions = sorted(pool.mutations["position"].tolist())
+        self.assertEqual(kept_positions, [3, 4])
+        self.assertTrue(set(pool.mutations["source_base"]).issubset({"A", "C", "G", "T"}))
+        self.assertTrue(set(pool.mutations["new_base"]).issubset({"A", "C", "G", "T"}))
+        self.assertEqual(pool.gene_stats.loc[0, "n_mutations"], 2)
 
+    def test_gene_stats_derived_correctly(self) -> None:
+        """gene_stats fields match the underlying mutation list and reference."""
+        reference_a = "ACGT" * 25  # length 100
+        reference_b = "TGCA" * 50  # length 200
 
-def test_gene_stats_derived_correctly():
-    """gene_stats fields match the underlying mutation list and reference."""
-    # Arrange
-    reference_a = "ACGT" * 25  # length 100
-    reference_b = "TGCA" * 50  # length 200
+        gene_a = _make_gene(
+            reference_a,
+            {
+                1999: [
+                    _make_sequence(reference_a, [(0, "A", "T")], fitness=0.2),
+                    _make_sequence(
+                        reference_a,
+                        [(0, "A", "T"), (4, "A", "G")],
+                        fitness=0.7,
+                    ),
+                ]
+            },
+        )
+        gene_b = _make_gene(
+            reference_b,
+            {1999: [_make_sequence(reference_b, [(1, "G", "A")], fitness=0.4)]},
+        )
 
-    gene_a = _make_gene(
-        reference_a,
-        {
-            1999: [
-                _make_sequence(reference_a, [(0, "A", "T")], fitness=0.2),
-                _make_sequence(
-                    reference_a,
-                    [(0, "A", "T"), (4, "A", "G")],
-                    fitness=0.7,
-                ),
-            ]
-        },
-    )
-    gene_b = _make_gene(
-        reference_b,
-        {1999: [_make_sequence(reference_b, [(1, "G", "A")], fitness=0.4)]},
-    )
+        with mock.patch.object(
+            mp,
+            "load_mutations_from_json",
+            return_value={"gene_a": gene_a, "gene_b": gene_b},
+        ):
+            pool = MutationPool.from_summarized_json("ignored.json", generation=1999)
 
-    with mock.patch.object(
-        mp,
-        "load_mutations_from_json",
-        return_value={"gene_a": gene_a, "gene_b": gene_b},
-    ):
-        # Act
-        pool = MutationPool.from_summarized_json("ignored.json", generation=1999)
+        stats_by_gene = pool.gene_stats.set_index("gene_id")
 
-    # Assert
-    stats_by_gene = pool.gene_stats.set_index("gene_id")
+        self.assertEqual(stats_by_gene.loc["gene_a", "n_mutations"], 2)
+        self.assertAlmostEqual(stats_by_gene.loc["gene_a", "initial_fitness"], 0.2)
+        self.assertAlmostEqual(stats_by_gene.loc["gene_a", "final_fitness"], 0.7)
 
-    assert stats_by_gene.loc["gene_a", "n_mutations"] == 2
-    assert stats_by_gene.loc["gene_a", "initial_fitness"] == pytest.approx(0.2)
-    assert stats_by_gene.loc["gene_a", "final_fitness"] == pytest.approx(0.7)
+        self.assertEqual(stats_by_gene.loc["gene_b", "n_mutations"], 1)
+        self.assertAlmostEqual(stats_by_gene.loc["gene_b", "initial_fitness"], 0.4)
+        self.assertAlmostEqual(stats_by_gene.loc["gene_b", "final_fitness"], 0.4)
 
-    assert stats_by_gene.loc["gene_b", "n_mutations"] == 1
-    assert stats_by_gene.loc["gene_b", "initial_fitness"] == pytest.approx(0.4)
-    assert stats_by_gene.loc["gene_b", "final_fitness"] == pytest.approx(0.4)
+    def test_mutations_dataframe_shape_and_columns(self) -> None:
+        """mutations DataFrame has expected columns and total row count."""
+        reference = "ACGT" * 10
+        gene_a = _make_gene(
+            reference,
+            {
+                1999: [
+                    _make_sequence(
+                        reference,
+                        [(0, "A", "T"), (4, "A", "G"), (8, "A", "C")],
+                        fitness=0.9,
+                    )
+                ]
+            },
+        )
+        gene_b = _make_gene(
+            reference,
+            {
+                1999: [
+                    _make_sequence(
+                        reference,
+                        [(1, "C", "G"), (5, "C", "A")],
+                        fitness=0.8,
+                    )
+                ]
+            },
+        )
 
+        with mock.patch.object(
+            mp,
+            "load_mutations_from_json",
+            return_value={"gene_a": gene_a, "gene_b": gene_b},
+        ):
+            pool = MutationPool.from_summarized_json("ignored.json", generation=1999)
 
-def test_mutations_dataframe_shape_and_columns():
-    """mutations DataFrame has expected columns and total row count."""
-    # Arrange
-    reference = "ACGT" * 10
-    gene_a = _make_gene(
-        reference,
-        {
-            1999: [
-                _make_sequence(
-                    reference,
-                    [(0, "A", "T"), (4, "A", "G"), (8, "A", "C")],
-                    fitness=0.9,
-                )
-            ]
-        },
-    )
-    gene_b = _make_gene(
-        reference,
-        {
-            1999: [
-                _make_sequence(
-                    reference,
-                    [(1, "C", "G"), (5, "C", "A")],
-                    fitness=0.8,
-                )
-            ]
-        },
-    )
-
-    with mock.patch.object(
-        mp,
-        "load_mutations_from_json",
-        return_value={"gene_a": gene_a, "gene_b": gene_b},
-    ):
-        # Act
-        pool = MutationPool.from_summarized_json("ignored.json", generation=1999)
-
-    # Assert
-    assert list(pool.mutations.columns) == [
-        "gene_id",
-        "position",
-        "source_base",
-        "new_base",
-    ]
-    assert len(pool.mutations) == 5  # 3 + 2
-    per_gene = pool.mutations.groupby("gene_id").size().to_dict()
-    assert per_gene == {"gene_a": 3, "gene_b": 2}
+        self.assertEqual(
+            list(pool.mutations.columns),
+            ["gene_id", "position", "source_base", "new_base"],
+        )
+        self.assertEqual(len(pool.mutations), 5)  # 3 + 2
+        per_gene = pool.mutations.groupby("gene_id").size().to_dict()
+        self.assertEqual(per_gene, {"gene_a": 3, "gene_b": 2})
 
 
 # ---------------------------------------------------------------------------
@@ -203,40 +188,34 @@ def test_mutations_dataframe_shape_and_columns():
 # ---------------------------------------------------------------------------
 
 
-def test_select_best_sequence_picks_max_fitness():
-    """The sequence with the highest fitness is returned."""
-    # Arrange
-    reference = "ACGT" * 10
-    low = _make_sequence(reference, [(0, "A", "T")], fitness=0.10)
-    mid = _make_sequence(reference, [(1, "C", "G")], fitness=0.50)
-    high = _make_sequence(reference, [(2, "G", "A")], fitness=0.99)
-    gene = _make_gene(reference, {1999: [low, mid, high]})
+class TestSelectBestSequence(unittest.TestCase):
+    """Tests for mp._select_best_sequence."""
 
-    # Act
-    best = mp._select_best_sequence("gene_a", gene, 1999)
+    def test_picks_max_fitness(self) -> None:
+        """The sequence with the highest fitness is returned."""
+        reference = "ACGT" * 10
+        low = _make_sequence(reference, [(0, "A", "T")], fitness=0.10)
+        mid = _make_sequence(reference, [(1, "C", "G")], fitness=0.50)
+        high = _make_sequence(reference, [(2, "G", "A")], fitness=0.99)
+        gene = _make_gene(reference, {1999: [low, mid, high]})
 
-    # Assert
-    assert best is high
+        best = mp._select_best_sequence("gene_a", gene, 1999)
 
+        self.assertIs(best, high)
 
-def test_select_best_sequence_raises_when_generation_missing():
-    """Missing generation key raises ValueError mentioning gene and generation."""
-    # Arrange
-    gene = _make_gene("ACGT" * 10, {1999: []})
+    def test_raises_when_generation_missing(self) -> None:
+        """Missing generation key raises ValueError mentioning gene and generation."""
+        gene = _make_gene("ACGT" * 10, {1999: []})
 
-    # Act / Assert
-    with pytest.raises(ValueError, match="gene_a.*42"):
-        mp._select_best_sequence("gene_a", gene, 42)
+        with self.assertRaisesRegex(ValueError, "gene_a.*42"):
+            mp._select_best_sequence("gene_a", gene, 42)
 
+    def test_raises_when_generation_empty(self) -> None:
+        """Empty sequence list for the requested generation raises ValueError."""
+        gene = _make_gene("ACGT" * 10, {1999: []})
 
-def test_select_best_sequence_raises_when_generation_empty():
-    """Empty sequence list for the requested generation raises ValueError."""
-    # Arrange
-    gene = _make_gene("ACGT" * 10, {1999: []})
-
-    # Act / Assert
-    with pytest.raises(ValueError, match="gene_a.*1999"):
-        mp._select_best_sequence("gene_a", gene, 1999)
+        with self.assertRaisesRegex(ValueError, "gene_a.*1999"):
+            mp._select_best_sequence("gene_a", gene, 1999)
 
 
 # ---------------------------------------------------------------------------
@@ -244,59 +223,48 @@ def test_select_best_sequence_raises_when_generation_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_filter_valid_mutations_keeps_all_acgt():
-    """All mutations with ACGT source and new bases are kept."""
-    # Arrange
-    mutations = [(0, "A", "C"), (1, "G", "T"), (2, "C", "A")]
+class TestFilterValidMutations(unittest.TestCase):
+    """Tests for mp._filter_valid_mutations."""
 
-    # Act
-    kept, dropped = mp._filter_valid_mutations(mutations)
+    def test_keeps_all_acgt(self) -> None:
+        """All mutations with ACGT source and new bases are kept."""
+        mutations = [(0, "A", "C"), (1, "G", "T"), (2, "C", "A")]
 
-    # Assert
-    assert kept == mutations
-    assert dropped == 0
+        kept, dropped = mp._filter_valid_mutations(mutations)
 
+        self.assertEqual(kept, mutations)
+        self.assertEqual(dropped, 0)
 
-def test_filter_valid_mutations_partitions_mixed_input():
-    """Non-ACGT source or new base entries are dropped; rest is kept in order."""
-    # Arrange
-    mutations = [
-        (0, "N", "A"),   # invalid source
-        (1, "A", "N"),   # invalid new
-        (2, "A", "C"),   # valid
-        (3, "g", "T"),   # invalid (lowercase)
-        (4, "C", "T"),   # valid
-    ]
+    def test_partitions_mixed_input(self) -> None:
+        """Non-ACGT source or new base entries are dropped; rest is kept in order."""
+        mutations = [
+            (0, "N", "A"),  # invalid source
+            (1, "A", "N"),  # invalid new
+            (2, "A", "C"),  # valid
+            (3, "g", "T"),  # invalid (lowercase)
+            (4, "C", "T"),  # valid
+        ]
 
-    # Act
-    kept, dropped = mp._filter_valid_mutations(mutations)
+        kept, dropped = mp._filter_valid_mutations(mutations)
 
-    # Assert
-    assert kept == [(2, "A", "C"), (4, "C", "T")]
-    assert dropped == 3
+        self.assertEqual(kept, [(2, "A", "C"), (4, "C", "T")])
+        self.assertEqual(dropped, 3)
 
+    def test_empty_input(self) -> None:
+        """An empty input yields an empty kept list and zero drops."""
+        kept, dropped = mp._filter_valid_mutations([])
 
-def test_filter_valid_mutations_empty_input():
-    """An empty input yields an empty kept list and zero drops."""
-    # Act
-    kept, dropped = mp._filter_valid_mutations([])
+        self.assertEqual(kept, [])
+        self.assertEqual(dropped, 0)
 
-    # Assert
-    assert kept == []
-    assert dropped == 0
+    def test_all_invalid(self) -> None:
+        """If every mutation is invalid, kept is empty and dropped counts all."""
+        mutations = [(0, "N", "A"), (1, "A", "X"), (2, "Z", "Q")]
 
+        kept, dropped = mp._filter_valid_mutations(mutations)
 
-def test_filter_valid_mutations_all_invalid():
-    """If every mutation is invalid, kept is empty and dropped counts all."""
-    # Arrange
-    mutations = [(0, "N", "A"), (1, "A", "X"), (2, "Z", "Q")]
-
-    # Act
-    kept, dropped = mp._filter_valid_mutations(mutations)
-
-    # Assert
-    assert kept == []
-    assert dropped == 3
+        self.assertEqual(kept, [])
+        self.assertEqual(dropped, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -304,28 +272,25 @@ def test_filter_valid_mutations_all_invalid():
 # ---------------------------------------------------------------------------
 
 
-def test_build_mutation_rows_returns_long_format_dicts():
-    """Each tuple becomes a dict with the expected keys and the given gene_id."""
-    # Arrange
-    kept = [(0, "A", "C"), (5, "G", "T")]
+class TestBuildMutationRows(unittest.TestCase):
+    """Tests for mp._build_mutation_rows."""
 
-    # Act
-    rows = mp._build_mutation_rows("gene_a", kept)
+    def test_returns_long_format_dicts(self) -> None:
+        """Each tuple becomes a dict with the expected keys and the given gene_id."""
+        kept = [(0, "A", "C"), (5, "G", "T")]
 
-    # Assert
-    assert rows == [
-        {"gene_id": "gene_a", "position": 0, "source_base": "A", "new_base": "C"},
-        {"gene_id": "gene_a", "position": 5, "source_base": "G", "new_base": "T"},
-    ]
+        rows = mp._build_mutation_rows("gene_a", kept)
 
+        self.assertEqual(rows, [
+            {"gene_id": "gene_a", "position": 0, "source_base": "A", "new_base": "C"},
+            {"gene_id": "gene_a", "position": 5, "source_base": "G", "new_base": "T"},
+        ])
 
-def test_build_mutation_rows_empty_input_returns_empty_list():
-    """An empty kept list yields an empty row list."""
-    # Act
-    rows = mp._build_mutation_rows("gene_a", [])
+    def test_empty_input_returns_empty_list(self) -> None:
+        """An empty kept list yields an empty row list."""
+        rows = mp._build_mutation_rows("gene_a", [])
 
-    # Assert
-    assert rows == []
+        self.assertEqual(rows, [])
 
 
 # ---------------------------------------------------------------------------
@@ -333,54 +298,48 @@ def test_build_mutation_rows_empty_input_returns_empty_list():
 # ---------------------------------------------------------------------------
 
 
-def test_build_gene_stats_row_populates_all_columns():
-    """The returned dict matches GENE_STATS_COLUMNS with derived values."""
-    # Arrange
-    reference = "ACGT" * 25  # length 100
-    gene = _make_gene(
-        reference,
-        {
-            1999: [
-                _make_sequence(reference, [(0, "A", "T")], fitness=0.2),
-                _make_sequence(
-                    reference, [(0, "A", "T"), (4, "A", "G")], fitness=0.7
-                ),
-            ]
-        },
-    )
+class TestBuildGeneStatsRow(unittest.TestCase):
+    """Tests for mp._build_gene_stats_row."""
 
-    # Act
-    row = mp._build_gene_stats_row("gene_a", gene, n_mutations=2, generation=1999)
+    def test_populates_all_columns(self) -> None:
+        """The returned dict matches GENE_STATS_COLUMNS with derived values."""
+        reference = "ACGT" * 25  # length 100
+        gene = _make_gene(
+            reference,
+            {
+                1999: [
+                    _make_sequence(reference, [(0, "A", "T")], fitness=0.2),
+                    _make_sequence(
+                        reference, [(0, "A", "T"), (4, "A", "G")], fitness=0.7
+                    ),
+                ]
+            },
+        )
 
-    # Assert
-    assert row == {
-        "gene_id": "gene_a",
-        "n_mutations": 2,
-        "initial_fitness": pytest.approx(0.2),
-        "final_fitness": pytest.approx(0.7),
-    }
+        row = mp._build_gene_stats_row("gene_a", gene, n_mutations=2, generation=1999)
 
+        self.assertEqual(row["gene_id"], "gene_a")
+        self.assertEqual(row["n_mutations"], 2)
+        self.assertAlmostEqual(row["initial_fitness"], 0.2)         #type: ignore
+        self.assertAlmostEqual(row["final_fitness"], 0.7)           #type: ignore
 
-def test_build_gene_stats_row_uses_provided_n_mutations():
-    """``n_mutations`` is taken from the argument, not recomputed from the gene."""
-    # Arrange
-    reference = "ACGT" * 10
-    gene = _make_gene(
-        reference,
-        {
-            1999: [
-                _make_sequence(
-                    reference, [(0, "A", "T"), (1, "C", "G")], fitness=0.5
-                )
-            ]
-        },
-    )
+    def test_uses_provided_n_mutations(self) -> None:
+        """``n_mutations`` is taken from the argument, not recomputed from the gene."""
+        reference = "ACGT" * 10
+        gene = _make_gene(
+            reference,
+            {
+                1999: [
+                    _make_sequence(
+                        reference, [(0, "A", "T"), (1, "C", "G")], fitness=0.5
+                    )
+                ]
+            },
+        )
 
-    # Act
-    row = mp._build_gene_stats_row("gene_a", gene, n_mutations=7, generation=1999)
+        row = mp._build_gene_stats_row("gene_a", gene, n_mutations=7, generation=1999)
 
-    # Assert
-    assert row["n_mutations"] == 7
+        self.assertEqual(row["n_mutations"], 7)
 
 
 # ---------------------------------------------------------------------------
@@ -388,41 +347,45 @@ def test_build_gene_stats_row_uses_provided_n_mutations():
 # ---------------------------------------------------------------------------
 
 
-def test_save_load_roundtrip(tmp_path):
-    """Saving a pool and reloading reproduces the original tables and refs."""
-    # Arrange
-    reference = "ACGT" * 10
-    gene = _make_gene(
-        reference,
-        {
-            1999: [
-                _make_sequence(
-                    reference,
-                    [(0, "A", "T"), (4, "A", "G")],
-                    fitness=0.9,
-                )
-            ]
-        },
-    )
+class TestSaveLoadRoundtrip(unittest.TestCase):
+    """Tests for MutationPool.save and MutationPool.load."""
 
-    with mock.patch.object(
-        mp, "load_mutations_from_json", return_value={"gene_a": gene}
-    ):
-        pool = MutationPool.from_summarized_json("ignored.json", generation=1999)
+    def test_roundtrip(self) -> None:
+        """Saving a pool and reloading reproduces the original tables and refs."""
+        reference = "ACGT" * 10
+        gene = _make_gene(
+            reference,
+            {
+                1999: [
+                    _make_sequence(
+                        reference,
+                        [(0, "A", "T"), (4, "A", "G")],
+                        fitness=0.9,
+                    )
+                ]
+            },
+        )
 
-    output_path = tmp_path / "pool.json"
+        with mock.patch.object(
+            mp, "load_mutations_from_json", return_value={"gene_a": gene}
+        ):
+            pool = MutationPool.from_summarized_json("ignored.json", generation=1999)
 
-    # Act
-    pool.save(str(output_path))
-    reloaded = MutationPool.load(str(output_path))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = f"{tmp_dir}/pool.json"
+            pool.save(output_path)
+            reloaded = MutationPool.load(output_path)
 
-    # Assert
-    pdt.assert_frame_equal(
-        reloaded.mutations.reset_index(drop=True),
-        pool.mutations.reset_index(drop=True),
-    )
-    pdt.assert_frame_equal(
-        reloaded.gene_stats.reset_index(drop=True),
-        pool.gene_stats.reset_index(drop=True),
-    )
-    assert reloaded.references == pool.references
+        pdt.assert_frame_equal(
+            reloaded.mutations.reset_index(drop=True),
+            pool.mutations.reset_index(drop=True),
+        )
+        pdt.assert_frame_equal(
+            reloaded.gene_stats.reset_index(drop=True),
+            pool.gene_stats.reset_index(drop=True),
+        )
+        self.assertEqual(reloaded.references, pool.references)
+
+
+if __name__ == "__main__":
+    unittest.main()
