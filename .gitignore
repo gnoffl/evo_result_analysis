@@ -11,6 +11,11 @@ src/workflows/hoffie/data/*
 src/workflows/paper_plots/figures/*
 src/workflows/overlap_analysis/correlation/*
 src/workflows/deepCRE_TPM_correlation/*.png
+src/workflows/mutation_distribution_analysis/*.txt
+src/workflows/mutation_distribution_analysis/*/*.fa
+src/workflows/mutation_distribution_analysis/*/*.fai
+src/workflows/mutation_distribution_analysis/*/*.json
+src/workflows/mutation_distribution_analysis/*/*.csv
 
 # C extensions
 *.so
