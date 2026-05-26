@@ -16,6 +16,7 @@ src/workflows/mutation_distribution_analysis/*/*.fa
 src/workflows/mutation_distribution_analysis/*/*.fai
 src/workflows/mutation_distribution_analysis/*/*.json
 src/workflows/mutation_distribution_analysis/*/*.csv
+src/workflows/mutation_distance_analysis/results/
 
 # C extensions
 *.so
