@@ -17,9 +17,12 @@ from workflows.mutation_distance_analysis import (
     mutation_distance_analysis as mda,
 )
 from workflows.mutation_distance_analysis.mutation_distance_analysis import (
+    _sample_positions_blocking,
+    _to_proportions,
     compute_random_distances,
     compute_real_distances,
     counter_to_array,
+    plot_difference,
     run_distance_analysis,
 )
 from workflows.mutation_distribution_analysis.mutation_pool import (
@@ -68,6 +71,170 @@ def _make_pool(
         gene_stats=gene_stats_df,
         references=dict(refs),
     )
+
+
+# ---------------------------------------------------------------------------
+# _sample_positions_blocking
+# ---------------------------------------------------------------------------
+
+
+class TestSamplePositionsBlocking(unittest.TestCase):
+    """Tests for _sample_positions_blocking."""
+
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _uniform_weights(n: int) -> np.ndarray:
+        """Return a uniform probability vector of length *n*."""
+        return np.full(n, 1.0 / n)
+
+    # ------------------------------------------------------------------
+    # basic contract
+    # ------------------------------------------------------------------
+
+    def test_returns_correct_number_of_positions(self) -> None:
+        """Result has exactly *k* elements."""
+        positions = np.arange(10)
+        weights = self._uniform_weights(10)
+
+        result = _sample_positions_blocking(
+            positions, weights, k=4, rng=np.random.default_rng(0)
+        )
+
+        self.assertEqual(result.shape, (4,))
+        self.assertTrue(all(isinstance(pos, np.integer) for pos in result))
+        self.assertTrue(all(0 <= pos < 10 for pos in result))
+
+    def test_all_returned_positions_are_from_input(self) -> None:
+        """Every drawn position belongs to *unique_positions*."""
+        positions = np.array([3, 7, 15, 22, 40])
+        weights = self._uniform_weights(5)
+
+        result = _sample_positions_blocking(
+            positions, weights, k=3, rng=np.random.default_rng(1)
+        )
+
+        for pos in result:
+            self.assertIn(pos, positions)
+
+    def test_all_returned_positions_are_unique(self) -> None:
+        """Position-blocking: no duplicates in a single draw."""
+        positions = np.arange(20)
+        weights = self._uniform_weights(20)
+
+        result = _sample_positions_blocking(
+            positions, weights, k=10, rng=np.random.default_rng(2)
+        )
+
+        self.assertEqual(len(result), len(set(result.tolist())))
+
+    # ------------------------------------------------------------------
+    # boundary / edge cases
+    # ------------------------------------------------------------------
+
+    def test_draw_k_equals_pool_size(self) -> None:
+        """Drawing all positions returns every position exactly once."""
+        positions = np.array([1, 5, 9])
+        weights = self._uniform_weights(3)
+
+        result = _sample_positions_blocking(
+            positions, weights, k=3, rng=np.random.default_rng(3)
+        )
+
+        self.assertEqual(sorted(result.tolist()), [1, 5, 9])
+
+    def test_draw_k_equals_one(self) -> None:
+        """Requesting a single position returns a length-1 array."""
+        positions = np.array([10, 20, 30])
+        weights = self._uniform_weights(3)
+
+        result = _sample_positions_blocking(
+            positions, weights, k=1, rng=np.random.default_rng(4)
+        )
+
+        self.assertEqual(result.shape, (1,))
+        self.assertIn(result[0], positions)
+
+    # ------------------------------------------------------------------
+    # error handling
+    # ------------------------------------------------------------------
+
+    def test_raises_value_error_when_k_exceeds_pool(self) -> None:
+        """ValueError is raised when *k* > number of unique positions."""
+        positions = np.array([1, 2, 3])
+        weights = self._uniform_weights(3)
+
+        with self.assertRaises(ValueError):
+            _sample_positions_blocking(
+                positions, weights, k=4, rng=np.random.default_rng(0)
+            )
+
+    # ------------------------------------------------------------------
+    # determinism
+    # ------------------------------------------------------------------
+
+    def test_deterministic_under_fixed_seed(self) -> None:
+        """Two calls with the same seed return identical arrays."""
+        positions = np.arange(50)
+        weights = self._uniform_weights(50)
+
+        result_a = _sample_positions_blocking(
+            positions, weights, k=10, rng=np.random.default_rng(99)
+        )
+        result_b = _sample_positions_blocking(
+            positions, weights, k=10, rng=np.random.default_rng(99)
+        )
+
+        np.testing.assert_array_equal(result_a, result_b)
+
+    def test_different_seeds_produce_different_draws(self) -> None:
+        """Two calls with different seeds almost surely differ for a large pool."""
+        positions = np.arange(100)
+        weights = self._uniform_weights(100)
+
+        result_a = _sample_positions_blocking(
+            positions, weights, k=20, rng=np.random.default_rng(7)
+        )
+        result_b = _sample_positions_blocking(
+            positions, weights, k=20, rng=np.random.default_rng(8)
+        )
+
+        # Not guaranteed in general but virtually certain for k=20 out of 100.
+        self.assertFalse(
+            np.array_equal(np.sort(result_a), np.sort(result_b)),
+            "Expected distinct draws from different seeds.",
+        )
+
+
+    # ------------------------------------------------------------------
+    # weight bias
+    # ------------------------------------------------------------------
+
+    def test_weights_bias_the_draw(self) -> None:
+        """A heavily skewed weight vector concentrates draws on one position.
+
+        With k=1, position 0 has weight 0.9 and position 1 has 0.1.
+        Over many independent draws the fraction selecting position 0
+        should be close to 0.9.
+        """
+        positions = np.array([0, 1])
+        weights = np.array([0.9, 0.1])
+        n_trials = 2_000
+        rng = np.random.default_rng(42)
+
+        hits = sum(
+            _sample_positions_blocking(
+                positions, weights, k=1, rng=rng
+            )[0] == 0
+            for _ in range(n_trials)
+        )
+
+        # Allow generous tolerance: expect fraction in [0.85, 0.95].
+        fraction = hits / n_trials
+        self.assertGreater(fraction, 0.85)
+        self.assertLess(fraction, 0.95)
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +358,8 @@ class TestComputeRandomDistances(unittest.TestCase):
         )
 
         self.assertEqual(result_a, result_b)
+        # make sure the numer of events in the counter is as expected
+        self.assertEqual(sum(result_a.values()), sum(result_b.values()))
 
     def test_total_mass_matches_formula(self) -> None:
         """Total count equals sum_g (k_g - 1) * n_per_gene."""
@@ -255,13 +424,75 @@ class TestCounterToArray(unittest.TestCase):
         np.testing.assert_array_equal(
             np.sort(result), np.array([2, 2, 2, 5])
         )
-        self.assertEqual(len(result), 4)
 
     def test_empty_counter_yields_empty_array(self) -> None:
         """An empty counter yields an empty array."""
         result = counter_to_array(Counter())
 
         self.assertEqual(result.size, 0)
+
+
+# ---------------------------------------------------------------------------
+# plot_difference
+# ---------------------------------------------------------------------------
+
+
+class TestToProportions(unittest.TestCase):
+    """Tests for _to_proportions."""
+
+    def test_values_sum_to_one(self) -> None:
+        """Proportions of a non-empty counter sum to 1."""
+        counter = Counter({1: 10, 2: 5, 3: 5})
+        result = _to_proportions(counter)
+        self.assertAlmostEqual(sum(result.values()), 1.0)
+        self.assertAlmostEqual(result[1], 0.5)
+        self.assertAlmostEqual(result[2], 0.25)
+        self.assertAlmostEqual(result[3], 0.25)
+
+    def test_empty_counter_returns_empty_dict(self) -> None:
+        """An empty counter yields an empty dict."""
+        self.assertEqual(_to_proportions(Counter()), {})
+
+    def test_proportions_match_expected_values(self) -> None:
+        """Known counter produces the expected proportions."""
+        counter = Counter({1: 3, 2: 1})
+        result = _to_proportions(counter)
+        self.assertAlmostEqual(result[1], 0.75)
+        self.assertAlmostEqual(result[2], 0.25)
+
+
+class TestPlotDifference(unittest.TestCase):
+    """Tests for plot_difference."""
+
+    def test_creates_output_file(self) -> None:
+        """plot_difference writes a file with the expected name."""
+        real = _to_proportions(Counter({1: 10, 2: 5, 3: 2}))
+        random_dist = _to_proportions(Counter({1: 4, 2: 8, 3: 6}))
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            plot_difference(real, random_dist, "test", tmp_dir, "png")
+            out_path = os.path.join(
+                tmp_dir, "mutation_distances_test_difference.png"
+            )
+            self.assertTrue(os.path.isfile(out_path))
+
+    def test_creates_smaller_output_file_when_max_distance_given(self) -> None:
+        """When max_distance is set the _smaller suffix is used."""
+        real = _to_proportions(Counter({1: 10, 2: 5, 300: 1}))
+        random_dist = _to_proportions(Counter({1: 4, 2: 8, 300: 2}))
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            plot_difference(real, random_dist, "test", tmp_dir, "png", max_distance=200)
+            out_path = os.path.join(
+                tmp_dir, "mutation_distances_test_difference_smaller.png"
+            )
+            self.assertTrue(os.path.isfile(out_path))
+
+    def test_empty_dicts_do_not_raise(self) -> None:
+        """Empty proportion dicts produce no file and no exception."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            plot_difference({}, {}, "test", tmp_dir, "png")
+            self.assertEqual(os.listdir(tmp_dir), [])
 
 
 # ---------------------------------------------------------------------------
@@ -272,8 +503,8 @@ class TestCounterToArray(unittest.TestCase):
 class TestRunDistanceAnalysis(unittest.TestCase):
     """Tests for run_distance_analysis."""
 
-    def test_writes_expected_three_files(self) -> None:
-        """End-to-end writes two plots and a stats file with 3 numeric lines."""
+    def test_writes_expected_output_files(self) -> None:
+        """End-to-end writes four plots and a stats file with 3 numeric lines."""
         mutations_records: List[Dict[str, object]] = []
         for position in range(0, 100, 5):
             mutations_records.append(
@@ -302,27 +533,27 @@ class TestRunDistanceAnalysis(unittest.TestCase):
                 seed=0,
                 output_format="png",
             )
-            full_plot = os.path.join(
-                tmp_dir, "mutation_distances_testname_overlay.png"
-            )
-            small_plot = os.path.join(
-                tmp_dir,
+            expected_files = [
+                "mutation_distances_testname_overlay.png",
                 "mutation_distances_testname_overlay_smaller.png",
-            )
+                "mutation_distances_testname_difference.png",
+                "mutation_distances_testname_difference_smaller.png",
+                "mutation_distances_testname_stats.txt",
+            ]
+            for filename in expected_files:
+                self.assertTrue(
+                    os.path.isfile(os.path.join(tmp_dir, filename)),
+                    msg=f"Expected output file missing: {filename}",
+                )
+
             stats_path = os.path.join(
-                tmp_dir, "mutation_distances_testname_stats.txt"
+                tmp_dir, expected_files[-1]
             )
-
-            self.assertTrue(os.path.isfile(full_plot))
-            self.assertTrue(os.path.isfile(small_plot))
-            self.assertTrue(os.path.isfile(stats_path))
-
             with open(stats_path, "r") as f:
                 lines = [line.strip() for line in f if line.strip()]
             self.assertEqual(len(lines), 3)
             for line in lines:
                 _, value_str = line.split("=", 1)
-                # Each line must parse to a finite float.
                 value = float(value_str)
                 self.assertTrue(np.isfinite(value))
 

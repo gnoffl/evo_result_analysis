@@ -177,25 +177,41 @@ def counter_to_array(counter: Counter) -> np.ndarray:
     return np.repeat(distances, counts)
 
 
+def _to_proportions(counter: Counter) -> dict[int, float]:
+    """Convert a distance Counter to a probability distribution.
+
+    Each value is divided by the total count so that all values sum to 1.
+
+    Args:
+        counter: ``{distance: count}`` mapping.
+
+    Returns:
+        ``{distance: proportion}`` mapping, or an empty dict for empty input.
+    """
+    total = sum(counter.values())
+    if total == 0:
+        return {}
+    return {d: c / total for d, c in counter.items()}
+
+
 def plot_overlay(
-    real: Counter,
-    random_dist: Counter,
+    real: dict[int, float],
+    random_dist: dict[int, float],
     name: str,
     output_dir: str,
     output_format: str = "png",
     max_distance: Optional[int] = None,
 ) -> None:
-    """Plot real distances as bars overlaid with a rescaled random line.
+    """Plot real distances as bars overlaid with the random proportion line.
 
-    The random series is rescaled so its peak matches the real series'
-    peak, mirroring the convention in
-    :func:`analyze_mutations.plot_dist_hist`. When ``max_distance`` is
-    given, both series are restricted to distances ``<= max_distance``
-    and ``"_smaller"`` is appended to the output filename.
+    Both inputs are expected to already be normalised probability
+    distributions (see :func:`_to_proportions`).  When ``max_distance`` is
+    given, both series are restricted to distances ``<= max_distance`` and
+    ``"_smaller"`` is appended to the output filename.
 
     Args:
-        real: Real-mutation distance counter.
-        random_dist: Random-draw distance counter.
+        real: Normalised real-mutation distance proportions.
+        random_dist: Normalised random-draw distance proportions.
         name: Identifier used in the output filename
             (``mutation_distances_{name}_overlay[_smaller].{format}``).
         output_dir: Destination directory.
@@ -203,51 +219,103 @@ def plot_overlay(
         max_distance: Optional upper cutoff on the plotted distance axis.
     """
     if max_distance is not None:
-        real = Counter({d: c for d, c in real.items() if d <= max_distance})
-        random_dist = Counter(
-            {d: c for d, c in random_dist.items() if d <= max_distance}
-        )
+        real = {d: p for d, p in real.items() if d <= max_distance}
+        random_dist = {d: p for d, p in random_dist.items() if d <= max_distance}
 
     distances = sorted(real.keys())
-    counts = [real[d] for d in distances]
+    proportions = [real[d] for d in distances]
 
-    plt.clf()
-    plt.figure(figsize=(12, 6))
-    if counts:
-        plt.bar(
-            distances,
-            counts,
-            width=1.0,
-            edgecolor="black",
-            label="Real",
-        )
+    fig, ax = plt.subplots(figsize=(12, 6))
+    if proportions:
+        ax.bar(distances, proportions, width=1.0, edgecolor="none", alpha=0.75, label="Real")
 
-    if random_dist and counts:
-        max_count = max(counts)
+    if random_dist:
         random_x = sorted(random_dist.keys())
         random_y = [random_dist[d] for d in random_x]
-        max_rand = max(random_y)
-        random_y_scaled = [y * (max_count / max_rand) for y in random_y]
-        plt.plot(
-            random_x,
-            random_y_scaled,
-            color="green",
-            label="Random (rescaled)",
-        )
+        ax.plot(random_x, random_y, color="darkorange", linewidth=2, label="Random")
 
-    plt.xlabel("Mutation Distance")
-    plt.ylabel("Frequency")
-    plt.legend()
-    if distances:
-        plt.xlim(0, max(distances) + 1)
+    ax.set_xlabel("Mutation Distance")
+    ax.set_ylabel("Proportion")
+    ax.set_title(name)
+    ax.legend()
+    if distances and proportions:
+        threshold = max(proportions) * 0.01
+        last_meaningful = max(
+            (d for d, p in zip(distances, proportions) if p > threshold),
+            default=distances[-1],
+        )
+        ax.set_xlim(0, last_meaningful * 1.05)
 
     suffix = "_smaller" if max_distance is not None else ""
     out_path = os.path.join(
         output_dir,
         f"mutation_distances_{name}_overlay{suffix}.{output_format}",
     )
-    plt.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close()
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_difference(
+    real: dict[int, float],
+    random_dist: dict[int, float],
+    name: str,
+    output_dir: str,
+    output_format: str = "png",
+    max_distance: Optional[int] = None,
+) -> None:
+    """Plot the per-distance difference between real and random proportions.
+
+    Both inputs are expected to already be normalised probability
+    distributions (see :func:`_to_proportions`).  The per-distance
+    difference ``P(real) - P(random)`` is plotted as a bar chart.  Positive
+    bars indicate distances more frequent in the real EA mutations; negative
+    bars indicate distances the random baseline favours.  An ``axhline`` at
+    zero is drawn for reference.
+
+    Args:
+        real: Normalised real-mutation distance proportions.
+        random_dist: Normalised random-draw distance proportions.
+        name: Identifier used in the output filename
+            (``mutation_distances_{name}_difference[_smaller].{format}``).
+        output_dir: Destination directory.
+        output_format: File extension (e.g. ``"png"``, ``"pdf"``).
+        max_distance: Optional upper cutoff on the plotted distance axis.
+    """
+    if max_distance is not None:
+        real = {d: p for d, p in real.items() if d <= max_distance}
+        random_dist = {d: p for d, p in random_dist.items() if d <= max_distance}
+
+    all_distances = sorted(set(real.keys()) | set(random_dist.keys()))
+    if not all_distances:
+        return
+
+    diff = np.array([real.get(d, 0.0) - random_dist.get(d, 0.0) for d in all_distances])
+    colors = ["steelblue" if v >= 0 else "tomato" for v in diff]
+
+    from matplotlib.patches import Patch
+
+    plt.clf()
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.bar(all_distances, diff, width=1.0, color=colors, edgecolor="none")
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_xlabel("Mutation Distance")
+    ax.set_ylabel("P(real) − P(random)")
+    ax.set_title(f"Distance distribution difference: {name}")
+    ax.set_xlim(0, max(all_distances) + 1)
+    ax.legend(
+        handles=[
+            Patch(color="steelblue", label="Real > Random"),
+            Patch(color="tomato", label="Random > Real"),
+        ]
+    )
+
+    suffix = "_smaller" if max_distance is not None else ""
+    out_path = os.path.join(
+        output_dir,
+        f"mutation_distances_{name}_difference{suffix}.{output_format}",
+    )
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
 
 def run_distance_analysis(
@@ -280,21 +348,13 @@ def run_distance_analysis(
     rng = np.random.default_rng(seed)
     random_distances = compute_random_distances(pool, n_per_gene, rng)
 
-    plot_overlay(
-        real_distances,
-        random_distances,
-        name,
-        output_dir,
-        output_format,
-    )
-    plot_overlay(
-        real_distances,
-        random_distances,
-        name,
-        output_dir,
-        output_format,
-        max_distance=200,
-    )
+    real_props = _to_proportions(real_distances)
+    random_props = _to_proportions(random_distances)
+
+    plot_overlay(real_props, random_props, name, output_dir, output_format)
+    plot_overlay(real_props, random_props, name, output_dir, output_format, max_distance=50)
+    plot_difference(real_props, random_props, name, output_dir, output_format)
+    plot_difference(real_props, random_props, name, output_dir, output_format, max_distance=50)
 
     real_arr = counter_to_array(real_distances)
     random_arr = counter_to_array(random_distances)
