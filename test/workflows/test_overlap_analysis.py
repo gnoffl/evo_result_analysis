@@ -19,7 +19,7 @@ class TestOverlapAnalysisBuckets(unittest.TestCase):
             ]
         )
 
-        result = overlap_analysis.add_bucketed_overlap_positions(df)
+        result = overlap_analysis.add_length_corrected_overlap_buckets(df)
 
         self.assertEqual(result.loc[0, "group_overlap_start"], 1430)
         self.assertEqual(result.loc[0, "group_overlap_end"], 1600)
