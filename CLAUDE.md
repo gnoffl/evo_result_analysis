@@ -43,7 +43,7 @@ No pytest config file — uses default discovery. Tests use `unittest.mock` (pat
 - `mutations/` — mutation effect analysis: `analyze_mutations.py`, `summarize_mutations.py`, `genomic_annotation.py`
 - `overview/` — Pareto front statistics, cross-method comparison
 - `starrseq/` — STAR-seq enrichment with Mann-Whitney U tests
-- `utils/` — `io.py` (formatted console output), `sequence_processing.py` (exon/intron/UTR extraction)
+- `utils/` — `io.py` (formatted console output for progress tracking in long-running workflows only; not for general use in scripts), `sequence_processing.py` (exon/intron/UTR extraction)
 
 **`workflows/`** — higher-level pipelines and figure generation:
 
