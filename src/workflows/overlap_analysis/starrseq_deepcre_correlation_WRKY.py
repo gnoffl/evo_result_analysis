@@ -869,8 +869,8 @@ def main():
         ]   #type: ignore
     else:
         position_series = [(enrichment_df, "all", POSITION_SERIES_COLORS["all"])]
-    # plot_correlation_over_positions_fixed_window(position_series)
-    # plot_correlation_over_positions_fixed_number_elements(position_series)
+    plot_correlation_over_positions_fixed_window(position_series)
+    plot_correlation_over_positions_fixed_number_elements(position_series)
     subsets = [
         ("", enrichment_df),
         ("reference", enrichment_df[enrichment_df["starr_reference"] == True]),
