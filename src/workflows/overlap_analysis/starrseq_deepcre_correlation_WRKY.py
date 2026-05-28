@@ -164,7 +164,7 @@ def _deduplicate_bucket_rows(
         dedup_columns.append("starr_reference")
     if "gene" in bucket_df.columns:
         dedup_columns.append("gene")
-    dedup = bucket_df[dedup_columns].drop_duplicates().dropna(subset=[x_col, y_col])
+    dedup = bucket_df[dedup_columns].drop_duplicates().dropna(subset=[x_col, y_col])    #type:ignore
     if delta:
         dedup = dedup[dedup["starr_reference"] == False]
     return dedup.dropna(subset=[x_col, y_col])
