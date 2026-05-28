@@ -2,19 +2,21 @@
 
 ## Context
 
-The STARR-seq × deepCRE correlation in `src/workflows/overlap_analysis/` exists only
-for WRKY. To repeat it for bHLH, one input is missing: a file mapping each tested bHLH
-binding site to the gene(s) whose deepCRE extraction window it overlaps, plus the
-position of that overlap inside the window. The WRKY equivalent
-(`data/WRKY_dCIS_dCRE_overlaps.csv`) was a one-off artifact with no surviving generator
-and some coordinate kinks we explicitly want to avoid here.
+The STARR-seq × deepCRE correlation in `src/workflows/overlap_analysis/`
+exists only for WRKY. To repeat it for bHLH, one input is missing: a file
+mapping each tested bHLH binding site to the gene(s) whose deepCRE extraction
+window it overlaps, plus the position of that overlap inside the window. The
+WRKY equivalent (`data/WRKY_dCIS_dCRE_overlaps.csv`) was a one-off artifact
+with no surviving generator and some coordinate kinks we explicitly want to
+avoid here.
 
 We generate the bHLH file from:
 
 - `src/workflows/overlap_analysis/data/dCIS_bHLH_in_silico_mutated_GS2025d.fasta`
   — headers `bHLH_<chrom>:<start>-<end>_<variant>_<id>`; 2988 records →
   **995 unique genomic sites** (all chrom `1`).
-- `/home/gernot/ARCitect/ARCs/genRE/assays/Gene_Data/dataset/annotations/Arabidopsis_thaliana.TAIR10.52.gtf`
+- `/home/gernot/ARCitect/ARCs/genRE/assays/Gene_Data/dataset/annotations/
+  Arabidopsis_thaliana.TAIR10.52.gtf`
   (TAIR10, 1-based, seqnames `1..5,Mt,Pt`, 32 833 `gene` features).
 
 deepCRE extracts, per gene, a promoter/TSS window and a terminator/TTS window
@@ -25,52 +27,67 @@ deepCRE extracts, per gene, a promoter/TSS window and a terminator/TTS window
 ## Downstream usage
 
 The bHLH correlation script (to be built later, analogous to
-`starrseq_deepcre_correlation_WRKY.py` but bHLH-specific) consumes this mapping as a
-**candidate-gene filter**: per site, look up the list of `gene_id`s, then resolve precise
-overlap positions by aligning the STARR-seq sequence's first/last 50bp against each
-candidate's 3020bp extracted window via `str.find()` ± reverse complement (see
-`find_overlap_positions` in the WRKY script). So `(site_id, gene_id)` is the strictly
-required output; `strand, region, start, end, additional_padding` are useful provenance
-for sanity-checking and other applications but are not consulted by the alignment step.
-A 1bp offset in `start`/`end` driven by the FASTA header's coordinate convention is
-therefore tolerable — the alignment is the source of truth.
+`starrseq_deepcre_correlation_WRKY.py` but bHLH-specific) consumes this mapping
+as a **candidate-gene filter**: per site, look up the list of `gene_id`s, then
+resolve precise overlap positions by aligning the STARR-seq sequence's
+first/last 50bp against each candidate's 3020bp extracted window via
+`str.find()` ± reverse complement (see `find_overlap_positions` in the WRKY
+script). So `(site_id, gene_id)` is the strictly required output;
+`strand, region, start, end, additional_padding` are useful provenance for
+sanity-checking and other applications but are not consulted by the alignment
+step. A 1bp offset in `start`/`end` driven by the FASTA header's coordinate
+convention is therefore tolerable — the alignment is the source of truth.
 
 ## Decisions (confirmed)
 
-- **Output: 7 columns** — `site_id, gene_id, strand, region, start, end, additional_padding`.
-  - `site_id` = deduplicated site id `bHLH_<chrom>:<start>-<end>` (one per unique site;
-    parallels WRKY's `deepCIS_segment` column and matches the search key built by
-    `get_gene_candidates_for_starrseq_entry` in the WRKY script).
-  - `gene_id` = TAIR gene id, with the `_gene` suffix stripped from `find_genes` output.
-  - `strand` = `+` or `-`, the gene's strand from `find_genes`. Identical for all rows
-    sharing a `gene_id`; included as gene-level provenance so a reader of any single
-    row can tell which orientation the extracted sequence was built in.
+- **Output: 7 columns** — `site_id, gene_id, strand, region, start, end,
+  additional_padding`.
+  - `site_id` = deduplicated site id `bHLH_<chrom>:<start>-<end>` (one per
+    unique site; parallels WRKY's `deepCIS_segment` column and matches the
+    search key built by `get_gene_candidates_for_starrseq_entry` in the WRKY
+    script).
+  - `gene_id` = TAIR gene id, with the `_gene` suffix stripped from
+    `find_genes` output.
+  - `strand` = `+` or `-`, the gene's strand from `find_genes`. Identical for
+    all rows sharing a `gene_id`; included as gene-level provenance so a
+    reader of any single row can tell which orientation the extracted sequence
+    was built in.
   - `region` = `promoter` or `terminator` (the strings returned by
-    `genomic_to_relative_position`); disambiguates short-gene rows where the same site
-    can hit both windows.
-  - `start`, `end` = 0-based half-open positions in the 3020bp extracted window.
-  - `additional_padding` = the gene's extra central padding in bp (0 for normal genes,
-    >0 for short genes); replaces the previously-planned short-gene warning.
-- **Coordinates**: 0-based, half-open `[start, end)`, **padding included**, full range **0–3020**.
-- **Reuse, do not reimplement**: import the windowing/mapping math directly from
-  `evolution.extract_sequences`.
-- **Scope**: all 995 unique sites; emit a row for any (site × gene-window) overlap. A
-  site may map to several genes → several rows.
-- **Build**: bHLH-specific script in `src/workflows/overlap_analysis/bHLH_overlaps/`.
+    `genomic_to_relative_position`); disambiguates short-gene rows where the
+    same site can hit both windows.
+  - `start`, `end` = 0-based half-open positions in the 3020bp extracted
+    window.
+  - `additional_padding` = the gene's extra central padding in bp (0 for normal
+    genes, >0 for short genes); replaces the previously-planned short-gene
+    warning.
+- **Coordinates**: 0-based, half-open `[start, end)`, **padding included**, full
+  range **0–3020**.
+- **Reuse, do not reimplement**: import the windowing/mapping math directly
+  from `evolution.extract_sequences`.
+- **Scope**: all 995 unique sites; emit a row for any (site × gene-window)
+  overlap. A site may map to several genes → several rows.
+- **Build**: bHLH-specific script in `src/workflows/overlap_analysis/
+  bHLH_overlaps/`.
 
 ## Reused evolution functions (imported directly)
 
-`from evolution.extract_sequences import find_genes, find_start_end, genomic_to_relative_position`
+`from evolution.extract_sequences import find_genes, find_start_end,
+genomic_to_relative_position`
 
-- `find_genes(annotation_path, gene_name_attribute="gene_id", feature_type_filter=["gene"], genes_of_interest=[])`
-  → DataFrame `chromosome, start, end, strand, gene_id`. Coords are **0-based** (BCBio);
-  `gene_id` has a `_gene` suffix to strip. Empty `genes_of_interest` returns all genes.
-- `find_start_end(start, end, 500, 1000, strand)` → `(prom_start, prom_end, term_start, term_end, additional_padding)`
-  (genomic, 0-based; handles short-gene split internally).
-- `genomic_to_relative_position(genomic_pos, prom_start, prom_end, term_start, term_end, strand, additional_padding)`
-  → `(rel_pos, region)` or `None`. `rel_pos` is the 0-based offset in the 3020bp extracted
-  sequence **including** `CENTRAL_PADDING=20` and `additional_padding`: promoter `[0,1500)`,
-  terminator `[1520, 3020)` (normal genes). Handles minus-strand reversal.
+- `find_genes(annotation_path, gene_name_attribute="gene_id",
+  feature_type_filter=["gene"], genes_of_interest=[])` → DataFrame
+  `chromosome, start, end, strand, gene_id`. Coords are **0-based** (BCBio);
+  `gene_id` has a `_gene` suffix to strip. Empty `genes_of_interest` returns
+  all genes.
+- `find_start_end(start, end, 500, 1000, strand)` →
+  `(prom_start, prom_end, term_start, term_end, additional_padding)` (genomic,
+  0-based; handles short-gene split internally).
+- `genomic_to_relative_position(genomic_pos, prom_start, prom_end,
+  term_start, term_end, strand, additional_padding)` → `(rel_pos, region)` or
+  `None`. `rel_pos` is the 0-based offset in the 3020bp extracted sequence
+  **including** `CENTRAL_PADDING=20` and `additional_padding`: promoter
+  `[0,1500)`, terminator `[1520, 3020)` (normal genes). Handles minus-strand
+  reversal.
 
 ## Overlap logic
 
@@ -78,25 +95,50 @@ Per unique site, looped against every gene on the same chromosome.
 
 ### Variables used below
 
-All "genomic" positions are 0-based positions on the chromosome. All "extracted-sequence"
-positions are 0-based positions inside the 3020bp window deepCRE extracts per gene.
+All "genomic" positions are 0-based positions on the chromosome. All
+"extracted-sequence" positions are 0-based positions inside the 3020bp window
+deepCRE extracts per gene.
 
-| Name | Meaning |
-|---|---|
-| `site_genomic_start`, `site_genomic_end` | The genomic interval from the FASTA header. Treated **inclusive on both ends** — `site_genomic_end` is the last *included* base. |
-| `gene_genomic_start`, `gene_genomic_end` | The gene body, from the GTF (via `find_genes`). |
-| `strand` | `"+"` or `"-"`, the gene's strand. |
-| `promoter_window_genomic_start`, `promoter_window_genomic_end` | Genomic interval of the gene's promoter window (1500bp). **Half-open** — `..._end` is *one past* the last included base. |
-| `terminator_window_genomic_start`, `terminator_window_genomic_end` | Same for the terminator window. Half-open. |
-| `additional_padding` | Extra N-padding inserted between the two windows for *short* genes; 0 for normal genes. |
-| `window_genomic_start`, `window_genomic_end` | Stand-in for either the promoter or the terminator window inside step 2's per-window loop. |
-| `overlap_first_base_genomic`, `overlap_last_base_genomic` | The leftmost and rightmost genomic bases of the site×window overlap. Inclusive on both ends. |
-| `extracted_pos_for_overlap_first_base`, `extracted_pos_for_overlap_last_base` | The same two boundary bases after `genomic_to_relative_position` has mapped them into the 3020bp extracted sequence. |
-| `extracted_seq_start`, `extracted_seq_end` | What we emit. Half-open positions inside the 3020bp extracted sequence; these become the CSV's `start` and `end` columns. |
+`site_genomic_start`, `site_genomic_end`
+:   The genomic interval from the FASTA header. Treated **inclusive on both
+    ends** — `site_genomic_end` is the last *included* base.
+
+`gene_genomic_start`, `gene_genomic_end`
+:   The gene body, from the GTF (via `find_genes`).
+
+`strand`
+:   `"+"` or `"-"`, the gene's strand.
+
+`promoter_window_genomic_start`, `promoter_window_genomic_end`
+:   Genomic interval of the gene's promoter window (1500bp). **Half-open** —
+    `..._end` is *one past* the last included base.
+
+`terminator_window_genomic_start`, `terminator_window_genomic_end`
+:   Same for the terminator window. Half-open.
+
+`additional_padding`
+:   Extra N-padding inserted between the two windows for *short* genes; 0 for
+    normal genes.
+
+`window_genomic_start`, `window_genomic_end`
+:   Stand-in for either the promoter or the terminator window inside step 2's
+    per-window loop.
+
+`overlap_first_base_genomic`, `overlap_last_base_genomic`
+:   The leftmost and rightmost genomic bases of the site×window overlap.
+    Inclusive on both ends.
+
+`extracted_pos_for_overlap_first_base`, `extracted_pos_for_overlap_last_base`
+:   The same two boundary bases after `genomic_to_relative_position` has
+    mapped them into the 3020bp extracted sequence.
+
+`extracted_seq_start`, `extracted_seq_end`
+:   What we emit. Half-open positions inside the 3020bp extracted sequence;
+    these become the CSV's `start` and `end` columns.
 
 ### Step 1 — get the gene's two windows in genomic coords
 
-```
+```python
 (promoter_window_genomic_start,
  promoter_window_genomic_end,
  terminator_window_genomic_start,
@@ -127,7 +169,7 @@ extracted-sequence coordinates, and we want one row per chunk.
 Letting `window_genomic_start, window_genomic_end` stand in for either the promoter
 window or the terminator window:
 
-```
+```python
 overlap_first_base_genomic = max(site_genomic_start, window_genomic_start)
 overlap_last_base_genomic  = min(site_genomic_end,   window_genomic_end - 1)
 if overlap_first_base_genomic > overlap_last_base_genomic:
@@ -151,7 +193,7 @@ as inclusive–inclusive 0-based genomic coordinates. Its length in bases is
 
 ### Step 3 — map the two boundary bases into the extracted sequence
 
-```
+```python
 extracted_pos_for_overlap_first_base, region = genomic_to_relative_position(
     overlap_first_base_genomic,
     promoter_window_genomic_start, promoter_window_genomic_end,
@@ -165,7 +207,7 @@ extracted_pos_for_overlap_last_base, _ = genomic_to_relative_position(
 
 `genomic_to_relative_position` knows the layout of the 3020bp extracted sequence:
 
-```
+```bash
    0                       1500       1520 + additional_padding              3020
    |--- promoter (1500) ----|---- N ----|------ terminator (1500) -----------|
 ```
@@ -182,7 +224,7 @@ row's `region`.
 
 Then:
 
-```
+```python
 extracted_seq_start = min(extracted_pos_for_overlap_first_base,
                           extracted_pos_for_overlap_last_base)
 extracted_seq_end   = max(extracted_pos_for_overlap_first_base,
@@ -200,7 +242,7 @@ Two things going on:
 
 ### Step 4 — emit
 
-```
+```python
 (site_id, gene_id, strand, region,
  extracted_seq_start, extracted_seq_end, additional_padding)
 ```
@@ -249,44 +291,54 @@ WRKY site `1:8049090-8049339`, gene `AT1G22740` on `+` strand, 0-based gene star
 
 **New**: `src/workflows/overlap_analysis/bHLH_overlaps/generate_bhlh_overlaps.py`
 
-- Module-level reuse of the three evolution functions above (no GTF/window math reimplemented).
-- `parse_fasta_sites(fasta_path) -> list[Site]` — split headers, dedup to unique
-  `tf_chrom:start-end` (reuses the `name.split('_')`, `parts[0]+'_'+parts[1]` approach from
+- Module-level reuse of the three evolution functions above (no GTF/window
+  math reimplemented).
+- `parse_fasta_sites(fasta_path) -> list[Site]` — split headers, dedup to
+  unique `tf_chrom:start-end` (reuses the `name.split('_')`,
+  `parts[0]+'_'+parts[1]` approach from
   `starrseq_deepcre_correlation_WRKY.py:load_starrseq_data`).
-- `overlaps_for_site(site, genes_df) -> list[row]` — implements the logic above, calling
-  `find_start_end` + `genomic_to_relative_position`.
-- `build_mapping(fasta_path, gtf_path, intragenic=500, extragenic=1000) -> DataFrame`.
-- `main()` with argparse: `--fasta`, `--gtf`, `--output`, `--intragenic`, `--extragenic`;
-  prints a summary (unique sites, sites with ≥1 overlap, rows, short-gene rows). Default
-  `--gtf` = the TAIR10 path above; default `--output` =
-  `src/workflows/overlap_analysis/data/bHLH_dCIS_dCRE_overlaps.csv`.
-- Filter `genes_df` by chromosome before looping (optional `bisect` on sorted window starts;
-  brute-force per-chrom is fine: 995 sites × ~7k chr1 genes).
+- `overlaps_for_site(site, genes_df) -> list[row]` — implements the logic
+  above, calling `find_start_end` + `genomic_to_relative_position`.
+- `build_mapping(fasta_path, gtf_path, intragenic=500, extragenic=1000)` →
+  `DataFrame`.
+- `main()` with argparse: `--fasta`, `--gtf`, `--output`, `--intragenic`,
+  `--extragenic`; prints a summary (unique sites, sites with ≥1 overlap, rows,
+  short-gene rows). Default `--gtf` = the TAIR10 path above; default
+  `--output` = `src/workflows/overlap_analysis/data/
+  bHLH_dCIS_dCRE_overlaps.csv`.
+- Filter `genes_df` by chromosome before looping (optional `bisect` on sorted
+  window starts; brute-force per-chrom is fine: 995 sites × ~7k chr1 genes).
 
 **Output**: `src/workflows/overlap_analysis/data/bHLH_dCIS_dCRE_overlaps.csv`
 (7 columns above; name parallels `WRKY_dCIS_dCRE_overlaps.csv`, which is the WRKY file
 the correlation script actually consumes).
 
-**New tests**: `test/workflows/overlap_analysis/bHLH_overlaps/test_generate_bhlh_overlaps.py`
-(unittest, Arrange-Act-Assert; mock filesystem). Cover:
+**New tests**: `test/workflows/overlap_analysis/bHLH_overlaps/
+test_generate_bhlh_overlaps.py` (unittest, Arrange-Act-Assert; mock
+filesystem). Cover:
 
-- `parse_fasta_sites` dedup (mock_open on a few headers incl. duplicate positions/variants).
-- `overlaps_for_site` against real `find_start_end`/`genomic_to_relative_position` with
-  hand-computed expectations: + strand site fully in promoter; minus-strand site; clipped
-  window-edge (partial, shorter length); short gene (assert `additional_padding>0` and that
+- `parse_fasta_sites` dedup (mock_open on a few headers incl. duplicate
+  positions/variants).
+- `overlaps_for_site` against real `find_start_end`/
+  `genomic_to_relative_position` with hand-computed expectations: + strand
+  site fully in promoter; minus-strand site; clipped window-edge (partial,
+  shorter length); short gene (assert `additional_padding>0` and that
   start/end land past the padded terminator offset).
 - one site → two genes (two rows).
-- `build_mapping` end-to-end with `find_genes` **patched** to return a small DataFrame
-  (avoids parsing the real GTF); assert the 7-column CSV via a `tempfile` dir, including
-  that `region` matches the window that was hit and that `strand` matches the gene's
-  strand from the patched DataFrame.
+- `build_mapping` end-to-end with `find_genes` **patched** to return a small
+  DataFrame (avoids parsing the real GTF); assert the 7-column CSV via a
+  `tempfile` dir, including that `region` matches the window that was hit and
+  that `strand` matches the gene's strand from the patched DataFrame.
 
 ## Verification
 
 1. Activate conda env `deepCREshap`.
-2. `python -m pytest test/workflows/overlap_analysis/bHLH_overlaps/test_generate_bhlh_overlaps.py` — all pass.
-3. Run the script → writes `data/bHLH_dCIS_dCRE_overlaps.csv`; review the printed
-   summary (rows, how many sites overlapped a gene, how many short-gene rows).
-4. Spot-check a couple rows against the GTF (`awk '$3=="gene"'`) to confirm start/end land in
-   the expected window and that `end ≤ 3020`.
-5. Hand off to user for the end-to-end smoke check (they run those themselves).
+2. `python -m pytest test/workflows/overlap_analysis/bHLH_overlaps/
+   test_generate_bhlh_overlaps.py` — all pass.
+3. Run the script → writes `data/bHLH_dCIS_dCRE_overlaps.csv`; review the
+   printed summary (rows, how many sites overlapped a gene, how many
+   short-gene rows).
+4. Spot-check a couple rows against the GTF (`awk '$3=="gene"'`) to confirm
+   start/end land in the expected window and that `end ≤ 3020`.
+5. Hand off to user for the end-to-end smoke check (they run those
+   themselves).
