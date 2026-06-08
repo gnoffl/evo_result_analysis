@@ -43,6 +43,7 @@ class TestParseFastaSites(unittest.TestCase):
             ("bHLH_1:100-349_binding_0", "ACGT"),
             ("bHLH_1:100-349_binding_1", "ACGT"),
             ("bHLH_1:100-349_non_binding_2", "ACGT"),
+            ("bHLH_1:100-549_non_binding_2", "ACGT"),
             ("bHLH_1:500-749_binding_3", "ACGT"),
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -52,13 +53,17 @@ class TestParseFastaSites(unittest.TestCase):
             sites = parse_fasta_sites(fasta_path)
 
         # Assert
-        self.assertEqual(len(sites), 2)
+        self.assertEqual(len(sites), 3)
         self.assertEqual(
             sites[0],
             Site(site_id="bHLH_1:100-349", tf="bHLH", chrom="1", start=100, end=349),
         )
         self.assertEqual(
             sites[1],
+            Site(site_id="bHLH_1:100-549", tf="bHLH", chrom="1", start=100, end=549),
+        )
+        self.assertEqual(
+            sites[2],
             Site(site_id="bHLH_1:500-749", tf="bHLH", chrom="1", start=500, end=749),
         )
 
@@ -79,24 +84,57 @@ class TestOverlapsForSitePlusStrandPromoter(unittest.TestCase):
         # AT1G22740 at TSS 8049089 on + strand. Promoter window is
         # [8048089, 8049589) and the site sits fully inside it.
         site = Site(
-            site_id="WRKY_1:8049090-8049339",
+            site_id="WRKY_1:10000-10249",
             tf="WRKY",
             chrom="1",
-            start=8049090,
-            end=8049339,
+            start=10000,
+            end=10249,
         )
         # Gene body must be at least 2 * intragenic = 1000 bp long, otherwise
         # find_start_end triggers the short-gene branch and additional_padding
         # > 0; here we want the normal-gene path.
         genes_df = _make_genes_df(
             [
+                # full overlap
                 {
                     "chromosome": "1",
-                    "start": 8049089,
-                    "end": 8060000,
+                    "start": 10500,
+                    "end": 11600,
                     "strand": "+",
-                    "gene_id": "AT1G22740_gene",
-                }
+                    "gene_id": "AT1G00001_gene",
+                },
+                # partial overlap of full length gene
+                {
+                    "chromosome": "1",
+                    "start": 11100,
+                    "end": 12500,
+                    "strand": "+",
+                    "gene_id": "AT1G00002_gene",
+                },
+                # partial overlap of short gene
+                {
+                    "chromosome": "1",
+                    "start": 10000,
+                    "end": 10200,
+                    "strand": "+",
+                    "gene_id": "AT1G00003_gene",
+                },
+                # TFBS in the middle of the coding sequence, not in the extraction window
+                {
+                    "chromosome": "1",
+                    "start": 9000,
+                    "end": 11500,
+                    "strand": "+",
+                    "gene_id": "AT1G00004_gene",
+                },
+                # gene just super far away (no overlap)
+                {
+                    "chromosome": "1",
+                    "start": 1000000,
+                    "end": 1100000,
+                    "strand": "+",
+                    "gene_id": "AT1G00005_gene",
+                },
             ]
         )
 
@@ -108,14 +146,41 @@ class TestOverlapsForSitePlusStrandPromoter(unittest.TestCase):
             rows,
             [
                 {
-                    "site_id": "WRKY_1:8049090-8049339",
-                    "gene_id": "AT1G22740",
+                    "site_id": "WRKY_1:10000-10249",
+                    "gene_id": "AT1G00001",
                     "strand": "+",
                     "region": "promoter",
-                    "start": 1001,
-                    "end": 1251,
+                    "start": 500,
+                    "end": 750,
                     "additional_padding": 0,
-                }
+                },
+                {
+                    "site_id": "WRKY_1:10000-10249",
+                    "gene_id": "AT1G00002",
+                    "strand": "+",
+                    "region": "promoter",
+                    "start": 0,
+                    "end": 150,
+                    "additional_padding": 0,
+                },
+                {
+                    "site_id": "WRKY_1:10000-10249",
+                    "gene_id": "AT1G00003",
+                    "strand": "+",
+                    "region": "promoter",
+                    "start": 1000,
+                    "end": 1100,
+                    "additional_padding": 800,
+                },
+                {
+                    "site_id": "WRKY_1:10000-10249",
+                    "gene_id": "AT1G00003",
+                    "strand": "+",
+                    "region": "terminator",
+                    "start": 1920,
+                    "end": 2070,
+                    "additional_padding": 800,
+                },
             ],
         )
 
@@ -157,7 +222,49 @@ class TestOverlapsForSiteMinusStrand(unittest.TestCase):
         self.assertEqual(rows[0]["region"], "promoter")
         self.assertEqual(rows[0]["start"], 1350)
         self.assertEqual(rows[0]["end"], 1450)
-        self.assertEqual(rows[0]["end"] - rows[0]["start"], 100)
+        self.assertEqual(rows[0]["end"] - rows[0]["start"], 100)        #type:ignore
+        self.assertEqual(rows[0]["additional_padding"], 0)
+        self.assertEqual(rows[0]["gene_id"], "AT1GTEST1")
+
+    def test_minus_strand_terminator_overlap_reverses_position(self):
+        # Arrange — same gene [2000, 3000) on - strand: promoter window
+        # = [2500, 4000), terminator window = [1000, 2500). Site genomic
+        # [2250, 2499] sits fully inside the terminator window.
+        # On the minus strand the terminator lands at extracted-sequence
+        # positions [1520, 3020); positions are mirrored relative to
+        # term_end - 1 = 2499, then offset by 1520:
+        #   rel(2499) = 1519 + term_end - 2499 = 1519 + 2500 - 2499 = 1520
+        #   rel(2250) = 1519 + 2500 - 2250 = 1769
+        # so the half-open output interval is [1520, 1770) (length 250).
+        site = Site(
+            site_id="bHLH_1:2250-2499",
+            tf="bHLH",
+            chrom="1",
+            start=2250,
+            end=2499,
+        )
+        genes_df = _make_genes_df(
+            [
+                {
+                    "chromosome": "1",
+                    "start": 2000,
+                    "end": 3000,
+                    "strand": "-",
+                    "gene_id": "AT1GTEST1_gene",
+                }
+            ]
+        )
+
+        # Act
+        rows = overlaps_for_site(site, genes_df)
+
+        # Assert
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["strand"], "-")
+        self.assertEqual(rows[0]["region"], "terminator")
+        self.assertEqual(rows[0]["start"], 1520)
+        self.assertEqual(rows[0]["end"], 1770)
+        self.assertEqual(rows[0]["end"] - rows[0]["start"], 250)        #type:ignore
         self.assertEqual(rows[0]["additional_padding"], 0)
         self.assertEqual(rows[0]["gene_id"], "AT1GTEST1")
 
@@ -194,7 +301,7 @@ class TestOverlapsForSiteClippedAtWindowEdge(unittest.TestCase):
         self.assertEqual(rows[0]["region"], "promoter")
         self.assertEqual(rows[0]["start"], 0)
         self.assertEqual(rows[0]["end"], 500)
-        self.assertLess(rows[0]["end"] - rows[0]["start"], site.end - site.start + 1)
+        self.assertLess(rows[0]["end"] - rows[0]["start"], site.end - site.start + 1)       #type:ignore
         self.assertEqual(rows[0]["additional_padding"], 0)
 
 
@@ -248,7 +355,7 @@ class TestOverlapsForSiteShortGene(unittest.TestCase):
         term_row = by_region["terminator"]
         self.assertEqual(term_row["start"], 1970)
         self.assertEqual(term_row["end"], 2221)
-        self.assertGreater(term_row["start"], 1520)
+        self.assertGreater(term_row["start"], 1520)       #type:ignore
 
 
 class TestOverlapsForSiteMultipleGenes(unittest.TestCase):
@@ -352,8 +459,8 @@ class TestBuildMappingEndToEnd(unittest.TestCase):
                 },
                 {
                     "chromosome": "2",
-                    "start": 5000,
-                    "end": 6000,
+                    "start": 2000,
+                    "end": 3000,
                     "strand": "+",
                     "gene_id": "AT2GFAR_gene",
                 },
@@ -366,7 +473,7 @@ class TestBuildMappingEndToEnd(unittest.TestCase):
 
             # Act
             with patch.object(gbo, "find_genes", return_value=patched_genes_df) as mocked:
-                df = build_mapping(fasta_path, gtf_path="ignored-by-mock")
+                df, _ = build_mapping(fasta_path, gtf_path="ignored-by-mock")
                 df.to_csv(output_path, index=False)
 
             # Assert — find_genes was called once with the keyword arguments

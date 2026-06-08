@@ -10,6 +10,9 @@ run_mutations_analysis.sh
 src/workflows/hoffie/data/*
 src/workflows/paper_plots/figures/*
 src/workflows/overlap_analysis/correlation/*
+src/workflows/overlap_analysis/correlation_bHLH/*
+src/workflows/overlap_analysis/data/bHLH_reference_sequences.fa
+src/workflows/overlap_analysis/data/bHLH_genes_of_interest.json
 src/workflows/deepCRE_TPM_correlation/*.png
 src/workflows/mutation_distribution_analysis/*.txt
 src/workflows/mutation_distribution_analysis/*/*.fa
