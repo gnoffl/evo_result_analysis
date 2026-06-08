@@ -19,7 +19,7 @@ import os
 import sys
 import json
 import subprocess
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd
@@ -153,9 +153,22 @@ def build_site_to_gene_ids(mapping_candidates: pd.DataFrame) -> Dict[str, List[s
     )
 
 
-def main():
-    _common.configure_matplotlib()
-    _common.set_output_root(CORRELATION_OUTPUT_ROOT)
+def prepare_bhlh_enrichment_df() -> pd.DataFrame:
+    """Load bHLH inputs and run the prediction pipeline into an analysis-ready df.
+
+    Performs the TF-specific data joining: ensure the reference-window FASTA is
+    extracted, parse the bHLH STARR-seq variants and reference windows, map
+    STARR-seq fragments onto reference windows, build and score the mutated
+    sequences (bHLH's ``MAX_DIFFERENCES`` of 16, to allow for the 6 nt core
+    motif), merge in STARR-seq enrichment, and compute deltas and overlap
+    buckets.
+
+    Does not configure matplotlib or the output root; the caller owns those so
+    the same dataframe can feed either the bHLH-only or the pooled analysis.
+
+    Returns:
+        Enrichment dataframe ready for :func:`_common.run_correlation_analysis`.
+    """
     ensure_refs_fasta(REFS_FASTA_PATH, GENES_JSON_PATH, MAPPING_FILE, GENOME_FASTA_PATH, GTF_PATH)
     starrseq_data = _common.load_starrseq_data(STARRSEQ_INPUT_FILE)
     gene_data = load_bhlh_window_candidates(REFS_FASTA_PATH, _common.DEEPCRE_PATH)
@@ -169,36 +182,13 @@ def main():
     enrichment_df = enrichment_df.dropna(subset=["enrichment"]).reset_index(drop=True)
     enrichment_df = _common.calculate_deltas(enrichment_df)
     enrichment_df = _common.add_length_corrected_overlap_buckets(enrichment_df)
-    if "condition" in enrichment_df.columns and len(enrichment_df["condition"].unique()) > 1:
-        position_series: List[Tuple[pd.DataFrame, str, str]] = [
-            (enrichment_df, "all", _common.POSITION_SERIES_COLORS["all"]),
-            (enrichment_df[enrichment_df["condition"].str.lower() == "light"].copy(), "light", _common.POSITION_SERIES_COLORS["light"]),
-            (enrichment_df[enrichment_df["condition"].str.lower() == "dark"].copy(), "dark", _common.POSITION_SERIES_COLORS["dark"]),
-        ]   #type: ignore
-    else:
-        position_series = [(enrichment_df, "all", _common.POSITION_SERIES_COLORS["all"])]
-    _common.plot_correlation_over_positions_fixed_window(position_series)
-    _common.plot_correlation_over_positions_fixed_number_elements(position_series)
-    subsets = [
-        ("", enrichment_df),
-        ("reference", enrichment_df[enrichment_df["starr_reference"] == True]),
-        ("synthetic", enrichment_df[enrichment_df["starr_reference"] == False]),
-        ("binding", enrichment_df[enrichment_df["starr_binding_status"] == "binding"]),
-        ("non_binding", enrichment_df[enrichment_df["starr_binding_status"] == "non_binding"]),
-    ]
-    if "condition" in enrichment_df.columns and len(enrichment_df["condition"].unique()) > 1:
-        subsets += [
-            ("light", enrichment_df[enrichment_df["condition"].str.lower() == "light"]),
-            ("dark", enrichment_df[enrichment_df["condition"].str.lower() == "dark"]),
-        ]
-    for subset_label, subset_df in subsets:
-        bucket_stats: List[Dict[str, Union[str, int, float]]] = []
-        bucket_stats.extend(_common.plot_deepcre_starrseq_correlation(subset_df, colored=True, delta=False, subset_label=subset_label))
-        bucket_stats.extend(_common.plot_mutation_starrseq_correlation(subset_df, delta=False, subset_label=subset_label))
-        bucket_stats.extend(_common.plot_mutation_deepcre_correlation(subset_df, delta=False, subset_label=subset_label))
-        for bucket_label in _common.INDIVIDUAL_BUCKET_LABELS_TO_PLOT:
-            _common.plot_individual_bucket_views(subset_df, bucket_label, subset_label=subset_label)
-        _common.save_bucket_statistics(bucket_stats)
+    return enrichment_df
+
+
+def main():
+    _common.configure_matplotlib()
+    _common.set_output_root(CORRELATION_OUTPUT_ROOT)
+    _common.run_correlation_analysis(prepare_bhlh_enrichment_df())
 
 
 if __name__ == "__main__":

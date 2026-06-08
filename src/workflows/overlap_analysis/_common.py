@@ -863,3 +863,58 @@ def save_bucket_statistics(stat_rows: List[Dict[str, Union[str, int, float]]]) -
     for analysis_name, analysis_df in stats_df.groupby("analysis", sort=False):
         output_file = os.path.join(_get_analysis_output_dir(str(analysis_name)), BUCKET_SUMMARY_FILE_NAME)
         analysis_df.to_csv(output_file, index=False)
+
+
+def run_correlation_analysis(enrichment_df: pd.DataFrame) -> None:
+    """Generate every correlation plot and bucket-statistics CSV for one dataset.
+
+    This is the transcription-factor-agnostic analysis stage shared by all
+    entry-point scripts: it produces the position-series plots and, for each
+    subset (overall, reference/synthetic, binding/non-binding, and light/dark
+    when a ``condition`` column with both values is present), the three scatter
+    correlation plots, the individual bucket views, and the per-bucket fit
+    statistics CSV.
+
+    The output root must already be configured via :func:`set_output_root`; the
+    caller owns it so that a pooled analysis can redirect the outputs without
+    this function knowing which TF(s) produced ``enrichment_df``.
+
+    Args:
+        enrichment_df: Analysis-ready dataframe as returned by the per-TF
+            preparation step (predictions merged with enrichment, deltas
+            computed, and length-corrected overlap buckets assigned).
+    """
+    has_conditions = (
+        "condition" in enrichment_df.columns
+        and len(enrichment_df["condition"].unique()) > 1
+    )
+    if has_conditions:
+        position_series: List[Tuple[pd.DataFrame, str, str]] = [
+            (enrichment_df, "all", POSITION_SERIES_COLORS["all"]),
+            (enrichment_df[enrichment_df["condition"].str.lower() == "light"].copy(), "light", POSITION_SERIES_COLORS["light"]),
+            (enrichment_df[enrichment_df["condition"].str.lower() == "dark"].copy(), "dark", POSITION_SERIES_COLORS["dark"]),
+        ]   #type: ignore
+    else:
+        position_series = [(enrichment_df, "all", POSITION_SERIES_COLORS["all"])]
+    plot_correlation_over_positions_fixed_window(position_series)
+    plot_correlation_over_positions_fixed_number_elements(position_series)
+    subsets = [
+        ("", enrichment_df),
+        ("reference", enrichment_df[enrichment_df["starr_reference"] == True]),
+        ("synthetic", enrichment_df[enrichment_df["starr_reference"] == False]),
+        ("binding", enrichment_df[enrichment_df["starr_binding_status"] == "binding"]),
+        ("non_binding", enrichment_df[enrichment_df["starr_binding_status"] == "non_binding"]),
+    ]
+    if has_conditions:
+        subsets += [
+            ("light", enrichment_df[enrichment_df["condition"].str.lower() == "light"]),
+            ("dark", enrichment_df[enrichment_df["condition"].str.lower() == "dark"]),
+        ]
+    for subset_label, subset_df in subsets:
+        bucket_stats: List[Dict[str, Union[str, int, float]]] = []
+        bucket_stats.extend(plot_deepcre_starrseq_correlation(subset_df, colored=True, delta=False, subset_label=subset_label))
+        bucket_stats.extend(plot_mutation_starrseq_correlation(subset_df, delta=False, subset_label=subset_label))
+        bucket_stats.extend(plot_mutation_deepcre_correlation(subset_df, delta=False, subset_label=subset_label))
+        for bucket_label in INDIVIDUAL_BUCKET_LABELS_TO_PLOT:
+            plot_individual_bucket_views(subset_df, bucket_label, subset_label=subset_label)
+        save_bucket_statistics(bucket_stats)

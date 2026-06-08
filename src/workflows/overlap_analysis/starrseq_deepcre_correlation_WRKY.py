@@ -1,27 +1,19 @@
 import os
 import json
+from typing import Dict, List
+
 import pandas as pd
 from pyfaidx import Fasta
 
 from workflows.overlap_analysis import _common
 from workflows.overlap_analysis._common import (
-    INDIVIDUAL_BUCKET_LABELS_TO_PLOT,
-    POSITION_SERIES_COLORS,
     add_length_corrected_overlap_buckets,
     build_sequences,
     calculate_deltas,
     load_starrseq_data,
     make_deepcre_predictions,
     merge_with_starrseq_results,
-    plot_correlation_over_positions_fixed_number_elements,
-    plot_correlation_over_positions_fixed_window,
-    plot_deepcre_starrseq_correlation,
-    plot_individual_bucket_views,
-    plot_mutation_deepcre_correlation,
-    plot_mutation_starrseq_correlation,
-    save_bucket_statistics,
 )
-from typing import Dict, List, Tuple, Union
 
 BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -64,9 +56,20 @@ def load_relevant_deepcre_window_candidates(run_folder: str):
     return gene_data
 
 
-def main():
-    _common.configure_matplotlib()
-    _common.set_output_root(os.path.join(BASE_DIR, "correlation", _DATA_VERSION))
+def prepare_wrky_enrichment_df() -> pd.DataFrame:
+    """Load WRKY inputs and run the prediction pipeline into an analysis-ready df.
+
+    Performs the TF-specific data joining: parse the WRKY STARR-seq variants and
+    deepCRE reference windows, map STARR-seq fragments onto reference windows,
+    build and score the mutated sequences (WRKY's default ``max_differences`` of
+    15), merge in STARR-seq enrichment, and compute deltas and overlap buckets.
+
+    Does not configure matplotlib or the output root; the caller owns those so
+    the same dataframe can feed either the WRKY-only or the pooled analysis.
+
+    Returns:
+        Enrichment dataframe ready for :func:`_common.run_correlation_analysis`.
+    """
     starrseq_data = load_starrseq_data(STARRSEQ_INPUT_FILE)
     gene_data = load_relevant_deepcre_window_candidates(DEEP_CRE_RUN_FOLDER)
     mapping_candidates = pd.read_csv(MAPPING_FILE)
@@ -85,36 +88,13 @@ def main():
     enrichment_df = enrichment_df.dropna(subset=["enrichment"]).reset_index(drop=True)
     enrichment_df = calculate_deltas(enrichment_df)
     enrichment_df = add_length_corrected_overlap_buckets(enrichment_df)
-    if "condition" in enrichment_df.columns and len(enrichment_df["condition"].unique()) > 1:
-        position_series: List[Tuple[pd.DataFrame, str, str]] = [
-            (enrichment_df, "all", POSITION_SERIES_COLORS["all"]),
-            (enrichment_df[enrichment_df["condition"].str.lower() == "light"].copy(), "light", POSITION_SERIES_COLORS["light"]),
-            (enrichment_df[enrichment_df["condition"].str.lower() == "dark"].copy(), "dark", POSITION_SERIES_COLORS["dark"]),
-        ]   #type: ignore
-    else:
-        position_series = [(enrichment_df, "all", POSITION_SERIES_COLORS["all"])]
-    plot_correlation_over_positions_fixed_window(position_series)
-    plot_correlation_over_positions_fixed_number_elements(position_series)
-    subsets = [
-        ("", enrichment_df),
-        ("reference", enrichment_df[enrichment_df["starr_reference"] == True]),
-        ("synthetic", enrichment_df[enrichment_df["starr_reference"] == False]),
-        ("binding", enrichment_df[enrichment_df["starr_binding_status"] == "binding"]),
-        ("non_binding", enrichment_df[enrichment_df["starr_binding_status"] == "non_binding"]),
-    ]
-    if "condition" in enrichment_df.columns and len(enrichment_df["condition"].unique()) > 1:
-        subsets += [
-            ("light", enrichment_df[enrichment_df["condition"].str.lower() == "light"]),
-            ("dark", enrichment_df[enrichment_df["condition"].str.lower() == "dark"]),
-        ]
-    for subset_label, subset_df in subsets:
-        bucket_stats: List[Dict[str, Union[str, int, float]]] = []
-        bucket_stats.extend(plot_deepcre_starrseq_correlation(subset_df, colored=True, delta=False, subset_label=subset_label))
-        bucket_stats.extend(plot_mutation_starrseq_correlation(subset_df, delta=False, subset_label=subset_label))
-        bucket_stats.extend(plot_mutation_deepcre_correlation(subset_df, delta=False, subset_label=subset_label))
-        for bucket_label in INDIVIDUAL_BUCKET_LABELS_TO_PLOT:
-            plot_individual_bucket_views(subset_df, bucket_label, subset_label=subset_label)
-        save_bucket_statistics(bucket_stats)
+    return enrichment_df
+
+
+def main():
+    _common.configure_matplotlib()
+    _common.set_output_root(os.path.join(BASE_DIR, "correlation", _DATA_VERSION))
+    _common.run_correlation_analysis(prepare_wrky_enrichment_df())
 
 
 if __name__ == "__main__":
