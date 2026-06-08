@@ -585,8 +585,9 @@ def map_starrseq_to_deepcre(
     genes_mapped = {mapping["gene"] for mapping in mapping_results}
     genes_in_deepcis = {gene["gene"] for gene in gene_data}
     genes_not_mapped = genes_in_deepcis - genes_mapped
-    print("unmapped genes: ", len(genes_not_mapped))
-    print(json.dumps(sorted(list(genes_not_mapped)), indent=2))
+    if genes_not_mapped:
+        print("unmapped genes: ", len(genes_not_mapped))
+        print(json.dumps(sorted(list(genes_not_mapped)), indent=2))
     return mapping_results
 
 def compare_sequences(seq_1: str, seq_2: str) -> int:

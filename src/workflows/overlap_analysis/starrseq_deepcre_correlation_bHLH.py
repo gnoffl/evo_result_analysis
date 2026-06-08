@@ -28,7 +28,7 @@ from tensorflow.keras.models import load_model  # type: ignore
 
 from evolution.sequences import one_hot_encode
 
-from . import _common
+from workflows.overlap_analysis import _common
 
 BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "data")

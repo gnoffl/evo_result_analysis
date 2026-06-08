@@ -17,9 +17,9 @@ import os
 
 import pandas as pd
 
-from . import _common
-from .starrseq_deepcre_correlation_WRKY import prepare_wrky_enrichment_df
-from .starrseq_deepcre_correlation_bHLH import prepare_bhlh_enrichment_df
+from workflows.overlap_analysis import _common
+from workflows.overlap_analysis.starrseq_deepcre_correlation_WRKY import prepare_wrky_enrichment_df
+from workflows.overlap_analysis.starrseq_deepcre_correlation_bHLH import prepare_bhlh_enrichment_df
 
 BASE_DIR = os.path.dirname(__file__)
 CORRELATION_OUTPUT_ROOT = os.path.join(BASE_DIR, "correlation_combined", "new")
