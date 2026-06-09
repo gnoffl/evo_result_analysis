@@ -211,34 +211,36 @@ class TestCompareSequences(unittest.TestCase):
         self.assertEqual(overlap_analysis.compare_sequences("AAAA", "TTTT"), 4)
 
     def test_returns_longer_length_when_sizes_differ(self):
-        self.assertEqual(overlap_analysis.compare_sequences("AAA", "AAAAA"), 5)
+        self.assertEqual(overlap_analysis.compare_sequences("AAA", "AAAAA"), -1)
 
 
 class TestGetStarrseqFragment(unittest.TestCase):
     def test_takes_suffix_when_overlap_starts_at_left_edge(self):
         # overlap_start == 0 -> fragment is the trailing seq_length bases.
         self.assertEqual(
-            overlap_analysis.get_starrseq_fragment("ABCDEFGHIJ", 0, 4), "GHIJ"
+            overlap_analysis.get_starrseq_fragment("ABCDEFGHIJ", 0, 4, overlap_analysis.IDEAL_PADDING_START, overlap_analysis.IDEAL_PADDING_END), "GHIJ"
         )
 
     def test_takes_suffix_when_overlap_starts_at_padding_end(self):
         fragment = overlap_analysis.get_starrseq_fragment(
             "ABCDEFGHIJ",
-            overlap_analysis.PADDING_END,
-            overlap_analysis.PADDING_END + 4,
+            overlap_analysis.IDEAL_PADDING_END,
+            overlap_analysis.IDEAL_PADDING_END + 4,
+            overlap_analysis.IDEAL_PADDING_START, overlap_analysis.IDEAL_PADDING_END
         )
         self.assertEqual(fragment, "GHIJ")
 
     def test_takes_prefix_when_overlap_ends_at_padding_start(self):
         fragment = overlap_analysis.get_starrseq_fragment(
             "ABCDEFGHIJ",
-            overlap_analysis.PADDING_START - 4,
-            overlap_analysis.PADDING_START,
+            overlap_analysis.IDEAL_PADDING_START - 4,
+            overlap_analysis.IDEAL_PADDING_START,
+            overlap_analysis.IDEAL_PADDING_START, overlap_analysis.IDEAL_PADDING_END
         )
         self.assertEqual(fragment, "ABCD")
 
     def test_returns_full_sequence_for_internal_overlap(self):
-        fragment = overlap_analysis.get_starrseq_fragment("ABCDEFGHIJ", 100, 150)
+        fragment = overlap_analysis.get_starrseq_fragment("ABCDEFGHIJ", 100, 150, overlap_analysis.IDEAL_PADDING_START, overlap_analysis.IDEAL_PADDING_END)
         self.assertEqual(fragment, "ABCDEFGHIJ")
 
 
@@ -248,8 +250,8 @@ class TestFindOverlapPositions(unittest.TestCase):
         end_query = "C" * 10
         ref_seq = "T" * 200 + start_query + "G" * 90 + end_query + "T" * 50
 
-        start_pos, end_pos, reverse = overlap_analysis.find_overlap_positions(
-            ref_seq, start_query, end_query
+        start_pos, end_pos, _, _, reverse = overlap_analysis.find_overlap_positions(
+            ref_seq, start_query, end_query, additional_padding=0
         )
 
         self.assertEqual(start_pos, 200)
@@ -264,8 +266,8 @@ class TestFindOverlapPositions(unittest.TestCase):
         # falls back to the reverse-complement branch.
         ref_seq = "G" * 10 + "AC" * 70 + "T" * 10 + "AC" * 5
 
-        start_pos, end_pos, reverse = overlap_analysis.find_overlap_positions(
-            ref_seq, start_query, end_query
+        start_pos, end_pos, _, _, reverse = overlap_analysis.find_overlap_positions(
+            ref_seq, start_query, end_query, additional_padding=0
         )
 
         self.assertTrue(reverse)
@@ -276,8 +278,8 @@ class TestFindOverlapPositions(unittest.TestCase):
         end_query = "C" * 10
         ref_seq = "G" * 300 + end_query + "G" * 100
 
-        start_pos, end_pos, reverse = overlap_analysis.find_overlap_positions(
-            ref_seq, "A" * 10, end_query
+        start_pos, end_pos, _, _, reverse = overlap_analysis.find_overlap_positions(
+            ref_seq, "A" * 10, end_query, additional_padding=0
         )
 
         self.assertEqual(start_pos, 0)
@@ -288,12 +290,12 @@ class TestFindOverlapPositions(unittest.TestCase):
         start_query = "A" * 10
         ref_seq = "T" * 200 + start_query + "G" * 100
 
-        start_pos, end_pos, reverse = overlap_analysis.find_overlap_positions(
-            ref_seq, start_query, "C" * 10
+        start_pos, end_pos, _, _, reverse = overlap_analysis.find_overlap_positions(
+            ref_seq, start_query, "C" * 10, additional_padding=0
         )
 
         self.assertEqual(start_pos, 200)
-        self.assertEqual(end_pos, overlap_analysis.PADDING_START)
+        self.assertEqual(end_pos, overlap_analysis.IDEAL_PADDING_START)
         self.assertFalse(reverse)
 
     def test_short_overlap_is_rejected(self):
@@ -302,19 +304,19 @@ class TestFindOverlapPositions(unittest.TestCase):
         ref_seq = "T" * 200 + start_query + "G" * 30 + end_query + "T" * 50
 
         result = overlap_analysis.find_overlap_positions(
-            ref_seq, start_query, end_query
+            ref_seq, start_query, end_query, additional_padding=0
         )
 
-        self.assertEqual(result, (-1, -1, False))
+        self.assertEqual(result, (-1, -1, -1, -1, False))
 
     def test_no_match_returns_sentinel(self):
         ref_seq = "AC" * 100
 
         result = overlap_analysis.find_overlap_positions(
-            ref_seq, "T" * 10, "G" * 10
+            ref_seq, "T" * 10, "G" * 10, additional_padding=0
         )
 
-        self.assertEqual(result, (-1, -1, False))
+        self.assertEqual(result, (-1, -1, -1, -1, False))
 
 
 class TestCalculateDeltas(unittest.TestCase):

@@ -96,7 +96,7 @@ class TestLoadBhlhWindowCandidates(unittest.TestCase):
         with patch.object(bhlh, "Fasta", return_value=records), \
                 patch.object(bhlh, "load_model", return_value=fake_model), \
                 patch.object(bhlh, "one_hot_encode", lambda seq: np.zeros(4)):
-            gene_data = bhlh.load_bhlh_window_candidates("refs.fa", "model.h5")
+            gene_data = bhlh.load_bhlh_window_candidates("refs.fa", "model.h5", additional_padding_map=pd.DataFrame({"additional_padding": [5, 10]}, index=["AT1G19040", "AT1G23140"]))
 
         # Assert: gene ids, coordinates (minus strand swapped to start<=end),
         # ref sequences, and batched ref_fitness values.
@@ -108,6 +108,7 @@ class TestLoadBhlhWindowCandidates(unittest.TestCase):
         self.assertEqual(plus_gene["end"], 6578695)
         self.assertEqual(plus_gene["ref_seq"], "ACGTACGT")
         self.assertEqual(plus_gene["ref_fitness"], 0.11)
+        self.assertEqual(plus_gene["additional_padding"], 5)
 
         minus_gene = gene_data[1]
         self.assertEqual(minus_gene["gene"], "AT1G23140")
@@ -115,6 +116,7 @@ class TestLoadBhlhWindowCandidates(unittest.TestCase):
         self.assertEqual(minus_gene["end"], 8204500)
         self.assertLessEqual(minus_gene["start"], minus_gene["end"])
         self.assertEqual(minus_gene["ref_fitness"], 0.22)
+        self.assertEqual(minus_gene["additional_padding"], 10)
 
 
 class TestBuildSiteToGeneIds(unittest.TestCase):

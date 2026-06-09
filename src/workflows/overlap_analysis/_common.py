@@ -34,13 +34,13 @@ DEEPCRE_PATH = "/home/gernot/Code/PhD_Code/Evolution/models/Atha_S0X0.75dP7K25g_
 PARETO_PATH = os.path.join("saved_populations", "pareto_front.json")
 INTRAGENIC = 500
 EXTRAGENIC = 1000
-PADDING = 20
-PADDING_START = INTRAGENIC + EXTRAGENIC
-PADDING_END = PADDING_START + PADDING
-FULL_SEQUENCE_LENGTH = 2 * PADDING_START + PADDING
+MIN_PADDING = 20
+IDEAL_PADDING_START = INTRAGENIC + EXTRAGENIC
+IDEAL_PADDING_END = IDEAL_PADDING_START + MIN_PADDING
+FULL_SEQUENCE_LENGTH = 2 * IDEAL_PADDING_START + MIN_PADDING
 FULL_OVERLAP_LENGTH = 170
 BUCKET_SIZE = 200
-EDGE_POSITIONS = {0, PADDING_START, PADDING_END, FULL_SEQUENCE_LENGTH}
+EDGE_POSITIONS = {0, IDEAL_PADDING_START, IDEAL_PADDING_END, FULL_SEQUENCE_LENGTH}
 BUCKET_SUMMARY_FILE_NAME = "overlap_bucket_fit_parameters.csv"
 POSITION_SERIES_COLORS = {
     "all": "#555555",
@@ -494,7 +494,57 @@ def reverse_complement(seq: str) -> str:
     complement = str.maketrans('ACGTacgt', 'TGCAtgca')
     return seq.translate(complement)[::-1]
 
-def find_overlap_positions(ref_seq: str, start_query: str, end_query: str) -> Tuple[int, int, bool]:
+
+def adjust_positions(start_pos: int, end_pos: int, additional_padding: int, reverse: bool, len_ref_seq: int) -> Tuple[int, int, int, int]:
+    """adjusts the start and end position based on how they overlap wit the borders of the deepCRE extraction window
+
+    Args:
+        start_pos (int): found start of the start query
+        end_pos (int): found start of the end query
+        additional_padding (int): additional padding for short genes
+        reverse (bool): indicates whether the gene is in forward or reverse orientation
+        len_ref_seq (int): length of the reference sequence
+
+    Returns:
+        Tuple[int, int]: adjust values for start and end position of the insert
+    """
+    # calculate the real padding start and end based on the additional padding for short genes and the orientation of the gene
+    shorter_additional_padding_half = additional_padding // 2
+    longer_additional_padding_half = shorter_additional_padding_half + (additional_padding % 2)
+
+    # the promoter site is always the "longer" side, so for the forward orientation
+    real_padding_start = IDEAL_PADDING_START - longer_additional_padding_half if reverse else IDEAL_PADDING_START - shorter_additional_padding_half
+    real_padding_end = IDEAL_PADDING_END + shorter_additional_padding_half if reverse else IDEAL_PADDING_END + longer_additional_padding_half
+
+    # check whether match is before or after padding and adjust missing positions accordingly
+    if start_pos == -1:
+        if end_pos <= real_padding_start:
+            start_pos = 0
+        else:
+            start_pos = real_padding_end
+    # adjust not found end pos accoring to location of start pos
+    if end_pos == -1:
+        if start_pos < real_padding_start:
+            end_pos = real_padding_start
+        else:
+            end_pos = len_ref_seq
+    # add 50 to the end but limit to the end of padding / full seuquence based on position
+    else:
+        if start_pos < real_padding_start:
+            end_pos = min(end_pos + 50, real_padding_start)
+        else:
+            end_pos = min(end_pos + 50, len_ref_seq)
+
+    # return if the match is spanning the padding region
+    if start_pos < real_padding_start and end_pos > real_padding_start:
+        return -1, -1, -1, -1
+    #overlap must cover the actual changed sequence of the starrseq entry
+    overlap_length = end_pos - start_pos
+    if overlap_length < 100:
+        return -1, -1, -1, -1
+    return start_pos, end_pos, real_padding_start, real_padding_end
+
+def find_overlap_positions(ref_seq: str, start_query: str, end_query: str, additional_padding: int) -> Tuple[int, int, int, int, bool]:
     start_pos = ref_seq.find(start_query)
     end_pos = ref_seq.find(end_query)
     reverse = False
@@ -505,36 +555,12 @@ def find_overlap_positions(ref_seq: str, start_query: str, end_query: str) -> Tu
         start_pos = ref_seq.find(start_query_reverse)
         end_pos = ref_seq.find(end_query_reverse)
         if start_pos == -1 and end_pos == -1:
-            return -1, -1, False
+            return -1, -1, -1, -1, False
         reverse = True
         start_pos, end_pos = end_pos, start_pos
-    # check whether match is before or after padding and adjust missing positions accordingly
-    if start_pos == -1:
-        if end_pos <= PADDING_START:
-            start_pos = 0
-        else:
-            start_pos = PADDING_END
-    # adjust not found end pos accoring to location of start pos
-    if end_pos == -1:
-        if start_pos < PADDING_START:
-            end_pos = PADDING_START
-        else:
-            end_pos = len(ref_seq)
-    # add 50 to the end but limit to the end of padding / full seuquence based on position
-    else:
-        if start_pos < PADDING_START:
-            end_pos = min(end_pos + 50, PADDING_START)
-        else:
-            end_pos = min(end_pos + 50, len(ref_seq))
-
-    # return if the match is spanning the padding region
-    if start_pos < PADDING_START and end_pos > PADDING_START:
-        return -1, -1, False
-    #overlap must cover the actual changed sequence of the starrseq entry
-    overlap_length = end_pos - start_pos
-    if overlap_length < 100:
-        return -1, -1, False
-    return start_pos, end_pos, reverse
+    
+    start_pos, end_pos, real_padding_start, real_padding_end = adjust_positions(start_pos, end_pos, additional_padding, reverse, len(ref_seq))
+    return start_pos, end_pos, real_padding_start, real_padding_end, reverse
 
 def map_starrseq_to_deepcre(
     starrseq_data: List[Dict],
@@ -563,7 +589,9 @@ def map_starrseq_to_deepcre(
         gene_ids = site_to_gene_ids.get(search_key, [])
         curr_gene_candidates = [gene for gene in gene_data if gene["gene"] in gene_ids]
         for gene_entry in curr_gene_candidates:
-            start_pos, end_pos, reverse = find_overlap_positions(gene_entry["ref_seq"], start_query, end_query)
+            additional_padding = gene_entry.get("additional_padding", 0)
+            vals = find_overlap_positions(gene_entry["ref_seq"], start_query, end_query, additional_padding)
+            start_pos, end_pos, real_padding_start, real_padding_end, reverse = vals
             if (start_pos, end_pos) == (-1, -1):
                 continue
             # check for overlap of the sequence in the reference sequence of the gene with the starrseq entry
@@ -578,9 +606,11 @@ def map_starrseq_to_deepcre(
                     "deepcre_ref_fitness": gene_entry["ref_fitness"],
                     "ref_seq": gene_entry["ref_seq"],
                     "starr_sequence": starr_entry["sequence"],
-                    "reverse": reverse
+                    "reverse": reverse,
+                    "real_padding_start": real_padding_start,
+                    "real_padding_end": real_padding_end,
                 })
-        if mapping_results and mapping_results[-1]["starr_full_name"] != starr_entry["full_name"]:
+        if not mapping_results or mapping_results[-1]["starr_full_name"] != starr_entry["full_name"]:
             unmapped_starrseq_entries.append(starr_entry)
     genes_mapped = {mapping["gene"] for mapping in mapping_results}
     genes_in_deepcis = {gene["gene"] for gene in gene_data}
@@ -592,15 +622,15 @@ def map_starrseq_to_deepcre(
 
 def compare_sequences(seq_1: str, seq_2: str) -> int:
     if len(seq_1) != len(seq_2):
-        return max(len(seq_1), len(seq_2))
+        return -1
     return sum(1 for a, b in zip(seq_1, seq_2) if a != b)
 
 
-def get_starrseq_fragment(starr_seq: str, overlap_start: int, overlap_end: int) -> str:
+def get_starrseq_fragment(starr_seq: str, overlap_start: int, overlap_end: int, real_padding_start: int, real_padding_end: int) -> str:
     seq_length = overlap_end - overlap_start
-    if overlap_start == 0 or overlap_start == PADDING_END:
+    if overlap_start == 0 or overlap_start == real_padding_end:
         return starr_seq[-seq_length:]
-    elif overlap_end == PADDING_START or overlap_end == 2 * (INTRAGENIC + EXTRAGENIC) + PADDING:
+    elif overlap_end == real_padding_start or overlap_end == 2 * (INTRAGENIC + EXTRAGENIC) + MIN_PADDING:
         return starr_seq[:seq_length]
     else:
         return starr_seq
@@ -614,18 +644,20 @@ def build_sequences(mapping_results: List[Dict], max_differences: int = 15) -> T
         starr_seq = mapping["starr_sequence"]
         overlap_start = mapping["overlap_start"]
         overlap_end = mapping["overlap_end"]
+        real_padding_start = mapping.get("real_padding_start", IDEAL_PADDING_START)
+        real_padding_end = mapping.get("real_padding_end", IDEAL_PADDING_END)
         if mapping["reverse"]:
             starr_seq = reverse_complement(starr_seq)
-        starr_seq_fragment = get_starrseq_fragment(starr_seq, overlap_start, overlap_end)
+        starr_seq_fragment = get_starrseq_fragment(starr_seq, overlap_start, overlap_end, real_padding_start, real_padding_end)
         mutated_seq = ref_seq[:overlap_start] + starr_seq_fragment + ref_seq[overlap_end:]
         differences = compare_sequences(ref_seq, mutated_seq)
-        if differences <= max_differences:
+        if differences < 0 or differences > max_differences:
+            print(f"Skipping {mapping['starr_full_name']}, ({mapping['gene']}) due to high number of differences ({differences}) between ref and mutated sequence.")
+        else:
             mutated_seq = one_hot_encode(mutated_seq)
             seqs.append(mutated_seq)
             mapping["differences"] = differences
             meta_data.append(mapping)
-        else:
-            print(f"Skipping {mapping['starr_full_name']}, ({mapping['gene']}) due to high number of differences ({differences}) between ref and mutated sequence.")
 
     seqs = np.array(seqs)
     return seqs, meta_data
