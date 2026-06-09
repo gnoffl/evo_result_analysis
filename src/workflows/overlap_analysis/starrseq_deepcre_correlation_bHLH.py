@@ -90,7 +90,7 @@ def ensure_refs_fasta(
     )
 
 
-def load_bhlh_window_candidates(refs_fasta_path: str, model_path: str) -> List[Dict]:
+def load_bhlh_window_candidates(refs_fasta_path: str, model_path: str, additional_padding_map: pd.DataFrame) -> List[Dict]:
     """Load bHLH reference windows and their deepCRE reference fitness.
 
     Parses each FASTA header ``{chrom}_{gene_id}_gene:{start}-{end}`` using the
@@ -101,7 +101,7 @@ def load_bhlh_window_candidates(refs_fasta_path: str, model_path: str) -> List[D
     Args:
         refs_fasta_path: FASTA of extracted 3020 bp reference windows.
         model_path: Path to the deepCRE model used to score references.
-
+        additional_padding_map: DataFrame mapping gene IDs to additional padding values.
     Returns:
         One gene-window dict per FASTA record, with keys ``gene``, ``ref_seq``,
         ``start``, ``end``, ``folder_name`` and ``ref_fitness``.
@@ -121,6 +121,7 @@ def load_bhlh_window_candidates(refs_fasta_path: str, model_path: str) -> List[D
             "ref_seq": str(record),
             "start": int(start),
             "end": int(end),
+            "additional_padding": additional_padding_map.loc[gene_name, "additional_padding"].item(),
         })
 
     # Batch ref_fitness in a single forward pass over all reference sequences.
@@ -150,7 +151,7 @@ def build_site_to_gene_ids(mapping_candidates: pd.DataFrame) -> Dict[str, List[s
         mapping_candidates.groupby("site_id")["gene_id"]
         .apply(lambda site_genes: list(site_genes.unique()))
         .to_dict()
-    )
+    )   #type: ignore
 
 
 def prepare_bhlh_enrichment_df() -> pd.DataFrame:
@@ -171,8 +172,9 @@ def prepare_bhlh_enrichment_df() -> pd.DataFrame:
     """
     ensure_refs_fasta(REFS_FASTA_PATH, GENES_JSON_PATH, MAPPING_FILE, GENOME_FASTA_PATH, GTF_PATH)
     starrseq_data = _common.load_starrseq_data(STARRSEQ_INPUT_FILE)
-    gene_data = load_bhlh_window_candidates(REFS_FASTA_PATH, _common.DEEPCRE_PATH)
     mapping_candidates = pd.read_csv(MAPPING_FILE)
+    additional_padding_map = mapping_candidates[["gene_id", "additional_padding"]].drop_duplicates().set_index("gene_id")
+    gene_data = load_bhlh_window_candidates(REFS_FASTA_PATH, _common.DEEPCRE_PATH, additional_padding_map)
     site_to_gene_ids = build_site_to_gene_ids(mapping_candidates)
     starr_seq_results = pd.read_csv(STARR_SEQ_RESULTS)
     mapping_results = _common.map_starrseq_to_deepcre(starrseq_data, gene_data, site_to_gene_ids)
@@ -188,7 +190,8 @@ def prepare_bhlh_enrichment_df() -> pd.DataFrame:
 def main():
     _common.configure_matplotlib()
     _common.set_output_root(CORRELATION_OUTPUT_ROOT)
-    _common.run_correlation_analysis(prepare_bhlh_enrichment_df())
+    data = prepare_bhlh_enrichment_df()
+    _common.run_correlation_analysis(data)
 
 
 if __name__ == "__main__":
