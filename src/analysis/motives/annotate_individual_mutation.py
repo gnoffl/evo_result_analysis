@@ -19,6 +19,10 @@ from analysis.motives.deepcis_scanner import (
 )
 from evolution.sequences import one_hot_encode, one_hot_decode, compare_sequences
 
+raise NotImplementedError("This module is a work in progress and not yet ready for use.")
+# idea: for each mutation, annotate the genomic context (intergenic, exon / intron / UTR...)
+# and also see whether it change the binding status of one or more TFs.
+
 def _mutations_from_ohe(
     ref_ohe: np.ndarray,
     max_ohe: np.ndarray,

@@ -5,17 +5,17 @@ import pandas as pd
 from unittest.mock import MagicMock, patch
 from typing import List, Tuple
 
-from analysis.motives.deepcis_annotation import (
-    _mutations_from_ohe,
-    compare_sequences_df,
-    annotate_mutations_in_windows,
-    add_genomic_coordinates,
-    DEFAULT_DELTA_THRESHOLD,
-    DEFAULT_EXTRAGENIC,
-    DEFAULT_INTRAGENIC,
-    DEFAULT_CENTRAL_PADDING,
-    TF_FAMILY_NAMES,
-)
+# from analysis.motives.annotate_individual_mutation import (
+#     _mutations_from_ohe,
+#     compare_sequences_df,
+#     annotate_mutations_in_windows,
+#     add_genomic_coordinates,
+#     DEFAULT_DELTA_THRESHOLD,
+#     DEFAULT_EXTRAGENIC,
+#     DEFAULT_INTRAGENIC,
+#     DEFAULT_CENTRAL_PADDING,
+#     TF_FAMILY_NAMES,
+# )
 from analysis.motives.deepcis_scanner import GeneRunData
 
 
