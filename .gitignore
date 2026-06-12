@@ -8,6 +8,7 @@ visualization/*
 run_mutations_analysis.sh
 *.fai
 src/workflows/hoffie/data/*
+src/workflows/hoffie/mutation_assessment/
 src/workflows/paper_plots/figures/*
 src/workflows/overlap_analysis/correlation/*
 src/workflows/overlap_analysis/correlation_bHLH/*
@@ -21,6 +22,14 @@ src/workflows/mutation_distribution_analysis/*/*.fai
 src/workflows/mutation_distribution_analysis/*/*.json
 src/workflows/mutation_distribution_analysis/*/*.csv
 src/workflows/mutation_distance_analysis/results/
+src/workflows/overlap_analysis/correct_construct/*.fa
+src/workflows/overlap_analysis/correct_construct/*.fai
+src/workflows/overlap_analysis/correct_construct/plots/*
+!src/workflows/overlap_analysis/correct_construct/pPSntF_enhLib_35Spr.fa
+!src/workflows/overlap_analysis/correct_construct/barcode1.fa
+!src/workflows/overlap_analysis/correct_construct/barcode2.fa
+
+
 
 # C extensions
 *.so
