@@ -46,14 +46,16 @@ usage() {
     echo "  --no-highlight-padding          Disable padding background in plots"
     echo "  --no-highlight-peaks            Disable peak background overlays in plots"
     echo ""
-    echo "Behavior:" 
+    echo "Behavior:"
     echo "  1) Runs deepcis_scanner"
     echo "  2) Runs peak_scanner (all signal types by default)"
-    echo "  3) Clears visualization folder and runs deepcis_visualize with --random-subset"
+    echo "  3) Runs analyze_peaks peak summary"
+    echo "  4) Clears visualization folder and runs deepcis_visualize with --random-subset"
     echo ""
     echo "Output layout inside <output_folder>:"
     echo "  deepcis_scan/deepcis_window_scan_<analysis_name>.csv"
     echo "  deepcis_scan/<analysis_name>_annotated_peaks_<signal_types>_<timestamp>.csv"
+    echo "  deepcis_scan/<analysis_name>_peak_summary.csv"
     echo "  deepcis_scan/deepcis_scan_plots/<gene>/*.png"
     exit 1
 }
@@ -264,7 +266,7 @@ mkdir -p "$PEAK_DIR"
 
 # Step 1: DeepCIS scan
 
-echo -e "${BLUE}[STEP 1/3] Running deepcis_scanner.py...${NC}"
+echo -e "${BLUE}[STEP 1/4] Running deepcis_scanner.py...${NC}"
 declare -a SCAN_CMD=(
     python -m src.analysis.motives.deepcis_scanner
     --run-folder "$RESULTS_FOLDER"
@@ -297,7 +299,7 @@ echo ""
 
 # Step 2: Peak calling
 
-echo -e "${BLUE}[STEP 2/3] Running peak_scanner.py...${NC}"
+echo -e "${BLUE}[STEP 2/4] Running peak_scanner.py...${NC}"
 declare -a PEAK_CMD=(
     python -m src.analysis.motives.peak_scanner
     "$SCAN_CSV"
@@ -339,9 +341,20 @@ fi
 echo "Using peak file: $PEAK_OUTPUT_FILE"
 echo ""
 
-# Step 3: Visualization (random subset)
+# Step 3: Peak summary
 
-echo -e "${BLUE}[STEP 3/3] Running deepcis_visualize.py with --random-subset...${NC}"
+echo -e "${BLUE}[STEP 3/4] Running analyze_peaks.py (peak summary)...${NC}"
+python -m src.analysis.motives.analyze_peaks \
+    "$PEAK_OUTPUT_FILE" \
+    --summarize-peaks \
+    --output-folder "$PEAK_DIR" \
+    --base_name "$ANALYSIS_NAME"
+echo -e "${GREEN}✓ analyze_peaks.py completed successfully${NC}"
+echo ""
+
+# Step 4: Visualization (random subset)
+
+echo -e "${BLUE}[STEP 4/4] Running deepcis_visualize.py with --random-subset...${NC}"
 
 # Clean visualization output to ensure only latest plots are present.
 if [ -d "$VIS_DIR" ]; then
@@ -383,5 +396,6 @@ echo ""
 echo "Artifacts:"
 echo "  Scan:          $SCAN_CSV"
 echo "  Peak file:     $PEAK_OUTPUT_FILE"
+echo "  Peak summary:  $PEAK_DIR/${ANALYSIS_NAME}_peak_summary.csv"
 echo "  Visualizations:$VIS_DIR"
 echo "=========================================="
