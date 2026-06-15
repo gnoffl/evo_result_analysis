@@ -279,21 +279,28 @@ class TestPeakSummarizationMode(AnalyzePeaksIntegrationBase):
             # Run summarization without expected peak locations
             summary = summarize_peaks(peaks_df, output_dir, pd.DataFrame())
 
-            # Validate output structure
+            # Wide format: one row per TF, one column per signal type
             assert len(summary) > 0
             assert "tf" in summary.columns
-            assert "signal_type" in summary.columns
-            assert "peak_count" in summary.columns
+            assert "diff_calc" in summary.columns
+            assert "signal_type" not in summary.columns
+            assert "peak_count" not in summary.columns
 
-            # Should have entries for both reference and difference signals
-            signal_types = set(summary["signal_type"].unique())
-            self.assertEqual(signal_types, {"reference", "diff_added", "diff_removed", "max_mutated"}, f"Expected signal types 'reference' and 'difference', got {signal_types}")
+            # Signal types become columns
+            for col in ("reference", "diff_added", "diff_removed", "max_mutated"):
+                assert col in summary.columns, f"Expected column '{col}' in summary"
 
-            # Should have entries for WRKY40
+            # WRKY40: 2 reference peaks, 1 diff_added, 1 diff_removed, diff_calc=0
             assert "WRKY40" in summary["tf"].values
-            wrkylines = summary[summary["tf"] == "WRKY40"]
-            self.assertEqual(wrkylines["peak_count"].tolist(), [1, 1, 0, 2])
-            self.assertEqual(wrkylines["signal_type"].tolist(), ["diff_added", "diff_removed", "max_mutated", "reference"])
+            wrky_row = summary[summary["tf"] == "WRKY40"].iloc[0]
+            self.assertEqual(wrky_row["reference"], 2)
+            self.assertEqual(wrky_row["diff_added"], 1)
+            self.assertEqual(wrky_row["diff_removed"], 1)
+            self.assertEqual(wrky_row["max_mutated"], 0)
+            self.assertEqual(wrky_row["diff_calc"], 0)
+
+            # Output is sorted by diff_calc descending
+            self.assertTrue((summary["diff_calc"].diff().dropna() <= 0).all())
 
             # Validate file was written
             assert (output_dir / "peak_summary.csv").exists()
@@ -335,13 +342,24 @@ class TestPeakSummarizationMode(AnalyzePeaksIntegrationBase):
             # Run summarization with expected peak locations
             summary = summarize_peaks(peaks_df, output_dir, expected_locations)
 
-            # Should only include peaks from AT1G01_01 that overlap 100-200
-            # AT1G01_01 has peaks: 100-120 (overlaps), 150-170 (overlaps)
-            # AT2G02_02 should be completely filtered out
-            self.assertEqual(len(summary), 4)  # Only AT1G01_01 peaks should remain: reference and diff_added
-            self.assertEqual(summary["tf"].tolist(), ["bHLH74", "bHLH74", "WRKY40", "WRKY40"])  # Only WRKY40 peaks should remain
-            self.assertEqual(summary["signal_type"].tolist(), ["diff_added", "max_mutated", "diff_added", "max_mutated"])  # Only AT1G01_01 peaks should remain: reference and diff_added
-            self.assertEqual(summary["peak_count"].tolist(), [0, 1, 1, 0])  # Both peaks from AT1G01_01 should be counted
+            # After filtering to target region [240, 340] for gene "01":
+            #   AT1G01_01 WRKY40 150-170 (middle=285) → retained → diff_added (area=0.3>0)
+            #   AT1G01_01 bHLH74 200-220 (middle=335) → retained → max_mutated
+            # AT2G02_02 peaks fall outside the region and are excluded.
+            # Wide format: one row per TF (WRKY40, bHLH74).
+            self.assertEqual(len(summary), 2)
+            self.assertEqual(summary["tf"].tolist(), ["WRKY40", "bHLH74"])  # sorted by diff_calc desc
+
+            wrky_row = summary[summary["tf"] == "WRKY40"].iloc[0]
+            self.assertEqual(wrky_row["diff_added"], 1)
+            self.assertEqual(wrky_row["max_mutated"], 0)
+            self.assertEqual(wrky_row["diff_calc"], 1)
+
+            bhlh_row = summary[summary["tf"] == "bHLH74"].iloc[0]
+            self.assertEqual(bhlh_row["diff_added"], 0)
+            self.assertEqual(bhlh_row["max_mutated"], 1)
+            self.assertEqual(bhlh_row["diff_calc"], 0)
+
             assert (output_dir / "peak_summary.csv").exists()
 
             # Read the summary to verify it was filtered

@@ -353,37 +353,69 @@ def filter_overlapping_peaks(peaks_df: pd.DataFrame, expected_peak_locations: pd
     else:
         return pd.DataFrame(columns=peaks_df.columns)
 
-def summarize_peaks(peaks_df: pd.DataFrame, output_folder: Path, expected_peak_locations: pd.DataFrame, base_name: str = "") -> pd.DataFrame:
-    """Summarize peak counts and scores by gene."""
+def summarize_peaks(
+    peaks_df: pd.DataFrame,
+    output_folder: Path,
+    expected_peak_locations: pd.DataFrame,
+    base_name: str = "",
+) -> pd.DataFrame:
+    """Summarize peak counts by TF in wide format, one column per signal type.
+
+    Args:
+        peaks_df: DataFrame of annotated peaks with signal_type and peak_area columns.
+        output_folder: Directory where the summary CSV is written.
+        expected_peak_locations: If non-empty, restrict peaks to those overlapping
+            target regions.
+        base_name: Prefix for the output filename.
+
+    Returns:
+        Wide-format DataFrame with one column per signal type, plus ``diff_calc``
+        (diff_added - diff_removed), sorted by ``diff_calc`` descending.
+    """
     if not expected_peak_locations.empty:
         peaks_df = filter_overlapping_peaks(peaks_df, expected_peak_locations)
+    peaks_df = peaks_df.copy()
     peaks_df["added"] = np.where(peaks_df[PEAK_SCORE_COLUMN] > 0, "diff_added", "diff_removed")
+
     non_diff = peaks_df[~peaks_df["signal_type"].str.contains("difference", case=False, na=False)]
     diff = peaks_df[peaks_df["signal_type"].str.contains("difference", case=False, na=False)]
+
     summary_non_diff = (
         non_diff.groupby([PEAK_TF_COLUMN, "signal_type"])
-        .agg(
-            peak_count=(PEAK_SCORE_COLUMN, "count"),
-        )
+        .agg(peak_count=(PEAK_SCORE_COLUMN, "count"))
         .reset_index()
     )
     diff_summary = (
         diff.groupby([PEAK_TF_COLUMN, "added"])
-        .agg(
-            peak_count=(PEAK_SCORE_COLUMN, "count"),
-        )
+        .agg(peak_count=(PEAK_SCORE_COLUMN, "count"))
         .reset_index()
+        .rename(columns={"added": "signal_type"})
     )
-    diff_summary = diff_summary.rename(columns={"added": "signal_type"})
-    summary = pd.concat([summary_non_diff, diff_summary], ignore_index=True)
-    summary = add_zeros(summary)
-    summary["sort_TF"] = summary[PEAK_TF_COLUMN].str.lower()
 
-    summary = summary.sort_values(by=["sort_TF", "signal_type"])
-    summary = summary.drop(columns=["sort_TF"])
-    output_path = output_folder / f"{base_name}_peak_summary.csv" if base_name else output_folder / "peak_summary.csv"
-    summary.to_csv(output_path, index=False)
-    return summary
+    long_summary = pd.concat([summary_non_diff, diff_summary], ignore_index=True)
+
+    wide_summary = long_summary.pivot_table(
+        index=PEAK_TF_COLUMN,
+        columns="signal_type",
+        values="peak_count",
+        aggfunc="sum",
+        fill_value=0,
+    ).reset_index()
+    wide_summary.columns.name = None
+
+    diff_added = wide_summary.get("diff_added", pd.Series(0, index=wide_summary.index))
+    diff_removed = wide_summary.get("diff_removed", pd.Series(0, index=wide_summary.index))
+    wide_summary["diff_calc"] = diff_added - diff_removed
+
+    wide_summary = wide_summary.sort_values(by="diff_calc", ascending=False).reset_index(drop=True)
+
+    output_path = (
+        output_folder / f"{base_name}_peak_summary.csv"
+        if base_name
+        else output_folder / "peak_summary.csv"
+    )
+    wide_summary.to_csv(output_path, index=False)
+    return wide_summary
 
 
 def build_parser() -> ArgumentParser:
