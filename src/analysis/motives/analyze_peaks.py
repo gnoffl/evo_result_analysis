@@ -403,9 +403,9 @@ def summarize_peaks(
     ).reset_index()
     wide_summary.columns.name = None
 
-    diff_added = wide_summary.get("diff_added", pd.Series(0, index=wide_summary.index))
-    diff_removed = wide_summary.get("diff_removed", pd.Series(0, index=wide_summary.index))
-    wide_summary["diff_calc"] = diff_added - diff_removed
+    max_mutated = wide_summary.get("max_mutated", pd.Series(0, index=wide_summary.index))
+    reference = wide_summary.get("reference", pd.Series(0, index=wide_summary.index))
+    wide_summary["diff_calc"] = max_mutated - reference
 
     wide_summary = wide_summary.sort_values(by="diff_calc", ascending=False).reset_index(drop=True)
 

@@ -297,7 +297,7 @@ class TestPeakSummarizationMode(AnalyzePeaksIntegrationBase):
             self.assertEqual(wrky_row["diff_added"], 1)
             self.assertEqual(wrky_row["diff_removed"], 1)
             self.assertEqual(wrky_row["max_mutated"], 0)
-            self.assertEqual(wrky_row["diff_calc"], 0)
+            self.assertEqual(wrky_row["diff_calc"], -2)
 
             # Output is sorted by diff_calc descending
             self.assertTrue((summary["diff_calc"].diff().dropna() <= 0).all())
@@ -348,17 +348,17 @@ class TestPeakSummarizationMode(AnalyzePeaksIntegrationBase):
             # AT2G02_02 peaks fall outside the region and are excluded.
             # Wide format: one row per TF (WRKY40, bHLH74).
             self.assertEqual(len(summary), 2)
-            self.assertEqual(summary["tf"].tolist(), ["WRKY40", "bHLH74"])  # sorted by diff_calc desc
+            self.assertEqual(summary["tf"].tolist(), ["bHLH74", "WRKY40"])  # sorted by diff_calc desc
 
             wrky_row = summary[summary["tf"] == "WRKY40"].iloc[0]
             self.assertEqual(wrky_row["diff_added"], 1)
             self.assertEqual(wrky_row["max_mutated"], 0)
-            self.assertEqual(wrky_row["diff_calc"], 1)
+            self.assertEqual(wrky_row["diff_calc"], 0)
 
             bhlh_row = summary[summary["tf"] == "bHLH74"].iloc[0]
             self.assertEqual(bhlh_row["diff_added"], 0)
             self.assertEqual(bhlh_row["max_mutated"], 1)
-            self.assertEqual(bhlh_row["diff_calc"], 0)
+            self.assertEqual(bhlh_row["diff_calc"], 1)
 
             assert (output_dir / "peak_summary.csv").exists()
 
