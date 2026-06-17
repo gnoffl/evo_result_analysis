@@ -9,12 +9,20 @@ and compared against WRKY peaks for that gene.
 import json
 from argparse import ArgumentParser
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-import numpy as np
-import pandas as pd
+import matplotlib
 
-from analysis.utils.io import print_status
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import seaborn as sns  # noqa: E402
+from matplotlib.cm import ScalarMappable  # noqa: E402
+from matplotlib.colors import Normalize  # noqa: E402
+from matplotlib.figure import Figure  # noqa: E402
+
+from analysis.utils.io import print_status  # noqa: E402
 
 
 PEAK_GENE_COLUMN = "gene"
@@ -23,6 +31,10 @@ PEAK_START_COLUMN = "peak_start"
 PEAK_END_COLUMN = "peak_end"
 PEAK_SCORE_COLUMN = "peak_area"
 PARAMETERS_FILE_NAME = "parameters.json"
+
+DIFF_CALC_COLUMN = "diff_calc"
+PEAK_SUMMARY_SUFFIX = "peak_summary"
+DIVERGING_COLORMAP = "RdBu_r"
 
 
 def _format_analysis_parameters(parameters: Dict[str, object]) -> str:
@@ -418,6 +430,203 @@ def summarize_peaks(
     return wide_summary
 
 
+def save_figure(fig: Figure, filename: str, output_dir: Union[str, Path], fmt: str = "png") -> Path:
+    """Save a figure to ``output_dir/filename.fmt``.
+
+    Args:
+        fig: Matplotlib figure to save.
+        filename: File name without extension.
+        output_dir: Directory to write into.
+        fmt: Image format/extension (e.g. ``"png"``, ``"svg"``, ``"pdf"``).
+
+    Returns:
+        Path to the written figure.
+    """
+    path = Path(output_dir) / f"{filename}.{fmt}"
+    fig.savefig(str(path), bbox_inches="tight", dpi=150)
+    return path
+
+
+def prepare_diff_calc_data(summary_df: pd.DataFrame) -> pd.DataFrame:
+    """Extract the per-TF net binding change and sort it for plotting.
+
+    Args:
+        summary_df: Wide-format peak summary containing ``tf`` and ``diff_calc``.
+
+    Returns:
+        A two-column DataFrame (``tf``, ``diff_calc``) sorted by ``diff_calc``
+        descending, with a clean integer index.
+
+    Raises:
+        KeyError: If the required columns are missing.
+    """
+    missing = [
+        column
+        for column in (PEAK_TF_COLUMN, DIFF_CALC_COLUMN)
+        if column not in summary_df.columns
+    ]
+    if missing:
+        raise KeyError(f"Peak summary is missing required columns: {missing}")
+
+    plot_df = summary_df[[PEAK_TF_COLUMN, DIFF_CALC_COLUMN]].copy()
+    plot_df[DIFF_CALC_COLUMN] = plot_df[DIFF_CALC_COLUMN].astype(float)
+    descending_order = np.argsort(plot_df[DIFF_CALC_COLUMN].to_numpy())[::-1]
+    plot_df = plot_df.iloc[descending_order].reset_index(drop=True)
+    return plot_df
+
+
+def compute_symmetric_limit(diff_calc_values: "pd.Series | np.ndarray") -> float:
+    """Compute a symmetric axis/color limit from net binding-change values.
+
+    A symmetric limit (``±max(|diff_calc|)``) keeps the diverging colormap
+    centered at zero. Passing a shared limit across runs makes per-run figures
+    directly comparable.
+
+    Args:
+        diff_calc_values: Net binding-change values.
+
+    Returns:
+        A positive limit; ``1.0`` when no positive magnitude is present.
+    """
+    values = np.asarray(diff_calc_values, dtype=float)
+    if values.size == 0:
+        return 1.0
+    limit = float(np.nanmax(np.abs(values)))
+    return limit if limit > 0 else 1.0
+
+
+def plot_diff_calc_barplot(plot_df: pd.DataFrame, value_limit: float, title: str = "") -> Figure:
+    """Plot net binding change per TF family as a diverging horizontal bar chart.
+
+    Bars are colored by signed magnitude on a symmetric diverging scale, so on a
+    shared ``value_limit`` smaller changes appear paler across runs.
+
+    Args:
+        plot_df: Output of :func:`prepare_diff_calc_data` (already sorted).
+        value_limit: Symmetric limit for the x-axis and color normalization.
+        title: Optional plot title.
+
+    Returns:
+        The created figure.
+    """
+    norm = Normalize(vmin=-value_limit, vmax=value_limit)
+    scalar_mappable = ScalarMappable(norm=norm, cmap=DIVERGING_COLORMAP)
+    colors = scalar_mappable.to_rgba(plot_df[DIFF_CALC_COLUMN].to_numpy())
+
+    height = max(4.0, 0.32 * len(plot_df))
+    fig, ax = plt.subplots(figsize=(7.0, height))
+    ax.barh(
+        plot_df[PEAK_TF_COLUMN],
+        plot_df[DIFF_CALC_COLUMN],
+        color=colors,
+        edgecolor="black",
+        linewidth=0.3,
+    )
+    ax.invert_yaxis()  # largest diff_calc on top
+    ax.axvline(0, color="black", linewidth=0.8)
+    ax.set_xlim(-value_limit * 1.05, value_limit * 1.05)
+    ax.set_xlabel("Net binding-site change (optimized − reference)")
+    ax.set_ylabel("TF family")
+    if title:
+        ax.set_title(title)
+
+    scalar_mappable.set_array([])
+    colorbar = fig.colorbar(scalar_mappable, ax=ax, pad=0.02)
+    colorbar.set_label(DIFF_CALC_COLUMN)
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_diff_calc_heatmap(plot_df: pd.DataFrame, value_limit: float, title: str = "") -> Figure:
+    """Plot net binding change per TF family as a single-column heatmap.
+
+    A one-column heatmap on a fixed, symmetric diverging scale stacks naturally
+    into a multi-run grid for the later cross-run comparison.
+
+    Args:
+        plot_df: Output of :func:`prepare_diff_calc_data` (already sorted).
+        value_limit: Symmetric limit for the color normalization.
+        title: Optional plot title.
+
+    Returns:
+        The created figure.
+    """
+    heat_data = plot_df.set_index(PEAK_TF_COLUMN)[[DIFF_CALC_COLUMN]]
+
+    height = max(4.0, 0.32 * len(plot_df))
+    fig, ax = plt.subplots(figsize=(3.4, height))
+    sns.heatmap(
+        heat_data,
+        cmap=DIVERGING_COLORMAP,
+        center=0,
+        vmin=-value_limit,
+        vmax=value_limit,
+        annot=True,
+        fmt=".0f",
+        linewidths=0.5,
+        linecolor="white",
+        cbar_kws={"label": DIFF_CALC_COLUMN},
+        ax=ax,
+    )
+    ax.set_xticklabels(["net change"])
+    ax.set_xlabel("")
+    ax.set_ylabel("TF family")
+    if title:
+        ax.set_title(title)
+
+    fig.tight_layout()
+    return fig
+
+
+def visualize_peak_summary(
+    output_folder: Union[str, Path],
+    summary_df: pd.DataFrame,
+    base_name: str = "",
+    fmt: str = "png",
+    value_limit: Optional[float] = None,
+) -> List[Path]:
+    """Generate the diff_calc figures for a single run's peak summary.
+
+    Auto-locates the summary CSV under ``output_folder`` and writes a diverging
+    bar chart and a single-column heatmap of ``diff_calc`` next to it.
+
+    Args:
+        output_folder: Folder containing the summary CSV; figures are written here.
+        summary_df: The peak-summary DataFrame.
+        base_name: Prefix used for the summary CSV and figure file names.
+        fmt: Output image format (e.g. ``"png"``, ``"svg"``, ``"pdf"``).
+        value_limit: Optional shared symmetric color/axis limit for cross-run
+            comparability; defaults to this run's ``max(|diff_calc|)``.
+
+    Returns:
+        Paths of the written figures.
+    """
+    sns.set_theme(style="whitegrid")
+    output_folder = Path(output_folder)
+
+    plot_df = prepare_diff_calc_data(summary_df)
+    limit = (
+        value_limit
+        if value_limit is not None
+        else compute_symmetric_limit(plot_df[DIFF_CALC_COLUMN])
+    )
+
+    title = base_name or "peak summary"
+    bar_name = f"{base_name}_diff_calc_barplot" if base_name else "diff_calc_barplot"
+    heat_name = f"{base_name}_diff_calc_heatmap" if base_name else "diff_calc_heatmap"
+
+    bar_fig = plot_diff_calc_barplot(plot_df, limit, title=title)
+    bar_path = save_figure(bar_fig, bar_name, output_folder, fmt)
+    plt.close(bar_fig)
+
+    heat_fig = plot_diff_calc_heatmap(plot_df, limit, title=title)
+    heat_path = save_figure(heat_fig, heat_name, output_folder, fmt)
+    plt.close(heat_fig)
+
+    return [bar_path, heat_path]
+
+
 def build_parser() -> ArgumentParser:
     """Build the command-line parser for manual overlap checks."""
     parser = ArgumentParser(description="Check whether WRKY peaks overlap mutation target regions.")
@@ -462,6 +671,22 @@ def build_parser() -> ArgumentParser:
         help="If set, analyzes the expected overlap based on the original target regions and outputs a summary table of expected vs. observed overlaps.",
     )
     parser.add_argument(
+        "--visualize",
+        action="store_true",
+        help="If set, generates diff_calc figures (diverging bar chart and heatmap) for the run's peak summary.",
+    )
+    parser.add_argument(
+        "--figure-format",
+        default="png",
+        help="Output format for figures generated by --visualize (e.g. png, svg, pdf). Default: png.",
+    )
+    parser.add_argument(
+        "--value-limit",
+        type=float,
+        default=None,
+        help="Optional shared symmetric color/axis limit for diff_calc figures, to make runs comparable. Default: this run's max(|diff_calc|).",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         help="If set, runs all analyses (overlap check, peak summary, expected overlap analysis). Overrides individual flags if set."
@@ -478,25 +703,33 @@ def main(argv: Optional[list] = None) -> None:
     output_folder = Path(args.output_folder) if args.output_folder else Path(args.annotated_peak_file).parent
 
     run_overlap = args.all or args.expected_overlap
-    run_summary = args.all or args.summarize_peaks
+    run_summary = args.all or args.summarize_peaks or args.visualize  # summary is needed for visualization
+    run_visualize = args.all or args.visualize
 
     print_status(
         "Selected analyses: "
         f"overlap={run_overlap}, "
-        f"summary={run_summary}",
+        f"summary={run_summary}, "
+        f"visualize={run_visualize}",
         "INFO",
     )
 
-    if not (run_overlap or run_summary):
+    if not (run_overlap or run_summary or run_visualize):
         print_status(
-            "No analyses selected. Use --expected_overlap and/or --summarize-peaks to run analyses, or --all to run all analyses.",
+            "No analyses selected. Use --expected_overlap, --summarize-peaks and/or --visualize to run analyses, or --all to run all analyses.",
             "WARNING",
         )
         return
     
-    peaks = _load_peaks(args.annotated_peak_file, args.excluded_genes_file)
+    # Only the overlap and summary analyses need the annotated peak table;
+    # visualization reads the previously written summary CSV instead.
+    peaks = (
+        _load_peaks(args.annotated_peak_file, args.excluded_genes_file)
+        if (run_overlap or run_summary)
+        else pd.DataFrame()
+    )
     expected_peak_locations = pd.DataFrame()
-    
+
     if run_overlap:
         if not args.run_directory:
             raise ValueError("Run directory must be provided with --run-directory to perform overlap analysis.")
@@ -536,10 +769,29 @@ def main(argv: Optional[list] = None) -> None:
             "only_overlapping": args.only_overlapping,
             "base_name": args.base_name,
         }
-        _run_logged_analysis(
+        peak_summary = _run_logged_analysis(
             "peak summary analysis",
             summary_parameters,
             lambda: summarize_peaks(peaks, output_folder, expected_peak_locations, base_name=args.base_name),
+        )
+
+    if run_visualize:
+        visualize_parameters = {
+            "output_folder": output_folder,
+            "base_name": args.base_name,
+            "figure_format": args.figure_format,
+            "value_limit": args.value_limit,
+        }
+        _run_logged_analysis(
+            "peak summary visualization",
+            visualize_parameters,
+            lambda: visualize_peak_summary(
+                output_folder,
+                base_name=args.base_name,
+                fmt=args.figure_format,
+                value_limit=args.value_limit,
+                peak_szummary=peak_summary
+            ),
         )
 
 

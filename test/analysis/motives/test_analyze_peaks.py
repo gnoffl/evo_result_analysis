@@ -16,7 +16,11 @@ import pandas as pd
 from analysis.motives.analyze_peaks import (
     PARAMETERS_FILE_NAME,
     _load_peaks,
+    _resolve_peak_summary_path,
     analyze_wrky_peak_overlaps,
+    compute_symmetric_limit,
+    load_peak_summary,
+    prepare_diff_calc_data,
     summarize_peaks,
     _parse_mutation_region,
 )
@@ -367,6 +371,153 @@ class TestPeakSummarizationMode(AnalyzePeaksIntegrationBase):
             written_summary_normalized = _normalize_for_csv_comparison(written_summary).reset_index(drop=True)
             returned_summary_normalized = _normalize_for_csv_comparison(summary).reset_index(drop=True)
             pd.testing.assert_frame_equal(written_summary_normalized, returned_summary_normalized, )
+
+
+class TestPrepareDiffCalcData(unittest.TestCase):
+    """Unit tests for the diff_calc plotting-data preparation."""
+
+    def test_keeps_only_tf_and_diff_calc_sorted_descending(self):
+        # Arrange
+        summary = pd.DataFrame(
+            {
+                "tf": ["A_tnt", "B_tnt", "C_tnt"],
+                "reference": [10, 5, 8],
+                "max_mutated": [12, 3, 8],
+                "diff_calc": [2, -2, 0],
+            }
+        )
+
+        # Act
+        plot_df = prepare_diff_calc_data(summary)
+
+        # Assert
+        self.assertEqual(list(plot_df.columns), ["tf", "diff_calc"])
+        self.assertEqual(plot_df["tf"].tolist(), ["A_tnt", "C_tnt", "B_tnt"])
+        self.assertEqual(plot_df["diff_calc"].tolist(), [2.0, 0.0, -2.0])
+        # Index is reset to a clean range
+        self.assertEqual(plot_df.index.tolist(), [0, 1, 2])
+
+    def test_diff_calc_is_cast_to_float(self):
+        # Arrange
+        summary = pd.DataFrame({"tf": ["A_tnt"], "diff_calc": [3]})
+
+        # Act
+        plot_df = prepare_diff_calc_data(summary)
+
+        # Assert
+        self.assertEqual(plot_df["diff_calc"].dtype, np.dtype("float64"))
+
+    def test_raises_when_required_columns_missing(self):
+        # Arrange
+        summary = pd.DataFrame({"tf": ["A_tnt"], "reference": [1]})
+
+        # Act / Assert
+        with self.assertRaises(KeyError):
+            prepare_diff_calc_data(summary)
+
+
+class TestComputeSymmetricLimit(unittest.TestCase):
+    """Unit tests for the symmetric color/axis limit calculation."""
+
+    def test_returns_max_absolute_value(self):
+        # Arrange
+        values = pd.Series([2.0, -5.0, 1.0])
+
+        # Act
+        limit = compute_symmetric_limit(values)
+
+        # Assert
+        self.assertEqual(limit, 5.0)
+
+    def test_returns_one_when_all_zero(self):
+        # Arrange
+        values = np.array([0.0, 0.0])
+
+        # Act
+        limit = compute_symmetric_limit(values)
+
+        # Assert
+        self.assertEqual(limit, 1.0)
+
+    def test_returns_one_when_empty(self):
+        # Arrange
+        values = np.array([])
+
+        # Act
+        limit = compute_symmetric_limit(values)
+
+        # Assert
+        self.assertEqual(limit, 1.0)
+
+    def test_ignores_nan_values(self):
+        # Arrange
+        values = np.array([np.nan, -3.0, 2.0])
+
+        # Act
+        limit = compute_symmetric_limit(values)
+
+        # Assert
+        self.assertEqual(limit, 3.0)
+
+
+class TestResolvePeakSummaryPath(unittest.TestCase):
+    """Unit tests for locating the peak-summary CSV on disk."""
+
+    def test_prefers_exact_base_name_match(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Arrange
+            folder = Path(tmpdir)
+            exact = folder / "ara_max_single_peak_summary.csv"
+            other = folder / "zea_peak_summary.csv"
+            exact.write_text("tf,diff_calc\nA_tnt,1\n", encoding="utf-8")
+            other.write_text("tf,diff_calc\nB_tnt,2\n", encoding="utf-8")
+
+            # Act
+            resolved = _resolve_peak_summary_path(folder, "ara_max_single")
+
+            # Assert
+            self.assertEqual(resolved, exact)
+
+    def test_falls_back_to_glob_when_no_exact_match(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Arrange
+            folder = Path(tmpdir)
+            only = folder / "something_peak_summary.csv"
+            only.write_text("tf,diff_calc\nA_tnt,1\n", encoding="utf-8")
+
+            # Act
+            resolved = _resolve_peak_summary_path(folder, "unrelated_base")
+
+            # Assert
+            self.assertEqual(resolved, only)
+
+    def test_raises_when_no_summary_present(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Act / Assert
+            with self.assertRaises(FileNotFoundError):
+                _resolve_peak_summary_path(Path(tmpdir), "any_base")
+
+
+class TestLoadPeakSummary(unittest.TestCase):
+    """Unit tests for loading the peak-summary CSV into a DataFrame."""
+
+    def test_loads_summary_csv(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Arrange
+            folder = Path(tmpdir)
+            csv_path = folder / "run_peak_summary.csv"
+            csv_path.write_text(
+                "tf,reference,max_mutated,diff_calc\nA_tnt,10,12,2\nB_tnt,5,3,-2\n",
+                encoding="utf-8",
+            )
+
+            # Act
+            loaded = load_peak_summary(folder, "run")
+
+            # Assert
+            self.assertEqual(len(loaded), 2)
+            self.assertIn("diff_calc", loaded.columns)
+            self.assertEqual(loaded["diff_calc"].tolist(), [2, -2])
 
 
 if __name__ == "__main__":
