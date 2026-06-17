@@ -787,10 +787,10 @@ def main(argv: Optional[list] = None) -> None:
             visualize_parameters,
             lambda: visualize_peak_summary(
                 output_folder,
+                summary_df=peak_summary,
                 base_name=args.base_name,
                 fmt=args.figure_format,
                 value_limit=args.value_limit,
-                peak_szummary=peak_summary
             ),
         )
 
