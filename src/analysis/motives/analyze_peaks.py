@@ -475,6 +475,30 @@ def prepare_diff_calc_data(summary_df: pd.DataFrame) -> pd.DataFrame:
     return plot_df
 
 
+def select_top_bottom(plot_df: pd.DataFrame, n: int) -> pd.DataFrame:
+    """Return the top-N and bottom-N rows from a diff_calc-sorted DataFrame.
+
+    The input must already be sorted descending by ``diff_calc`` (as produced
+    by :func:`prepare_diff_calc_data`).  When the frame has ``≤ 2*n`` rows the
+    full frame is returned unchanged so no entries are silently dropped.
+
+    Args:
+        plot_df: Sorted DataFrame with at least a ``diff_calc`` column.
+        n: Number of rows to keep from each end.
+
+    Returns:
+        A new DataFrame containing at most ``2*n`` rows in descending order.
+
+    Raises:
+        ValueError: If ``n`` is not a positive integer.
+    """
+    if n <= 0:
+        raise ValueError(f"n must be a positive integer, got {n}")
+    if len(plot_df) <= 2 * n:
+        return plot_df.copy()
+    return pd.concat([plot_df.head(n), plot_df.tail(n)], ignore_index=True)
+
+
 def compute_symmetric_limit(diff_calc_values: "pd.Series | np.ndarray") -> float:
     """Compute a symmetric axis/color limit from net binding-change values.
 
@@ -585,6 +609,7 @@ def visualize_peak_summary(
     base_name: str = "",
     fmt: str = "png",
     value_limit: Optional[float] = None,
+    top_bottom_n: int = 3,
 ) -> List[Path]:
     """Generate the diff_calc figures for a single run's peak summary.
 
@@ -598,6 +623,10 @@ def visualize_peak_summary(
         fmt: Output image format (e.g. ``"png"``, ``"svg"``, ``"pdf"``).
         value_limit: Optional shared symmetric color/axis limit for cross-run
             comparability; defaults to this run's ``max(|diff_calc|)``.
+        top_bottom_n: Number of TF families to show from each end of the
+            ranked list (largest and smallest ``diff_calc``).  The color limit
+            is always computed from the full data so figures remain comparable
+            even when ``value_limit`` is not set explicitly.  Default is 3.
 
     Returns:
         Paths of the written figures.
@@ -611,6 +640,7 @@ def visualize_peak_summary(
         if value_limit is not None
         else compute_symmetric_limit(plot_df[DIFF_CALC_COLUMN])
     )
+    plot_df = select_top_bottom(plot_df, top_bottom_n)
 
     title = base_name or "peak summary"
     bar_name = f"{base_name}_diff_calc_barplot" if base_name else "diff_calc_barplot"
@@ -685,6 +715,12 @@ def build_parser() -> ArgumentParser:
         type=float,
         default=None,
         help="Optional shared symmetric color/axis limit for diff_calc figures, to make runs comparable. Default: this run's max(|diff_calc|).",
+    )
+    parser.add_argument(
+        "--top-bottom-n",
+        type=int,
+        default=3,
+        help="Number of TF families to show from each end of the diff_calc ranking in figures. Default: 3.",
     )
     parser.add_argument(
         "--all",
@@ -781,6 +817,7 @@ def main(argv: Optional[list] = None) -> None:
             "base_name": args.base_name,
             "figure_format": args.figure_format,
             "value_limit": args.value_limit,
+            "top_bottom_n": args.top_bottom_n,
         }
         _run_logged_analysis(
             "peak summary visualization",
@@ -791,6 +828,7 @@ def main(argv: Optional[list] = None) -> None:
                 base_name=args.base_name,
                 fmt=args.figure_format,
                 value_limit=args.value_limit,
+                top_bottom_n=args.top_bottom_n,
             ),
         )
 

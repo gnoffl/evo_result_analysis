@@ -16,11 +16,10 @@ import pandas as pd
 from analysis.motives.analyze_peaks import (
     PARAMETERS_FILE_NAME,
     _load_peaks,
-    _resolve_peak_summary_path,
     analyze_wrky_peak_overlaps,
     compute_symmetric_limit,
-    load_peak_summary,
     prepare_diff_calc_data,
+    select_top_bottom,
     summarize_peaks,
     _parse_mutation_region,
 )
@@ -460,64 +459,70 @@ class TestComputeSymmetricLimit(unittest.TestCase):
         self.assertEqual(limit, 3.0)
 
 
-class TestResolvePeakSummaryPath(unittest.TestCase):
-    """Unit tests for locating the peak-summary CSV on disk."""
+class TestSelectTopBottom(unittest.TestCase):
+    """Unit tests for select_top_bottom."""
 
-    def test_prefers_exact_base_name_match(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Arrange
-            folder = Path(tmpdir)
-            exact = folder / "ara_max_single_peak_summary.csv"
-            other = folder / "zea_peak_summary.csv"
-            exact.write_text("tf,diff_calc\nA_tnt,1\n", encoding="utf-8")
-            other.write_text("tf,diff_calc\nB_tnt,2\n", encoding="utf-8")
+    def _make_df(self, values: list) -> pd.DataFrame:
+        """Return a descending-sorted diff_calc DataFrame matching prepare_diff_calc_data output."""
+        sorted_values = sorted(values, reverse=True)
+        return pd.DataFrame({"tf": [f"TF{i}" for i in range(len(sorted_values))], "diff_calc": sorted_values})
 
-            # Act
-            resolved = _resolve_peak_summary_path(folder, "ara_max_single")
+    def test_returns_top_and_bottom_n(self):
+        # Arrange — 7 rows, n=2: expect rows 0,1 and 5,6
+        df = self._make_df([10, 8, 6, 4, 2, -2, -4])
 
-            # Assert
-            self.assertEqual(resolved, exact)
+        # Act
+        result = select_top_bottom(df, 2)
 
-    def test_falls_back_to_glob_when_no_exact_match(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Arrange
-            folder = Path(tmpdir)
-            only = folder / "something_peak_summary.csv"
-            only.write_text("tf,diff_calc\nA_tnt,1\n", encoding="utf-8")
+        # Assert
+        self.assertEqual(len(result), 4)
+        self.assertEqual(result["diff_calc"].tolist(), [10, 8, -2, -4])
 
-            # Act
-            resolved = _resolve_peak_summary_path(folder, "unrelated_base")
+    def test_preserves_descending_order(self):
+        # Arrange
+        df = self._make_df([5, 3, 1, -1, -3])
 
-            # Assert
-            self.assertEqual(resolved, only)
+        # Act
+        result = select_top_bottom(df, 2)
 
-    def test_raises_when_no_summary_present(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Act / Assert
-            with self.assertRaises(FileNotFoundError):
-                _resolve_peak_summary_path(Path(tmpdir), "any_base")
+        # Assert — top 2 then bottom 2, descending throughout
+        self.assertEqual(result["diff_calc"].tolist(), [5, 3, -1, -3])
 
+    def test_returns_full_frame_when_rows_equal_twice_n(self):
+        # Arrange — exactly 4 rows, n=2
+        df = self._make_df([4, 2, -2, -4])
 
-class TestLoadPeakSummary(unittest.TestCase):
-    """Unit tests for loading the peak-summary CSV into a DataFrame."""
+        # Act
+        result = select_top_bottom(df, 2)
 
-    def test_loads_summary_csv(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Arrange
-            folder = Path(tmpdir)
-            csv_path = folder / "run_peak_summary.csv"
-            csv_path.write_text(
-                "tf,reference,max_mutated,diff_calc\nA_tnt,10,12,2\nB_tnt,5,3,-2\n",
-                encoding="utf-8",
-            )
+        # Assert
+        self.assertEqual(len(result), 4)
 
-            # Act
-            loaded = load_peak_summary(folder, "run")
+    def test_returns_full_frame_when_fewer_rows_than_twice_n(self):
+        # Arrange — 3 rows, n=3
+        df = self._make_df([3, 1, -1])
 
-            # Assert
-            self.assertEqual(len(loaded), 2)
-            self.assertIn("diff_calc", loaded.columns)
-            self.assertEqual(loaded["diff_calc"].tolist(), [2, -2])
+        # Act
+        result = select_top_bottom(df, 3)
+
+        # Assert
+        self.assertEqual(len(result), 3)
+
+    def test_raises_on_non_positive_n(self):
+        df = self._make_df([1, -1])
+        with self.assertRaises(ValueError):
+            select_top_bottom(df, 0)
+
+    def test_resets_index(self):
+        # Arrange
+        df = self._make_df([10, 5, 1, -1, -5, -10])
+
+        # Act
+        result = select_top_bottom(df, 2)
+
+        # Assert — clean 0-based index
+        self.assertEqual(result.index.tolist(), [0, 1, 2, 3])
+
 
 
 if __name__ == "__main__":
