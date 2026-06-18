@@ -74,3 +74,7 @@ Imports from `evolution`, `deepCRE`, and `evolution.sequences` are other researc
 ### Known incomplete implementations
 
 `get_epm_tfbs_mapping_new()` in `analyze_mapping.py` is marked as NOT PROPERLY IMPLEMENTED — avoid relying on it.
+
+## Version Control
+
+Images (`*.png`, `*.svg`) and generated data files (`*.csv`) produced by scripts in this repo are gitignored — do not commit them. When adding a new workflow that writes such outputs, add the appropriate globs to `.gitignore`.
