@@ -10,6 +10,8 @@ run_mutations_analysis.sh
 src/workflows/hoffie/data/*
 src/workflows/hoffie/mutation_assessment/
 src/workflows/paper_plots/figures/*
+src/workflows/evo_alg_pooled_plots/**/*.png
+src/workflows/evo_alg_pooled_plots/**/*.csv
 src/workflows/overlap_analysis/correlation/*
 src/workflows/overlap_analysis/correlation_bHLH/*
 src/workflows/overlap_analysis/correlation_combined/*
