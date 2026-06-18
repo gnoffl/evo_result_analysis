@@ -19,6 +19,7 @@ from workflows.evo_alg_pooled_plots.tf_comparison.compare_TFs import (
     paired_tf_significance,
     plot_heatmap,
     q_to_stars,
+    single_run_tf_significance,
 )
 
 
@@ -212,10 +213,50 @@ class QToStarsTest(unittest.TestCase):
     def test_thresholds_and_nan(self) -> None:
         # Arrange / Act / Assert
         self.assertEqual(q_to_stars(0.0005), "***")
-        self.assertEqual(q_to_stars(0.005), "** ")
-        self.assertEqual(q_to_stars(0.02), "*  ")
+        self.assertEqual(q_to_stars(0.005), "**")
+        self.assertEqual(q_to_stars(0.02), "*")
         self.assertEqual(q_to_stars(0.2), "")
         self.assertEqual(q_to_stars(float("nan")), "")
+
+
+class SingleRunTfSignificanceTest(unittest.TestCase):
+    """Tests for single_run_tf_significance."""
+
+    def test_significant_tf_detected_and_flat_tf_is_nan(self) -> None:
+        # Arrange: SIG gains a peak in every gene (diff +2 uniformly); FLAT never changes.
+        with tempfile.TemporaryDirectory() as tmp:
+            peaks: List[Tuple[str, str, str, int]] = []
+            for i in range(8):
+                gene = f"{i}_GENE{i}_loc_{i}"
+                peaks += [(gene, "SIG", "reference", 1), (gene, "SIG", "max_mutated", 3)]
+                peaks += [(gene, "FLAT", "reference", 2), (gene, "FLAT", "max_mutated", 2)]
+            _write_annotated_peaks(tmp, peaks)
+
+            # Act
+            result = single_run_tf_significance(tmp)
+
+        # Assert
+        indexed = result.set_index("tf")
+        self.assertLess(indexed.loc["SIG", "p_intra"], 0.05)
+        self.assertLessEqual(indexed.loc["SIG", "q_intra"], 1.0)
+        self.assertTrue(math.isnan(indexed.loc["FLAT", "p_intra"]))
+        self.assertTrue(math.isnan(indexed.loc["FLAT", "q_intra"]))
+        # Sorted ascending: significant TF should come first.
+        self.assertEqual(result.iloc[0]["tf"], "SIG")
+
+    def test_columns_present(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_annotated_peaks(
+                tmp, [("1_G_a_0", "WRKY", "reference", 2), ("1_G_a_0", "WRKY", "max_mutated", 3)]
+            )
+
+            # Act
+            result = single_run_tf_significance(tmp)
+
+        # Assert
+        for col in ("tf", "n_genes", "median_diff", "n_nonzero", "p_intra", "q_intra"):
+            self.assertIn(col, result.columns)
 
 
 class PlotHeatmapTest(unittest.TestCase):
@@ -246,6 +287,23 @@ class PlotHeatmapTest(unittest.TestCase):
         labels = [tick.get_text() for tick in fig.axes[0].get_yticklabels()]
         self.assertIn("WRKY ** ", labels)
         self.assertIn("bHLH    ", labels)
+
+    def test_cell_stars_embedded_in_annotation_text(self) -> None:
+        # Arrange: WRKY in MAX is significant; bHLH in MIN is significant.
+        matrix = pd.DataFrame(
+            {"MAX": {"WRKY": 1.0, "bHLH": -2.0}, "MIN": {"WRKY": -1.0, "bHLH": 2.0}}
+        )
+        cell_stars = {"MAX": {"WRKY": "*  "}, "MIN": {"bHLH": "** "}}
+
+        # Act
+        fig = plot_heatmap(matrix, n_max_runs=1, annotate=True, cell_stars=cell_stars)
+
+        # Assert: cell texts contain both the numeric value and the star string.
+        texts = [t.get_text() for t in fig.axes[0].texts]
+        self.assertTrue(any("1.00*  " in t for t in texts), f"Expected '1.00*  ' in {texts}")
+        self.assertTrue(any("2.00** " in t for t in texts), f"Expected '2.00** ' in {texts}")
+        # Cells with no stars have just the number.
+        self.assertTrue(any("-2.00" in t and "**" not in t for t in texts))
 
 
 if __name__ == "__main__":

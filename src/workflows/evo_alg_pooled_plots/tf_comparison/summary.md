@@ -30,8 +30,9 @@ repressors)? And **is that change statistically significant**, or just noise?
 The script answers this with two complementary outputs:
 
 1. A **heatmap** giving a descriptive overview of `diff` across several runs.
-2. A **per-TF significance test** (with multiple-testing correction) for the two
-   Arabidopsis runs.
+2. **Two layers of per-TF significance tests** (with multiple-testing correction):
+   an inter-run paired contrast for the two Arabidopsis runs, and an independent
+   intra-run test for every run (including GOF/LOF).
 
 ## 2. The runs
 
@@ -44,8 +45,9 @@ The script answers this with two complementary outputs:
 | ara min | min       | `ara_msr_min_single`                 | ~999    |
 | LOF     | min       | `LOF/LOF_single`                     | ~70     |
 
-All four appear in the heatmap. **Only the two ara runs are used for the
-statistics** — see the decisions below.
+All four appear in the heatmap. The **inter-run paired contrast** uses only the
+two ara runs (see §3.2). The **intra-run test** is computed for all four runs
+independently.
 
 ## 3. Key decisions and why we made them
 
@@ -60,7 +62,7 @@ so the test must operate on **per-gene** counts. These per-gene counts are
 recovered from each run's `deepcis_scan/*_annotated_peaks_*.csv` (one row per
 detected peak) — no need to re-run the deepCIS predictions.
 
-### 3.2 Paired test on the two ara runs only (not pooled with GOF/LOF)
+### 3.2 Paired inter-run test on the two ara runs only (not pooled with GOF/LOF)
 
 We considered pooling both max runs (ara max + GOF) against both min runs
 (ara min + LOF) and doing an unpaired comparison. We rejected that because:
@@ -74,10 +76,24 @@ We considered pooling both max runs (ara max + GOF) against both min runs
   core gene id). The same gene optimized up vs down is a **paired** observation,
   which is more powerful and removes per-gene baseline variance.
 
-So the significance analysis is **ara max vs ara min, paired by gene**. GOF/LOF
-stay in the heatmap as descriptive context but carry no statistics.
+So the **inter-run** significance analysis is **ara max vs ara min, paired by
+gene**. GOF/LOF cannot participate in an inter-run paired comparison because they
+have different gene sets and different run parameters.
 
-### 3.3 Three two-sided tests per TF
+### 3.3 Intra-run tests for all four runs
+
+Even though GOF/LOF cannot be paired with another run, the question "does this
+TF's binding change significantly vs reference within this run?" is still
+answerable independently. For each run we test `diff = max_mutated − reference`
+vs 0 per TF using a Wilcoxon signed-rank test over that run's own genes, then
+BH-correct across TFs. This gives GOF and LOF their own significance layer and
+makes the heatmap cell annotations meaningful for every column.
+
+For the ara runs, the intra-run q-values (`q_max`, `q_min`) are already produced
+as a by-product of the paired analysis (`paired_tf_significance`) and are reused
+directly — there is no redundant computation.
+
+### 3.4 Three two-sided tests per TF (paired ara analysis)
 
 For each TF we compute, over the shared genes (a gene/TF combination absent in a
 run contributes `diff = 0`), three **Wilcoxon signed-rank** tests:
@@ -102,7 +118,7 @@ run contributes `diff = 0`), three **Wilcoxon signed-rank** tests:
 - Tests that are undefined (e.g. a TF whose diff is zero for every gene) are
   recorded as `NaN` rather than a fake p-value.
 
-### 3.4 Benjamini–Hochberg FDR correction
+### 3.5 Benjamini–Hochberg FDR correction
 
 We test ~30–60 TFs at once. At α = 0.05 we would expect several "significant"
 hits by chance alone. **Benjamini–Hochberg** controls the **False Discovery
@@ -110,10 +126,11 @@ Rate** — the expected *fraction of false positives among the TFs we call
 significant*. "FDR 0.05" means ≈5% of the flagged TFs are expected to be
 spurious. We chose BH (not Bonferroni, which controls the much stricter
 probability of *any* false positive and would kill power) because this is an
-exploratory screen. Each of the three p-value columns is BH-corrected
-independently into a q-value (`q_contrast`, `q_max`, `q_min`).
+exploratory screen. Each p-value column is BH-corrected independently into a
+q-value. For the paired ara analysis: `q_contrast`, `q_max`, `q_min`. For each
+intra-run analysis: `q_intra`.
 
-### 3.5 Use a library, keep the script simple
+### 3.6 Use a library, keep the script simple
 
 BH is applied via `statsmodels.stats.multitest.multipletests(method="fdr_bh")`
 rather than a hand-rolled implementation. The script is intentionally a flat set
@@ -121,7 +138,15 @@ of functions — no classes, no CLI — because it is a single-purpose analysis.
 
 ## 4. Implementation (`compare_TFs.py`)
 
-Data flow:
+### Private helpers
+
+- **`_diff_series_to_matrix(diff, genes, tfs)`** — unstacks a
+  `(core_gene, tf)`-indexed diff Series into a genes × TFs DataFrame, filling
+  missing combinations with 0. Used by both significance functions.
+- **`_tf_stats(arr)`** — returns `(median, n_nonzero, wilcoxon_p)` for one
+  per-gene diff vector. Used in both significance functions (four call sites total).
+
+### Public data-flow functions
 
 1. **`load_per_gene_diffs(run_dir)`** — reads the run's single
    `deepcis_scan/*_annotated_peaks_*.csv`, keeps the `reference` and
@@ -134,28 +159,34 @@ Data flow:
    directions — it is legacy naming, so in the min run it is the *minimized*
    sequence.
 2. **`paired_tf_significance(max_run_dir, min_run_dir)`** — intersects the genes,
-   builds the three per-gene vectors per TF (reindexed over all shared genes,
-   missing = 0), runs the three Wilcoxon tests (`_wilcoxon_pvalue`, NaN on
-   failure), and BH-corrects each p-column (`_bh_qvalues`). Returns one row per
-   TF, sorted by `q_contrast`.
-3. **`build_matrix` / `order_tfs`** — the descriptive side: assemble the TF × run
+   builds the three per-gene vectors per TF via `_diff_series_to_matrix` and
+   `_tf_stats`, runs the three Wilcoxon tests (NaN on failure), and BH-corrects
+   each p-column. Returns one row per TF, sorted by `q_contrast`.
+3. **`single_run_tf_significance(run_dir)`** — loads per-gene diffs for one run,
+   builds the per-TF diff matrix via `_diff_series_to_matrix`, tests each TF's
+   diff vs 0 with `_tf_stats`, and BH-corrects. Returns one row per TF with
+   `tf, n_genes, median_diff, n_nonzero, p_intra, q_intra`, sorted by `q_intra`.
+4. **`build_matrix` / `order_tfs`** — the descriptive side: assemble the TF × run
    matrix of normalized `diff_calc` and order rows by `mean(max) − mean(min)`.
-4. **`plot_heatmap`** — draws the heatmap and, given a `row_stars` map, appends
-   significance stars to the TF row labels.
-5. **`main()`** — runs the significance analysis, writes the CSV, builds the
-   star map from `q_contrast`, and saves both heatmaps. All outputs land **next
-   to the script** in this folder.
+5. **`plot_heatmap`** — draws the heatmap with two optional significance overlays:
+   - `row_stars`: inter-run significance stars appended to TF row labels.
+   - `cell_stars`: intra-run significance stars appended to each cell's numeric
+     annotation (passed as a `{run_label: {tf: stars}}` dict; when provided, the
+     heatmap uses a string annotation matrix so each cell shows e.g. `"0.12*  "`).
+6. **`main()`** — runs both significance analyses, writes the CSVs, builds both
+   star maps, and saves the heatmaps. All outputs land **next to the script**.
 
 ### Outputs in this folder
 
-- **`compare_TFs_significance.csv`** — one row per TF, columns:
-  `tf, n_genes, median_D, n_nonzero_D, p_contrast, median_diff_max,
+- **`compare_TFs_significance.csv`** — paired ara inter-run analysis; one row per
+  TF, columns: `tf, n_genes, median_D, n_nonzero_D, p_contrast, median_diff_max,
   n_nonzero_max, p_max, median_diff_min, n_nonzero_min, p_min, q_contrast,
-  q_max, q_min`. `median_*` are the effect sizes (median per-gene diff);
-  `n_nonzero_*` is how many genes actually moved; `p_*`/`q_*` are the raw and
-  BH-corrected significances. Sorted by `q_contrast`.
+  q_max, q_min`. Sorted by `q_contrast`.
+- **`compare_TFs_significance_GOF.csv`** and **`compare_TFs_significance_LOF.csv`**
+  — intra-run analysis for GOF and LOF respectively; one row per TF, columns:
+  `tf, n_genes, median_diff, n_nonzero, p_intra, q_intra`. Sorted by `q_intra`.
 - **`compare_TFs_per_gene.png`** and **`compare_TFs_log_fold_change.png`** — the
-  two heatmaps (see below).
+  two heatmaps (see §5).
 
 ## 5. How to read the visualization
 
@@ -181,15 +212,21 @@ In both:
   the bottom rows are their mirror image. With this ordering, the max and min
   columns should read as **near mirror images** (red ↔ blue) for a TF that
   behaves consistently — that visual mirror *is* the biological signal.
-- **Significance stars** are appended to a TF's **row label**, based on the
-  primary `q_contrast` (ara max vs ara min): `*` q < 0.05, `**` q < 0.01,
-  `***` q < 0.001. A starred TF is one whose up- vs down-optimization behavior is
-  significant after FDR correction. Unstarred rows (including all GOF/LOF-only
-  TFs) were either not significant or not tested.
+- **Row label stars** are appended to a TF's row label based on the primary
+  `q_contrast` (ara max vs ara min paired contrast): `*` q < 0.05, `**` q < 0.01,
+  `***` q < 0.001. A starred row label means the TF behaves significantly
+  differently between maximization and minimization after FDR correction.
+- **Cell stars** are appended to each cell's numeric value based on the intra-run
+  `q_intra` for that run: `*` q < 0.05, `**` q < 0.01, `***` q < 0.001. A
+  starred cell means the TF's binding is significantly changed vs reference within
+  that run after FDR correction.
 
-**Caveat to remember:** the stars come *only* from the paired ara max-vs-min
-contrast. The GOF/LOF columns are descriptive and were deliberately excluded from
-the statistics because of their different run parameters and smaller gene sets.
+**Caveats to remember:**
+
+- Row label stars come *only* from the paired ara contrast. GOF/LOF row labels
+  are never starred because no inter-run paired comparison exists for them.
+- Cell stars are independent per column and BH-corrected within each run
+  separately — they do not correct across runs.
 
 ## 6. Reproducing
 

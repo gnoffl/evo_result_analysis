@@ -10,12 +10,20 @@ the number of genes in the run (``len`` of the run's ``stats_*.json``), orders t
 TFs by a max-minus-min score, and draws a heatmap (columns = runs, rows = TFs).
 With that ordering, max and min runs should read as mirror images.
 
-It also computes per-TF significance for the two Arabidopsis runs
-(``ARA_MAX_RUN`` / ``ARA_MIN_RUN``), which share the same genes. Working from the
-per-gene peak counts in each run's ``*_annotated_peaks_*.csv``, it runs three
-two-sided Wilcoxon signed-rank tests per TF (max-vs-min contrast, max-only and
-min-only change vs reference), BH-corrects the p-values to q-values, writes a
-``compare_TFs_significance.csv``, and stars the significant rows of the heatmap.
+Two layers of significance are computed:
+
+1. **Inter-run (paired contrast):** For the two Arabidopsis runs (``ARA_MAX_RUN``
+   / ``ARA_MIN_RUN``), which share the same genes, three two-sided Wilcoxon
+   signed-rank tests per TF (max-vs-min contrast, max-only and min-only change vs
+   reference) are BH-corrected to q-values and written to
+   ``compare_TFs_significance.csv``. The contrast q-value stars are appended to
+   the TF row labels in the heatmap.
+
+2. **Intra-run:** For every run independently, a per-TF Wilcoxon test of
+   ``diff = max_mutated − reference`` vs 0 over all genes in that run is
+   BH-corrected and written to ``compare_TFs_significance_<label>.csv``.
+   Significant intra-run q-values are shown as stars appended to each cell's
+   numeric annotation in the heatmap.
 
 It is a one-off analysis script: edit ``RUNS`` and run it directly.
 """
@@ -23,7 +31,7 @@ It is a one-off analysis script: edit ``RUNS`` and run it directly.
 import glob
 import json
 import os
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Dict, List, Optional, Tuple, Union, cast
 
 import matplotlib
 
@@ -63,7 +71,7 @@ SIGNAL_TYPE_COLUMN = "signal_type"
 GENE_COLUMN = "gene"
 SIGNIFICANCE_BASENAME = "compare_TFs_significance"
 # q-value thresholds (most stringent first) mapped to the star annotation.
-STAR_THRESHOLDS: List[Tuple[float, str]] = [(0.001, "***"), (0.01, "** "), (0.05, "*  ")]
+STAR_THRESHOLDS: List[Tuple[float, str]] = [(0.001, "***"), (0.01, "**"), (0.05, "*")]
 
 
 def count_genes(run_dir: str) -> int:
@@ -184,6 +192,23 @@ def _bh_qvalues(pvalues: pd.Series) -> pd.Series:
     return qvalues
 
 
+def _diff_series_to_matrix(
+    diff: pd.Series,
+    genes: List[str],
+    tfs: List[str],
+) -> pd.DataFrame:
+    """Unstack a (core_gene, tf)-indexed diff Series into a genes × TFs matrix.
+
+    Missing (gene, TF) combinations are filled with 0.
+    """
+    return diff.unstack(TF_COLUMN).reindex(index=genes, columns=tfs).fillna(0.0)
+
+
+def _tf_stats(arr: np.ndarray) -> Tuple[float, int, float]:
+    """Return (median, n_nonzero, wilcoxon_p) for a per-gene diff vector."""
+    return float(np.median(arr)), int(np.count_nonzero(arr)), _wilcoxon_pvalue(arr)
+
+
 def paired_tf_significance(max_run_dir: str, min_run_dir: str) -> pd.DataFrame:
     """Per-TF paired significance between a max and a min run over shared genes.
 
@@ -212,28 +237,28 @@ def paired_tf_significance(max_run_dir: str, min_run_dir: str) -> pd.DataFrame:
         set(diff_max.index.get_level_values(TF_COLUMN))
         | set(diff_min.index.get_level_values(TF_COLUMN))
     )
-    max_mat = diff_max.unstack(TF_COLUMN).reindex(index=shared_genes, columns=all_tfs).fillna(0.0)
-    min_mat = diff_min.unstack(TF_COLUMN).reindex(index=shared_genes, columns=all_tfs).fillna(0.0)
+    max_mat = _diff_series_to_matrix(diff_max, shared_genes, all_tfs)
+    min_mat = _diff_series_to_matrix(diff_min, shared_genes, all_tfs)
     contrast_mat = max_mat - min_mat
 
     rows = []
     for tf in all_tfs:
-        d_max = max_mat[tf].to_numpy()
-        d_min = min_mat[tf].to_numpy()
-        d_contrast = contrast_mat[tf].to_numpy()
+        median_contrast, n_nonzero_contrast, p_contrast = _tf_stats(contrast_mat[tf].to_numpy())
+        median_max, n_nonzero_max, p_max = _tf_stats(max_mat[tf].to_numpy())
+        median_min, n_nonzero_min, p_min = _tf_stats(min_mat[tf].to_numpy())
         rows.append(
             {
                 TF_COLUMN: tf,
                 "n_genes": len(shared_genes),
-                "median_D": float(np.median(d_contrast)),
-                "n_nonzero_D": int(np.count_nonzero(d_contrast)),
-                "p_contrast": _wilcoxon_pvalue(d_contrast),
-                "median_diff_max": float(np.median(d_max)),
-                "n_nonzero_max": int(np.count_nonzero(d_max)),
-                "p_max": _wilcoxon_pvalue(d_max),
-                "median_diff_min": float(np.median(d_min)),
-                "n_nonzero_min": int(np.count_nonzero(d_min)),
-                "p_min": _wilcoxon_pvalue(d_min),
+                "median_D": median_contrast,
+                "n_nonzero_D": n_nonzero_contrast,
+                "p_contrast": p_contrast,
+                "median_diff_max": median_max,
+                "n_nonzero_max": n_nonzero_max,
+                "p_max": p_max,
+                "median_diff_min": median_min,
+                "n_nonzero_min": n_nonzero_min,
+                "p_min": p_min,
             }
         )
 
@@ -241,6 +266,46 @@ def paired_tf_significance(max_run_dir: str, min_run_dir: str) -> pd.DataFrame:
     for p_col, q_col in [("p_contrast", "q_contrast"), ("p_max", "q_max"), ("p_min", "q_min")]:
         result[q_col] = _bh_qvalues(result[p_col])
     return result.sort_values("q_contrast").reset_index(drop=True)
+
+
+def single_run_tf_significance(run_dir: str) -> pd.DataFrame:
+    """Per-TF significance of diff (max_mutated − reference) vs 0 within one run.
+
+    Loads per-gene diffs from the run's annotated-peaks CSV, tests each TF's
+    distribution against zero with a two-sided Wilcoxon signed-rank test, and
+    BH-corrects the p-values across TFs.
+
+    Args:
+        run_dir: Run directory containing the deepcis_scan subfolder.
+
+    Returns:
+        DataFrame with columns tf, n_genes, median_diff, n_nonzero, p_intra,
+        q_intra, sorted by q_intra ascending.
+
+    Raises:
+        FileNotFoundError: If there is not exactly one annotated-peaks CSV.
+    """
+    diff = load_per_gene_diffs(run_dir)["diff"]
+    all_genes = sorted(set(diff.index.get_level_values("core_gene")))
+    all_tfs = sorted(set(diff.index.get_level_values(TF_COLUMN)))
+    mat = _diff_series_to_matrix(diff, all_genes, all_tfs)
+
+    rows = []
+    for tf in all_tfs:
+        median, n_nonzero, p = _tf_stats(mat[tf].to_numpy())
+        rows.append(
+            {
+                TF_COLUMN: tf,
+                "n_genes": len(all_genes),
+                "median_diff": median,
+                "n_nonzero": n_nonzero,
+                "p_intra": p,
+            }
+        )
+
+    result = pd.DataFrame(rows)
+    result["q_intra"] = _bh_qvalues(result["p_intra"])
+    return result.sort_values("q_intra").reset_index(drop=True)
 
 
 def q_to_stars(qvalue: float) -> str:
@@ -259,23 +324,57 @@ def plot_heatmap(
     annotate: bool,
     cbar_label: str = "diff_calc / gene",
     row_stars: Optional[Dict[str, str]] = None,
+    cell_stars: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> Figure:
     """Draw the cross-run TF heatmap on a symmetric diverging scale.
 
     When ``row_stars`` maps a TF to a non-empty star string, that string is
-    appended to the TF's row label to mark significance.
+    appended to the TF's row label to mark inter-run significance.
+
+    When ``cell_stars`` maps a run label to a ``{tf: stars}`` dict, the stars
+    are appended to each cell's numeric annotation to mark intra-run significance
+    (i.e. whether diff vs reference is significant within that run).
+
+    Args:
+        matrix: TF × run DataFrame of normalized diff values.
+        n_max_runs: Number of maximization runs (for the separator line).
+        annotate: Whether to annotate cells with numeric values (and stars).
+        cbar_label: Colour bar axis label.
+        row_stars: Optional inter-run significance stars keyed by TF name.
+        cell_stars: Optional intra-run significance stars keyed by run label then
+            TF name; only used when ``annotate`` is True.
+
+    Returns:
+        Matplotlib Figure with a single heatmap axes.
     """
     limit = float(np.nanmax(np.abs(matrix.to_numpy()))) or 1.0
     n_tfs, n_runs = matrix.shape
     fig, ax = plt.subplots(figsize=(max(4.0, 0.9 * n_runs + 2.5), max(4.0, 0.3 * n_tfs + 1.0)))
+
+    annot_arg: Union[bool, pd.DataFrame] = annotate
+    fmt_arg = ".2f"
+    if annotate and cell_stars:
+        annot_data = pd.DataFrame("", index=matrix.index, columns=matrix.columns)
+        for col in matrix.columns:
+            col_stars = cell_stars.get(str(col), {})
+            for tf in matrix.index:
+                val = matrix.loc[tf, col]
+                if pd.isna(val):
+                    annot_data.loc[tf, col] = ""
+                else:
+                    stars = col_stars.get(str(tf), "")
+                    annot_data.loc[tf, col] = f"{val:.2f}{stars}"
+        annot_arg = annot_data
+        fmt_arg = ""
+
     sns.heatmap(
         matrix,
         cmap=COLORMAP,
         center=0,
         vmin=-limit,
         vmax=limit,
-        annot=annotate,
-        fmt=".2f",
+        annot=annot_arg,
+        fmt=fmt_arg,
         linewidths=0.5,
         linecolor="white",
         cbar_kws={"label": cbar_label},
@@ -288,7 +387,7 @@ def plot_heatmap(
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
     if row_stars:
         labels = [
-            f"{tf} {row_stars[tf]}" if row_stars.get(tf) else str(tf) + "    " for tf in matrix.index
+            f"{tf} {row_stars[tf]: <3}" if row_stars.get(tf) else str(tf) + "    " for tf in matrix.index
         ]
         ax.set_yticklabels(labels, rotation=0)
     fig.tight_layout()
@@ -296,24 +395,63 @@ def plot_heatmap(
 
 
 def main() -> None:
-    """Build the matrix, compute ara significance, and save annotated heatmaps."""
+    """Build the matrix, compute significance tests, and save annotated heatmaps."""
     directions = {label: direction for _, direction, label in RUNS}
     n_max_runs = sum(1 for _, direction, _ in RUNS if direction == "max")
     output_folder = os.path.dirname(__file__)
 
+    # Inter-run paired significance for the two ara runs (they share the same genes).
     significance = paired_tf_significance(ARA_MAX_RUN, ARA_MIN_RUN)
     significance_path = os.path.join(output_folder, f"{SIGNIFICANCE_BASENAME}.csv")
     significance.to_csv(significance_path, index=False)
     print(f"Saved {significance_path}")
     row_stars = dict(zip(significance[TF_COLUMN], significance["q_contrast"].map(q_to_stars)))
 
+    # Intra-run significance (diff vs reference within each run). The ara runs
+    # reuse the q_max / q_min columns already computed by paired_tf_significance;
+    # GOF/LOF are computed independently via single_run_tf_significance.
+    ara_max_label = next(label for run_dir, _, label in RUNS if run_dir == ARA_MAX_RUN)
+    ara_min_label = next(label for run_dir, _, label in RUNS if run_dir == ARA_MIN_RUN)
+
+    cell_stars: Dict[str, Dict[str, str]] = {
+        ara_max_label: dict(
+            zip(significance[TF_COLUMN], significance["q_max"].map(q_to_stars))
+        ),
+        ara_min_label: dict(
+            zip(significance[TF_COLUMN], significance["q_min"].map(q_to_stars))
+        ),
+    }
+
+    ara_run_dirs = {ARA_MAX_RUN, ARA_MIN_RUN}
+    for run_dir, _, label in RUNS:
+        if run_dir in ara_run_dirs:
+            continue
+        intra_sig = single_run_tf_significance(run_dir)
+        safe_label = label.replace(" ", "_")
+        intra_path = os.path.join(
+            output_folder, f"{SIGNIFICANCE_BASENAME}_{safe_label}.csv"
+        )
+        intra_sig.to_csv(intra_path, index=False)
+        print(f"Saved {intra_path}")
+        cell_stars[label] = dict(
+            zip(intra_sig[TF_COLUMN], intra_sig["q_intra"].map(q_to_stars))
+        )
+
     matrix_per_gene = order_tfs(build_matrix(RUNS, normalization="per_gene"), directions)
     matrix_fold_change = order_tfs(build_matrix(RUNS, normalization="fold_change"), directions)
 
-    labels = {"_per_gene": "diff_calc / gene", "_log_fold_change": "log2 fold change"}
-    for matrix, suffix in [(matrix_per_gene, "_per_gene"), (matrix_fold_change, "_log_fold_change")]:
+    norm_labels = {"_per_gene": "diff_calc / gene", "_log_fold_change": "log2 fold change"}
+    for matrix, suffix in [
+        (matrix_per_gene, "_per_gene"),
+        (matrix_fold_change, "_log_fold_change"),
+    ]:
         fig = plot_heatmap(
-            matrix, n_max_runs, True, cbar_label=labels[suffix], row_stars=row_stars
+            matrix,
+            n_max_runs,
+            True,
+            cbar_label=norm_labels[suffix],
+            row_stars=row_stars,
+            cell_stars=cell_stars,
         )
         output_path = os.path.join(output_folder, f"{OUTPUT_BASENAME}{suffix}.{FIGURE_FORMAT}")
         fig.savefig(output_path, bbox_inches="tight", dpi=150)
