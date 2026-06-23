@@ -235,14 +235,6 @@ def plot_prediction_comparison(
     ax.set_ylim(0, 1.15)
     ax.legend(title="Variant")
 
-    # Note for condition without lab variant (use the pre-built lookup)
-    conditions_without_lab = [
-        c for c in conditions if (c, "lab_variant") not in predictions
-    ]
-    if conditions_without_lab:
-        note = f"* {', '.join(conditions_without_lab)}: lab mutation outside deepCRE window — no variant tested"
-        fig.text(0.5, -0.04, note, ha="center", fontsize=8, color="dimgray", style="italic")
-
     sns.despine()
     save_figure(fig, "prediction_comparison", output_dir, fmt)
     plt.close(fig)
