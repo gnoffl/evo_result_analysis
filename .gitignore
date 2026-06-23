@@ -8,7 +8,9 @@ visualization/*
 run_mutations_analysis.sh
 *.fai
 src/workflows/hoffie/data/*
-src/workflows/hoffie/mutation_assessment/
+src/workflows/hoffie/mutation_assessment/*.csv
+src/workflows/hoffie/mutation_assessment/*.png
+src/workflows/hoffie/mutation_assessment/*.fa
 src/workflows/paper_plots/figures/*
 src/workflows/evo_alg_pooled_plots/**/*.png
 src/workflows/evo_alg_pooled_plots/**/*.csv
