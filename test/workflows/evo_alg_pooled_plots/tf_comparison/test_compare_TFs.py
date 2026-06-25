@@ -306,5 +306,73 @@ class PlotHeatmapTest(unittest.TestCase):
         self.assertTrue(any("-2.00" in t and "**" not in t for t in texts))
 
 
+class TopBottomNTfsSlicingTest(unittest.TestCase):
+    """Tests for the TOP_BOTTOM_N_TFS slicing logic applied to an ordered matrix."""
+
+    def _make_ordered_matrix(self) -> pd.DataFrame:
+        """Return a 6-TF ordered matrix (rows already sorted best → worst)."""
+        return pd.DataFrame(
+            {"MAX": [5.0, 4.0, 3.0, -3.0, -4.0, -5.0]},
+            index=["tf1", "tf2", "tf3", "tf4", "tf5", "tf6"],
+        )
+
+    def _apply_slice(self, matrix: pd.DataFrame, n: int) -> pd.DataFrame:
+        """Apply the same slicing logic used in main()."""
+        keep = list(dict.fromkeys(list(matrix.index[:n]) + list(matrix.index[-n:])))
+        return matrix.loc[keep]
+
+    def test_top_and_bottom_n_rows_are_kept(self) -> None:
+        # Arrange
+        matrix = self._make_ordered_matrix()
+
+        # Act
+        sliced = self._apply_slice(matrix, 2)
+
+        # Assert: first 2 and last 2 rows are kept, middle rows are dropped.
+        self.assertEqual(list(sliced.index), ["tf1", "tf2", "tf5", "tf6"])
+
+    def test_values_are_unchanged_after_slicing(self) -> None:
+        # Arrange
+        matrix = self._make_ordered_matrix()
+
+        # Act
+        sliced = self._apply_slice(matrix, 2)
+
+        # Assert
+        self.assertAlmostEqual(sliced.loc["tf1", "MAX"], 5.0)
+        self.assertAlmostEqual(sliced.loc["tf6", "MAX"], -5.0)
+
+    def test_no_duplicate_rows_when_n_overlaps(self) -> None:
+        # Arrange: n=4 means top 4 and bottom 4 of a 6-row matrix overlap in tf3/tf4.
+        matrix = self._make_ordered_matrix()
+
+        # Act
+        sliced = self._apply_slice(matrix, 4)
+
+        # Assert: all 6 TFs present with no duplicates.
+        self.assertEqual(len(sliced), 6)
+        self.assertEqual(len(set(sliced.index)), 6)
+
+    def test_n_equals_total_rows_returns_all(self) -> None:
+        # Arrange
+        matrix = self._make_ordered_matrix()
+
+        # Act
+        sliced = self._apply_slice(matrix, len(matrix))
+
+        # Assert
+        self.assertEqual(len(sliced), len(matrix))
+
+    def test_order_is_preserved_top_before_bottom(self) -> None:
+        # Arrange
+        matrix = self._make_ordered_matrix()
+
+        # Act
+        sliced = self._apply_slice(matrix, 2)
+
+        # Assert: top rows appear before bottom rows, each group retains its order.
+        self.assertEqual(list(sliced.index), ["tf1", "tf2", "tf5", "tf6"])
+
+
 if __name__ == "__main__":
     unittest.main()

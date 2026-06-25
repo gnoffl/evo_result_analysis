@@ -55,6 +55,10 @@ RUNS: List[Tuple[str, str, str]] = [
 OUTPUT_BASENAME = "compare_TFs"
 FIGURE_FORMAT = "png"
 
+# Show only the N highest and N lowest TFs by max-minus-min score.
+# Set to None to show all TFs.
+TOP_BOTTOM_N_TFS: Optional[int] = 5
+
 TF_COLUMN = "tf"
 DIFF_COLUMN = "diff_calc"
 REF_COLUMN = "reference"
@@ -440,6 +444,14 @@ def main() -> None:
     matrix_per_gene = order_tfs(build_matrix(RUNS, normalization="per_gene"), directions)
     matrix_fold_change = order_tfs(build_matrix(RUNS, normalization="fold_change"), directions)
 
+    if TOP_BOTTOM_N_TFS is not None:
+        n = TOP_BOTTOM_N_TFS
+        keep = list(dict.fromkeys(list(matrix_per_gene.index[:n]) + list(matrix_per_gene.index[-n:])))
+        matrix_per_gene = matrix_per_gene.loc[keep]
+        keep = list(dict.fromkeys(list(matrix_fold_change.index[:n]) + list(matrix_fold_change.index[-n:])))
+        matrix_fold_change = matrix_fold_change.loc[keep]
+
+    top_bottom_suffix = f"_top{TOP_BOTTOM_N_TFS}" if TOP_BOTTOM_N_TFS is not None else ""
     norm_labels = {"_per_gene": "diff_calc / gene", "_log_fold_change": "log2 fold change"}
     for matrix, suffix in [
         (matrix_per_gene, "_per_gene"),
@@ -453,7 +465,9 @@ def main() -> None:
             row_stars=row_stars,
             cell_stars=cell_stars,
         )
-        output_path = os.path.join(output_folder, f"{OUTPUT_BASENAME}{suffix}.{FIGURE_FORMAT}")
+        output_path = os.path.join(
+            output_folder, f"{OUTPUT_BASENAME}{suffix}{top_bottom_suffix}.{FIGURE_FORMAT}"
+        )
         fig.savefig(output_path, bbox_inches="tight", dpi=150)
         plt.close(fig)
         print(f"Saved {output_path}")
