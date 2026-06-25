@@ -1,0 +1,159 @@
+"""Plot average deepCIS prediction scores: before optimization, after random mutations,
+and after evolutionary optimization, grouped by species."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+
+
+def load_random_mutation_averages(filepath: str) -> dict[str, float]:
+    """Parse average deepCIS scores after random mutations from text file.
+
+    Args:
+        filepath: Path to the average_predictions_after_random_mutations.txt file.
+
+    Returns:
+        Dictionary mapping species name to average prediction score.
+    """
+    averages = {}
+    with open(filepath) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("Arabidopsis:"):
+                averages["Arabidopsis"] = float(line.split(":")[1].strip())
+            elif line.startswith("Maize:"):
+                averages["Maize"] = float(line.split(":")[1].strip())
+    return averages
+
+
+def load_evolution_summary(filepath: str, run_key: str) -> dict[str, float]:
+    """Parse start and final fitness means from an evolution run summary file.
+
+    Reads only the block matching run_key (the first occurrence).
+
+    Args:
+        filepath: Path to a summary_*.txt file.
+        run_key: The run name to match (e.g. 'ara_msr_max_single').
+
+    Returns:
+        Dictionary with keys 'start_fitness_mean' and 'final_fitness_mean'.
+    """
+    result: dict[str, float] = {}
+    inside_block = False
+    with open(filepath) as f:
+        for line in f:
+            line = line.strip()
+            if line == f"Summary for {run_key}:":
+                inside_block = True
+                continue
+            if inside_block:
+                if line.startswith("Summary for"):
+                    break
+                if line.startswith("start_fitness_mean:"):
+                    result["start_fitness_mean"] = float(line.split(":")[1].strip())
+                elif line.startswith("final_fitness_mean:"):
+                    result["final_fitness_mean"] = float(line.split(":")[1].strip())
+    return result
+
+
+def build_plot_dataframe(
+    ara_summary_path: str,
+    zea_summary_path: str,
+    random_mutations_path: str,
+) -> pd.DataFrame:
+    """Assemble a tidy DataFrame with one row per (species, condition) combination.
+
+    Args:
+        ara_summary_path: Path to Arabidopsis evolution summary file.
+        zea_summary_path: Path to Maize evolution summary file.
+        random_mutations_path: Path to random mutations averages file.
+
+    Returns:
+        DataFrame with columns: species, condition, score.
+    """
+    random_averages = load_random_mutation_averages(random_mutations_path)
+
+    ara = load_evolution_summary(ara_summary_path, "ara_msr_max_single")
+    zea = load_evolution_summary(zea_summary_path, "zea_msr_max_single")
+
+    rows = [
+        {"species": "Arabidopsis", "condition": "Before optimization", "score": ara["start_fitness_mean"]},
+        {"species": "Arabidopsis", "condition": "After random mutations", "score": random_averages["Arabidopsis"]},
+        {"species": "Arabidopsis", "condition": "After optimization", "score": ara["final_fitness_mean"]},
+        {"species": "Maize", "condition": "Before optimization", "score": zea["start_fitness_mean"]},
+        {"species": "Maize", "condition": "After random mutations", "score": random_averages["Maize"]},
+        {"species": "Maize", "condition": "After optimization", "score": zea["final_fitness_mean"]},
+    ]
+    return pd.DataFrame(rows)
+
+
+def plot_optimization_vs_random(
+    data: pd.DataFrame,
+    output_dir: str,
+    fmt: str = "png",
+) -> None:
+    """Plot grouped bar chart of deepCIS scores across conditions and species.
+
+    Args:
+        data: Tidy DataFrame with columns: species, condition, score.
+        output_dir: Directory to save the figure.
+        fmt: Output file format (e.g. 'png', 'svg', 'pdf').
+    """
+    condition_order = ["Before optimization", "After random mutations", "After optimization"]
+
+    sns.set_theme(style="whitegrid")
+    fig, ax = plt.subplots(figsize=(7, 5))
+
+    sns.barplot(
+        data=data,
+        x="species",
+        y="score",
+        hue="condition",
+        hue_order=condition_order,
+        ax=ax,
+    )
+
+    ax.set_xlabel("Species")
+    ax.set_ylabel("Average deepCIS prediction score")
+    ax.set_ylim(0, 1.05)
+    ax.legend(title="Condition", bbox_to_anchor=(1.01, 1), loc="upper left")
+
+    fig.tight_layout()
+    save_figure(fig, "optimization_vs_random_mutations", output_dir, fmt)
+    plt.close(fig)
+
+
+def save_figure(fig: plt.Figure, filename: str, output_dir: str, fmt: str = "png") -> None:
+    """Save figure to output_dir/filename.fmt.
+
+    Args:
+        fig: Matplotlib figure to save.
+        filename: Base filename without extension.
+        output_dir: Directory to save the figure.
+        fmt: File format extension.
+    """
+    path = Path(output_dir) / f"{filename}.{fmt}"
+    fig.savefig(path, bbox_inches="tight", dpi=150)
+    print(f"Saved figure to {path}")
+
+
+if __name__ == "__main__":
+    base = Path(__file__).parent
+    ara_summary = (
+        "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+        "paper_runs/single_mutation/ara_msr_max_single/summary_ara_msr_max_single.txt"
+    )
+    zea_summary = (
+        "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+        "paper_runs/single_mutation/zea_msr_max_single/summary_zea_msr_max_single.txt"
+    )
+    random_mutations = str(base / "average_predictions_after_random_mutations.txt")
+    output_dir = str(base / "visualizations")
+    Path(output_dir).mkdir(exist_ok=True)
+
+    data = build_plot_dataframe(ara_summary, zea_summary, random_mutations)
+    plot_optimization_vs_random(data, output_dir, fmt="png")
