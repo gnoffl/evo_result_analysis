@@ -16,10 +16,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Setup & Installation
 
 ```bash
-pip install -e .   # editable install (recommended for development)
+conda activate deepCREshap   # required; contains tensorflow, pyfaidx, scikit-learn
+pip install -e .              # editable install (recommended for development)
 ```
 
-Python ≥ 3.8 required. Key dependencies: numpy, pandas, scipy, matplotlib, seaborn, tensorflow, pyfaidx, sklearn.
+Python ≥ 3.8 required. Core dependencies (pyproject.toml): numpy, pandas, scipy, matplotlib, seaborn, statsmodels, tqdm. Heavy ML/bio deps (conda env only): tensorflow, pyfaidx, scikit-learn.
 
 All necessary dependencies are installed in the conda environment "deepCREshap".
 
@@ -32,6 +33,13 @@ pytest test/analysis/motives/test_analyze_mapping.py  # single file
 ```
 
 No pytest config file — uses default discovery. Tests use `unittest.mock` (patch, mock_open) plus temporary directories for integration tests.
+
+## Analysis Scripts
+
+Shell pipeline entry points in `analysis_scripts/`:
+
+- `run_deepcis_peak_pipeline.sh` — end-to-end: deepCIS scan → peak calling → visualization (usage: `<results_folder> <analysis_name> <output_folder> [options]`)
+- `run_full_analysis.sh` — full evolutionary analysis: stats → mutation summarization → mutation analysis (same argument pattern)
 
 ## Architecture
 
@@ -50,6 +58,10 @@ No pytest config file — uses default discovery. Tests use `unittest.mock` (pat
 - `paper_plots/` — publication-ready figures
 - `overlap_analysis/` — STAR-seq × deepCRE correlation
 - `hoffie/` — protein design/plasmid workflows
+- `evo_alg_pooled_plots/` — cross-run pooled evolution plots
+- `mutation_distance_analysis/` — pairwise sequence distance analysis
+- `mutation_distribution_analysis/` — per-position mutation frequency
+- `deepCRE_TPM_correlation/` — deepCRE score vs. TPM expression correlation
 - `figure_composition.py` — assembles multi-panel SVG figures
 - `candidate_selection.py`, `update_excel_sheet.py`
 
@@ -78,3 +90,5 @@ Imports from `evolution`, `deepCRE`, and `evolution.sequences` are other researc
 ## Version Control
 
 Images (`*.png`, `*.svg`) and generated data files (`*.csv`) produced by scripts in this repo are gitignored — do not commit them. When adding a new workflow that writes such outputs, add the appropriate globs to `.gitignore`.
+
+`data/` holds genome FASTA files (gitignored). `models/` holds deepCIS `.h5` model files (gitignored). Both must be populated manually before running analyses.
