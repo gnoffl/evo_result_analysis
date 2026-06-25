@@ -176,7 +176,7 @@ def plot_prediction_comparison(
         for _, row in df.iterrows()
     }
 
-    conditions = list(df["condition"].unique())
+    conditions = ["zma_max", "zma_max_nat", "zma_min_nat", "zma_min"]
     x_positions = np.arange(len(conditions))
     bar_width = 0.35
 
