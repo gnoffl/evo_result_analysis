@@ -80,6 +80,22 @@ variant; "total mutations" counts all VCF records (multiple ALT alleles at the
 same position count separately). The difference between the two is small,
 indicating that most positions carry only one alternative allele.
 
+## Solution-space statistical tests
+
+To quantify whether the constrained run has a significantly smaller solution
+space than the unconstrained run, and whether GOF and LOF differ in solution
+space, we run four tests on the per-gene position and mutation counts:
+
+| Test | Groups compared | Method |
+|---|---|---|
+| Paired (constrained vs unconstrained) | GOF Constrained vs GOF Unconstrained | Wilcoxon signed-rank |
+| Paired (constrained vs unconstrained) | LOF Constrained vs LOF Unconstrained | Wilcoxon signed-rank |
+| Unpaired (GOF vs LOF) | GOF Constrained vs LOF Constrained | Mann-Whitney U (two-sided) |
+| Unpaired (GOF vs LOF) | GOF Unconstrained vs LOF Unconstrained | Mann-Whitney U (two-sided) |
+
+Tests are run separately for the `positions` and `mutations` metrics. Results
+are printed to stdout and saved to `statistical_tests.csv`.
+
 ## Files
 
 - `natural_unconstrained_comparison_significance.csv` — summary table (above)
@@ -91,3 +107,5 @@ indicating that most positions carry only one alternative allele.
 - `natural_unconstrained_comparison_minimization.png` — paired box plot (log)
 - `vcf_mutation_stats.py` — counts unique locations and total mutations per
   gene from the source VCF files
+- `statistical_tests.csv` — four statistical test results (Wilcoxon and
+  Mann-Whitney U) for both positions and mutations metrics
