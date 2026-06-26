@@ -63,6 +63,23 @@ zero) and **linear** for maximization (its values cluster near 1.0, under one
 order of magnitude, where log just compresses everything against the top). The
 log axis is safe because no final fitness is exactly zero.
 
+## Natural mutation availability (VCF statistics)
+
+To contextualise how many mutations the natural run could draw from, we counted
+unique positions and total mutations per gene in the source VCF files
+(`vcf_mutation_stats.py`).
+
+| Group | n genes | Unique locations (mean ± std) | Total mutations (mean ± std) |
+|---|---|---|---|
+| GOF | 104 | 139.2 ± 70.6 | 143.6 ± 75.6 |
+| LOF | 68 | 151.6 ± 72.2 | 156.1 ± 77.5 |
+| Pooled | 172 | 144.1 ± 71.5 | 148.6 ± 76.6 |
+
+"Unique locations" counts distinct sequence positions with at least one
+variant; "total mutations" counts all VCF records (multiple ALT alleles at the
+same position count separately). The difference between the two is small,
+indicating that most positions carry only one alternative allele.
+
 ## Files
 
 - `natural_unconstrained_comparison_significance.csv` — summary table (above)
@@ -72,3 +89,5 @@ log axis is safe because no final fitness is exactly zero.
   final fitness for LOF
 - `natural_unconstrained_comparison_maximization.png` — paired box plot (linear)
 - `natural_unconstrained_comparison_minimization.png` — paired box plot (log)
+- `vcf_mutation_stats.py` — counts unique locations and total mutations per
+  gene from the source VCF files
