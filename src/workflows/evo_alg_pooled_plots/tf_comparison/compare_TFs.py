@@ -458,7 +458,7 @@ def main() -> None:
         (matrix_fold_change, "_log_fold_change"),
     ]:
         fig = plot_heatmap(
-            matrix,
+            matrix,                 #type:ignore
             n_max_runs,
             True,
             cbar_label=norm_labels[suffix],
