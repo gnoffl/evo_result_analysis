@@ -24,15 +24,32 @@ Python ≥ 3.8 required. Core dependencies (pyproject.toml): numpy, pandas, scip
 
 All necessary dependencies are installed in the conda environment "deepCREshap".
 
+## Execution Environment
+
+**ALWAYS** run Python and pytest via the `deepCREshap` conda environment, never bare `python` or `pytest`:
+
+```bash
+conda run -n deepCREshap python script.py
+conda run -n deepCREshap python -m pytest test/
+```
+
+This applies to every execution: tests, scripts, one-off commands, anything.
+
 ## Running Tests
 
 ```bash
-pytest test/                          # all tests
-pytest test/analysis/motives/         # specific subdirectory
-pytest test/analysis/motives/test_analyze_mapping.py  # single file
+conda run -n deepCREshap python -m pytest test/                          # all tests
+conda run -n deepCREshap python -m pytest test/analysis/motives/         # specific subdirectory
+conda run -n deepCREshap python -m pytest test/analysis/motives/test_analyze_mapping.py  # single file
 ```
 
 No pytest config file — uses default discovery. Tests use `unittest.mock` (patch, mock_open) plus temporary directories for integration tests.
+
+## Test discipline
+
+**Editing existing files:** Before returning to the user, rerun the tests for every edited file. If no test file exists for an edited module, explicitly flag this to the user before finishing.
+
+**Creating new files:** Tests are mandatory. Write the test file alongside the new source file in the same session — never create a new module without a corresponding test file.
 
 ## Analysis Scripts
 
