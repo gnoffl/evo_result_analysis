@@ -642,5 +642,142 @@ class TestPlottingSmoke(unittest.TestCase):
         )
 
 
+class TestCorrelationByPositionFixedWindowCsv(unittest.TestCase):
+    """Verify that plot_correlation_over_positions_fixed_window writes correct CSV data."""
+
+    def setUp(self):
+        overlap_analysis.plt.switch_backend("Agg")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._root = os.path.join(self._tmp.name, "correlation")
+        patcher = patch.object(overlap_analysis, "CORRELATION_OUTPUT_ROOT", self._root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _csv_path(self) -> str:
+        return os.path.join(
+            self._root,
+            "correlation_by_position_fixed_window",
+            "correlation_by_position_data.csv",
+        )
+
+    def _make_df(self, positions: list, n_per_position: int = 12) -> pd.DataFrame:
+        """Build a DataFrame with the given positions, each repeated n_per_position times."""
+        rows = []
+        total = len(positions) * n_per_position
+        for index, pos in enumerate(positions):
+            for j in range(n_per_position):
+                flat_index = index * n_per_position + j
+                rows.append(
+                    {
+                        "group_overlap_start": pos,
+                        "prediction_mutated": flat_index / total,
+                        "enrichment": flat_index / total * 2,
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    def test_csv_is_written(self):
+        df = self._make_df([0, 200, 400])
+
+        overlap_analysis._compute_and_save_correlation_by_position(
+            [(df, "all", "#555555")], "correlation_by_position_fixed_window"
+        )
+
+        self.assertTrue(os.path.exists(self._csv_path()))
+
+    def test_csv_has_expected_columns(self):
+        df = self._make_df([0, 200, 400])
+
+        overlap_analysis._compute_and_save_correlation_by_position(
+            [(df, "all", "#555555")], "correlation_by_position_fixed_window"
+        )
+
+        result = pd.read_csv(self._csv_path())
+        self.assertEqual(
+            list(result.columns),
+            [
+                "position",
+                "correlation",
+                "slope",
+                "p_value",
+                "correlation_rolling",
+                "slope_rolling",
+                "p_value_rolling",
+                "label",
+            ],
+        )
+
+    def test_raw_values_match_spearman_correlation_of_bucket(self):
+        # Perfectly correlated data -> Spearman r = 1.0 for the single bucket.
+        n = 12
+        df = pd.DataFrame(
+            {
+                "group_overlap_start": [200] * n,
+                "prediction_mutated": np.linspace(0, 1, n),
+                "enrichment": np.linspace(0, 2, n),
+            }
+        )
+
+        overlap_analysis._compute_and_save_correlation_by_position(
+            [(df, "all", "#555555")], "correlation_by_position_fixed_window"
+        )
+
+        result = pd.read_csv(self._csv_path())
+        self.assertEqual(len(result), 1)
+        self.assertAlmostEqual(result.loc[0, "correlation"], 1.0, places=5)
+        self.assertAlmostEqual(result.loc[0, "position"], 300.0)  # midpoint of [200, 400)
+
+    def test_csv_contains_rows_for_every_label(self):
+        df = self._make_df([0, 200, 400])
+
+        overlap_analysis._compute_and_save_correlation_by_position(
+            [(df, "all", "#555555"), (df, "light", "#e6a817")],
+            "correlation_by_position_fixed_window",
+        )
+
+        result = pd.read_csv(self._csv_path())
+        self.assertIn("all", result["label"].values)
+        self.assertIn("light", result["label"].values)
+
+    def test_rolling_columns_match_pandas_rolling_with_rolling_window_size_constant(self):
+        # Enough positions to span more than one full rolling window.
+        n_positions = overlap_analysis.ROLLING_WINDOW_SIZE + 2
+        positions = [200 * i for i in range(n_positions)]
+        df = self._make_df(positions)
+
+        overlap_analysis._compute_and_save_correlation_by_position(
+            [(df, "all", "#555555")], "correlation_by_position_fixed_window"
+        )
+
+        result = pd.read_csv(self._csv_path()).sort_values("position").reset_index(drop=True)
+        expected_rolling = (
+            result["correlation"]
+            .rolling(overlap_analysis.ROLLING_WINDOW_SIZE, min_periods=1, center=True)
+            .mean()
+        )
+        pd.testing.assert_series_equal(
+            result["correlation_rolling"].reset_index(drop=True),
+            expected_rolling.reset_index(drop=True),
+            check_names=False,
+        )
+
+    def test_returns_series_tuples_for_plotting(self):
+        df = self._make_df([0, 200, 400])
+
+        corr_series, _, _ = (
+            overlap_analysis._compute_and_save_correlation_by_position(
+                [(df, "all", "#555555")], "correlation_by_position_fixed_window"
+            )
+        )
+
+        self.assertEqual(len(corr_series), 1)
+        x_pos, correlations, label, color = corr_series[0]
+        self.assertEqual(label, "all")
+        self.assertEqual(color, "#555555")
+        self.assertEqual(len(x_pos), len(correlations))
+        self.assertEqual(len(x_pos), 3)  # one midpoint per position bucket
+
+
 if __name__ == "__main__":
     unittest.main()

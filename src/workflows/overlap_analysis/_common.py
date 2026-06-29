@@ -48,6 +48,7 @@ POSITION_SERIES_COLORS = {
     "dark": "#2166ac",
 }
 OUTPUT_DPI = 600
+ROLLING_WINDOW_SIZE = 11
 ENABLE_BUCKETED_ANALYSIS = True
 ADD_OVERALL_FIT_TO_BUCKETED_PLOTS = True
 INDIVIDUAL_BUCKET_LABELS_TO_PLOT = ["800-999"]
@@ -752,7 +753,7 @@ def simply_plot_multi(
     output_name: str,
     subfolder: str,
     log: bool = False,
-    rolling_window: int = 11,
+    rolling_window: int = ROLLING_WINDOW_SIZE,
 ) -> None:
     """Plot multiple series of position-correlation data on a single figure.
 
@@ -790,15 +791,33 @@ def simply_plot_multi(
 
 
 
-def plot_correlation_over_positions_fixed_window(
+_PositionSeries = List[Tuple[List, List, str, str]]
+
+
+def _compute_and_save_correlation_by_position(
     named_dfs: List[Tuple[pd.DataFrame, str, str]],
-) -> None:
-    """Plot Spearman correlation, slope, and p-value by fixed-width position windows.
+    subfolder: str,
+) -> Tuple[_PositionSeries, _PositionSeries, _PositionSeries]:
+    """Compute per-bucket fit metrics, save them as CSV, and return plot-ready series.
+
+    For each (dataframe, label, color) entry, iterates over unique
+    ``group_overlap_start`` values, fits a linear model on each 200 bp bucket
+    (skipping buckets with ≤10 points), and collects position midpoints,
+    Spearman correlations, slopes, and p-values.  Results are written to
+    ``<subfolder>/correlation_by_position_data.csv`` with raw values and
+    centered rolling-mean columns (window = ROLLING_WINDOW_SIZE).
 
     Args:
-        named_dfs: List of (dataframe, label, color) tuples, one per subset to overlay.
+        named_dfs: List of (dataframe, label, color) tuples, one per subset.
+        subfolder: Output subdirectory under CORRELATION_OUTPUT_ROOT.
+
+    Returns:
+        List of (x_pos, metric_values, label, color) tuples ready for
+        ``simply_plot_multi``, one per metric per label, interleaved as
+        corr_series, slope_series, pval_series in groups of three.
     """
     corr_series, slope_series, pval_series = [], [], []
+    all_label_dfs: List[pd.DataFrame] = []
     for df, label, color in named_dfs:
         sorted_df = df.sort_values("group_overlap_start").reset_index(drop=True)
         slopes, correlations, p_values, x_pos = [], [], [], []
@@ -807,7 +826,8 @@ def plot_correlation_over_positions_fixed_window(
             bucket_df = sorted_df[
                 (sorted_df["group_overlap_start"] >= start) & (sorted_df["group_overlap_start"] < end)
             ]
-            if len(bucket_df) > 10:
+            print(len(bucket_df))
+            if len(bucket_df) > 50:
                 slope, _, correlation, p_value = _fit_linear_model(
                     bucket_df["prediction_mutated"], bucket_df["enrichment"]
                 )
@@ -819,7 +839,41 @@ def plot_correlation_over_positions_fixed_window(
         slope_series.append((x_pos, slopes, label, color))
         pval_series.append((x_pos, p_values, label, color))
 
+        label_df = pd.DataFrame(
+            {"position": x_pos, "correlation": correlations, "slope": slopes, "p_value": p_values}
+        ).sort_values("position").reset_index(drop=True)
+        label_df["correlation_rolling"] = (
+            label_df["correlation"].rolling(ROLLING_WINDOW_SIZE, min_periods=1, center=True).mean()
+        )
+        label_df["slope_rolling"] = (
+            label_df["slope"].rolling(ROLLING_WINDOW_SIZE, min_periods=1, center=True).mean()
+        )
+        label_df["p_value_rolling"] = (
+            label_df["p_value"].rolling(ROLLING_WINDOW_SIZE, min_periods=1, center=True).mean()
+        )
+        label_df["label"] = label
+        all_label_dfs.append(label_df)
+
+    output_folder = os.path.join(CORRELATION_OUTPUT_ROOT, subfolder)
+    os.makedirs(output_folder, exist_ok=True)
+    pd.concat(all_label_dfs, ignore_index=True).to_csv(
+        os.path.join(output_folder, "correlation_by_position_data.csv"), index=False
+    )
+    return corr_series, slope_series, pval_series
+
+
+def plot_correlation_over_positions_fixed_window(
+    named_dfs: List[Tuple[pd.DataFrame, str, str]],
+) -> None:
+    """Plot Spearman correlation, slope, and p-value by fixed-width position windows.
+
+    Args:
+        named_dfs: List of (dataframe, label, color) tuples, one per subset to overlay.
+    """
     subfolder = "correlation_by_position_fixed_window"
+    corr_series, slope_series, pval_series = _compute_and_save_correlation_by_position(
+        named_dfs, subfolder
+    )
     simply_plot_multi(corr_series, "Overlap start position", "Spearman correlation", "Correlation between deepCRE predictions and STARR-seq enrichment by overlap position", "correlation_by_position", subfolder)
     simply_plot_multi(slope_series, "Overlap start position", "Slope of linear fit", "Slope of linear fit between deepCRE predictions and STARR-seq enrichment by overlap position", "slope_by_position", subfolder)
     simply_plot_multi(pval_series, "Overlap start position", "P-value of Spearman correlation", "P-value of correlation between deepCRE predictions and STARR-seq enrichment by overlap position", "pvalue_by_position", subfolder, log=True)

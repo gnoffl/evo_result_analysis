@@ -177,7 +177,8 @@ writing PNGs to the working directory.
   and overall fit lines, and return per-bucket statistics rows.
 - `plot_correlation_over_positions_fixed_window` /
   `…_fixed_number_elements` draw correlation/slope/p-value as a function of
-  position along the gene.
+  position along the gene. For fixed window, the buckets each must have at least
+  50 points to be plotted.
 - `save_bucket_statistics` writes those rows to `overlap_bucket_fit_parameters.csv`.
 
 **The orchestrator.**
