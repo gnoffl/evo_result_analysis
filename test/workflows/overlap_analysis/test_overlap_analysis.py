@@ -661,8 +661,16 @@ class TestCorrelationByPositionFixedWindowCsv(unittest.TestCase):
             "correlation_by_position_data.csv",
         )
 
-    def _make_df(self, positions: list, n_per_position: int = 12) -> pd.DataFrame:
-        """Build a DataFrame with the given positions, each repeated n_per_position times."""
+    def _make_df(
+        self,
+        positions: list,
+        n_per_position: int = overlap_analysis.MIN_POINTS_PER_FIXED_WINDOW + 1,
+    ) -> pd.DataFrame:
+        """Build a DataFrame with the given positions, each repeated n_per_position times.
+
+        The default count exceeds ``MIN_POINTS_PER_FIXED_WINDOW`` so every
+        single-position window survives the minimum-points filter.
+        """
         rows = []
         total = len(positions) * n_per_position
         for index, pos in enumerate(positions):
@@ -710,7 +718,8 @@ class TestCorrelationByPositionFixedWindowCsv(unittest.TestCase):
 
     def test_raw_values_match_spearman_correlation_of_bucket(self):
         # Perfectly correlated data -> Spearman r = 1.0 for the single bucket.
-        n = 12
+        # Exceed the minimum-points filter so the window is fitted.
+        n = overlap_analysis.MIN_POINTS_PER_FIXED_WINDOW + 1
         df = pd.DataFrame(
             {
                 "group_overlap_start": [200] * n,
@@ -777,6 +786,90 @@ class TestCorrelationByPositionFixedWindowCsv(unittest.TestCase):
         self.assertEqual(color, "#555555")
         self.assertEqual(len(x_pos), len(correlations))
         self.assertEqual(len(x_pos), 3)  # one midpoint per position bucket
+
+
+class TestComputeOverlayCorrelationData(unittest.TestCase):
+    """Tests for the overlay plot's calculation step."""
+
+    def _make_df(self) -> pd.DataFrame:
+        # group_overlap_start values chosen relative to the highlight window
+        # [828, 1028) for window_center=928, window_size=200.
+        return pd.DataFrame(
+            [
+                {"prediction_mutated": 0.1, "enrichment": 1.0, "group_overlap_start": 100, "differences": 1, "starr_reference": False, "gene": "g1"},
+                {"prediction_mutated": 0.2, "enrichment": 2.0, "group_overlap_start": 828, "differences": 2, "starr_reference": False, "gene": "g2"},
+                {"prediction_mutated": 0.3, "enrichment": 3.0, "group_overlap_start": 900, "differences": 3, "starr_reference": False, "gene": "g3"},
+                {"prediction_mutated": 0.4, "enrichment": 4.0, "group_overlap_start": 1027, "differences": 4, "starr_reference": False, "gene": "g4"},
+                {"prediction_mutated": 0.5, "enrichment": 5.0, "group_overlap_start": 1028, "differences": 5, "starr_reference": False, "gene": "g5"},
+            ]
+        )
+
+    def test_highlight_selects_only_window_rows(self):
+        df = self._make_df()
+
+        all_points, highlight_points, _, _ = overlap_analysis.compute_overlay_correlation_data(
+            df, "prediction_mutated", "enrichment", window_center=928
+        )
+
+        # All five rows are valid; group starts 828, 900 and 1027 fall inside
+        # [828, 1028) and carry prediction_mutated 0.2, 0.3 and 0.4.
+        self.assertEqual(len(all_points), 5)
+        self.assertEqual(len(highlight_points), 3)
+        self.assertEqual(
+            sorted(highlight_points["prediction_mutated"].round(2).tolist()), [0.2, 0.3, 0.4]
+        )
+
+    def test_window_boundaries_are_half_open(self):
+        df = self._make_df()
+
+        _, highlight_points, _, _ = overlap_analysis.compute_overlay_correlation_data(
+            df, "prediction_mutated", "enrichment", window_center=928
+        )
+
+        # group_overlap_start=828 (prediction 0.2) is included, 1028 (0.5) excluded.
+        predictions = highlight_points["prediction_mutated"].round(2).tolist()
+        self.assertIn(0.2, predictions)  # lower bound inclusive
+        self.assertNotIn(0.5, predictions)  # upper bound exclusive
+
+    def test_nan_rows_are_dropped(self):
+        df = self._make_df()
+        nan_row = {"prediction_mutated": 0.35, "enrichment": np.nan, "group_overlap_start": 950, "differences": 9, "starr_reference": False, "gene": "g6"}
+        df = pd.concat([df, pd.DataFrame([nan_row])], ignore_index=True)
+
+        all_points, highlight_points, _, _ = overlap_analysis.compute_overlay_correlation_data(
+            df, "prediction_mutated", "enrichment", window_center=928
+        )
+
+        self.assertEqual(len(all_points), 5)
+        self.assertEqual(len(highlight_points), 3)
+
+    def test_fits_are_computed_for_both_sets(self):
+        df = self._make_df()
+
+        _, _, all_fit, highlight_fit = overlap_analysis.compute_overlay_correlation_data(
+            df, "prediction_mutated", "enrichment", window_center=928
+        )
+
+        # Highlight points: x=[0.2,0.3,0.4], y=[2,3,4] -> perfectly linear y=10x.
+        highlight_slope, highlight_intercept, highlight_corr, _ = highlight_fit
+        self.assertTrue(np.isclose(highlight_slope, 10.0))
+        self.assertTrue(np.isclose(highlight_intercept, 0.0, atol=1e-9))
+        self.assertTrue(np.isclose(highlight_corr, 1.0))
+        self.assertTrue(all(np.isfinite(value) for value in all_fit))
+
+    def test_empty_window_yields_empty_highlight_and_nan_fit(self):
+        df = self._make_df()
+
+        all_points, highlight_points, all_fit, highlight_fit = (
+            overlap_analysis.compute_overlay_correlation_data(
+                df, "prediction_mutated", "enrichment", window_center=100000
+            )
+        )
+
+        self.assertEqual(len(all_points), 5)
+        self.assertTrue(highlight_points.empty)
+        self.assertTrue(all(np.isnan(value) for value in highlight_fit))
+        self.assertTrue(all(np.isfinite(value) for value in all_fit))
 
 
 if __name__ == "__main__":

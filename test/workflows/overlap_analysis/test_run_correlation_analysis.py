@@ -39,6 +39,7 @@ class TestRunCorrelationAnalysis(unittest.TestCase):
                 patches["plot_mutation_starrseq_correlation"] as mock_mut_starr, \
                 patches["plot_mutation_deepcre_correlation"] as mock_mut_deepcre, \
                 patch.object(overlap_analysis, "plot_individual_bucket_views") as mock_bucket_views, \
+                patch.object(overlap_analysis, "plot_overlay_highlight_correlation") as mock_overlay, \
                 patch.object(overlap_analysis, "plot_correlation_over_positions_fixed_window") as mock_pos_window, \
                 patch.object(overlap_analysis, "plot_correlation_over_positions_fixed_number_elements") as mock_pos_elems, \
                 patch.object(overlap_analysis, "save_bucket_statistics") as mock_save:
@@ -48,6 +49,8 @@ class TestRunCorrelationAnalysis(unittest.TestCase):
         # Assert: position-series plots run once over the condition-split series.
         mock_pos_window.assert_called_once()
         mock_pos_elems.assert_called_once()
+        # The overlay plot runs once, on the full dataset only.
+        mock_overlay.assert_called_once()
         self.assertEqual(len(mock_pos_window.call_args[0][0]), 3)  # all, light, dark
 
         # Seven subsets: "", reference, synthetic, binding, non_binding, light, dark.
@@ -74,6 +77,7 @@ class TestRunCorrelationAnalysis(unittest.TestCase):
                 patch.object(overlap_analysis, "plot_mutation_starrseq_correlation", return_value=[]), \
                 patch.object(overlap_analysis, "plot_mutation_deepcre_correlation", return_value=[]), \
                 patch.object(overlap_analysis, "plot_individual_bucket_views"), \
+                patch.object(overlap_analysis, "plot_overlay_highlight_correlation"), \
                 patch.object(overlap_analysis, "plot_correlation_over_positions_fixed_window") as mock_pos_window, \
                 patch.object(overlap_analysis, "plot_correlation_over_positions_fixed_number_elements"), \
                 patch.object(overlap_analysis, "save_bucket_statistics"):

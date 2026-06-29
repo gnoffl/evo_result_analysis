@@ -49,9 +49,22 @@ POSITION_SERIES_COLORS = {
 }
 OUTPUT_DPI = 600
 ROLLING_WINDOW_SIZE = 11
+# Minimum number of data points a fixed-width position window must contain to be
+# fitted and plotted in the position-series analysis. Smaller windows are skipped.
+MIN_POINTS_PER_FIXED_WINDOW = 50
 ENABLE_BUCKETED_ANALYSIS = True
 ADD_OVERALL_FIT_TO_BUCKETED_PLOTS = True
 INDIVIDUAL_BUCKET_LABELS_TO_PLOT = ["800-999"]
+# Center (fixed-window ``x_pos``) of the highlight window for the overlay plot.
+# The fixed-window positional analysis keys each window by its starting
+# ``group_overlap_start`` and reports the center as ``start + BUCKET_SIZE // 2``.
+# 928 is the highest-correlation window for the full (pooled) analysis, so it
+# corresponds to ``group_overlap_start`` in ``[828, 1028)``.
+HIGHLIGHT_WINDOW_CENTER = 928
+# Colors for the overlay plot: muted grey for the full dataset drawn underneath,
+# strong red for the highlighted window drawn on top.
+OVERLAY_ALL_COLOR = "#9e9e9e"
+OVERLAY_HIGHLIGHT_COLOR = "#d62728"
 BUCKET_COLOR_PALETTE = [
     "#1f77b4",
     "#ff7f0e",
@@ -457,6 +470,197 @@ def plot_individual_bucket_views(prediction_df: pd.DataFrame, bucket_label: str,
         subset_label=subset_label,
     )
 
+def compute_overlay_correlation_data(
+    prediction_df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    window_center: int,
+    window_size: int = BUCKET_SIZE,
+    include_differences: bool = True,
+) -> Tuple[pd.DataFrame, pd.DataFrame, Tuple[float, float, float, float], Tuple[float, float, float, float]]:
+    """Build deduplicated full-data and highlight-window point sets with linear fits.
+
+    The highlight window mirrors the fixed-window positional analysis: a window
+    centered at ``window_center`` covers ``group_overlap_start`` values in
+    ``[window_center - window_size // 2, window_center + window_size // 2)``.
+    Points are deduplicated the same way as in the scatter correlation plots so
+    the overlaid highlight points are a visual subset of the full-data points.
+
+    Args:
+        prediction_df: Analysis-ready dataframe containing ``x_col``, ``y_col``
+            and ``group_overlap_start``.
+        x_col: Column for the x-axis (e.g. ``prediction_mutated``).
+        y_col: Column for the y-axis (e.g. ``enrichment``).
+        window_center: Center position of the highlight window, i.e. the
+            fixed-window ``x_pos`` value (e.g. 928).
+        window_size: Width of the highlight window in base pairs.
+        include_differences: Whether to keep ``differences`` as a dedup key.
+
+    Returns:
+        Tuple ``(all_points, highlight_points, all_fit, highlight_fit)`` where
+        each ``*_points`` is a deduplicated dataframe carrying at least ``x_col``
+        and ``y_col``, and each ``*_fit`` is ``(slope, intercept, correlation,
+        p_value)`` from :func:`_fit_linear_model`.
+    """
+    valid_df = prediction_df.loc[prediction_df[x_col].notna() & prediction_df[y_col].notna(), :]
+
+    window_start = window_center - window_size // 2
+    window_end = window_start + window_size
+    in_window = (valid_df["group_overlap_start"] >= window_start) & (
+        valid_df["group_overlap_start"] < window_end
+    )
+
+    all_points = _deduplicate_bucket_rows(valid_df, x_col, y_col, include_differences, delta=False)
+    highlight_points = _deduplicate_bucket_rows(
+        valid_df.loc[in_window], x_col, y_col, include_differences, delta=False
+    )
+
+    all_fit = _fit_linear_model(all_points[x_col], all_points[y_col])
+    highlight_fit = _fit_linear_model(highlight_points[x_col], highlight_points[y_col])
+    return all_points, highlight_points, all_fit, highlight_fit
+
+
+def _plot_overlay_correlation(
+    prediction_df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    window_center: int,
+    save_name: str,
+    title: str,
+    x_label: str,
+    y_label: str,
+    analysis_name: str,
+    include_differences: bool = True,
+    window_size: int = BUCKET_SIZE,
+    subset_label: str = "",
+) -> Tuple[pd.DataFrame, pd.DataFrame, Tuple[float, float, float, float], Tuple[float, float, float, float]]:
+    """Scatter the full dataset in one color with a single highlight window on top.
+
+    Draws every point in :data:`OVERLAY_ALL_COLOR` with its linear fit, then
+    overlays the points whose ``group_overlap_start`` falls in the highlight
+    window in :data:`OVERLAY_HIGHLIGHT_COLOR` with their own linear fit.
+
+    Args:
+        prediction_df: Analysis-ready dataframe.
+        x_col: Column for the x-axis.
+        y_col: Column for the y-axis.
+        window_center: Center position of the highlight window (fixed-window
+            ``x_pos``).
+        save_name: Output filename (``.png``); suffixed with ``subset_label``.
+        title: Plot title.
+        x_label: X-axis label.
+        y_label: Y-axis label.
+        analysis_name: Output subfolder name under the correlation output root.
+        include_differences: Whether to keep ``differences`` as a dedup key.
+        window_size: Width of the highlight window in base pairs.
+        subset_label: Optional subset suffix applied to folder, title and file.
+
+    Returns:
+        The tuple from :func:`compute_overlay_correlation_data`.
+    """
+    effective_analysis = f"{analysis_name}_{subset_label}" if subset_label else analysis_name
+    effective_title = f"{title} ({subset_label})" if subset_label else title
+    effective_save = save_name.replace(".png", f"_{subset_label}.png") if subset_label else save_name
+
+    all_points, highlight_points, all_fit, highlight_fit = compute_overlay_correlation_data(
+        prediction_df, x_col, y_col, window_center, window_size, include_differences
+    )
+
+    window_start = window_center - window_size // 2
+    window_end = window_start + window_size
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.scatter(
+        all_points[x_col],
+        all_points[y_col],
+        color=OVERLAY_ALL_COLOR,
+        alpha=0.5,
+        s=35,
+        edgecolors="none",
+        zorder=1,
+        label=f"all (n={len(all_points)})",
+    )
+    all_slope, all_intercept, _, _ = all_fit
+    if not all_points.empty and np.isfinite(all_slope) and np.isfinite(all_intercept):
+        line_x = np.linspace(all_points[x_col].min(), all_points[x_col].max(), 100)
+        ax.plot(
+            line_x,
+            all_slope * line_x + all_intercept,
+            color=_darken_hex_color(OVERLAY_ALL_COLOR),
+            linewidth=2.5,
+            zorder=2,
+        )
+
+    ax.scatter(
+        highlight_points[x_col],
+        highlight_points[y_col],
+        color=OVERLAY_HIGHLIGHT_COLOR,
+        alpha=0.85,
+        s=55,
+        edgecolors="white",
+        linewidths=0.3,
+        zorder=3,
+        label=f"{window_start}-{window_end - 1} (n={len(highlight_points)})",
+    )
+    highlight_slope, highlight_intercept, _, _ = highlight_fit
+    if not highlight_points.empty and np.isfinite(highlight_slope) and np.isfinite(highlight_intercept):
+        line_x = np.linspace(highlight_points[x_col].min(), highlight_points[x_col].max(), 100)
+        ax.plot(
+            line_x,
+            highlight_slope * line_x + highlight_intercept,
+            color=_darken_hex_color(OVERLAY_HIGHLIGHT_COLOR),
+            linewidth=2.8,
+            zorder=4,
+        )
+
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    ax.set_title(effective_title)
+    ax.legend(title="Overlap window", fontsize=14, loc="best")
+    fig.savefig(
+        os.path.join(_get_analysis_output_dir(effective_analysis), effective_save),
+        bbox_inches="tight",
+        dpi=OUTPUT_DPI,
+    )
+    plt.close(fig)
+    return all_points, highlight_points, all_fit, highlight_fit
+
+
+def plot_overlay_highlight_correlation(
+    prediction_df: pd.DataFrame,
+    window_center: int = HIGHLIGHT_WINDOW_CENTER,
+    subset_label: str = "",
+) -> Tuple[pd.DataFrame, pd.DataFrame, Tuple[float, float, float, float], Tuple[float, float, float, float]]:
+    """Plot deepCRE vs STARR-seq enrichment with the highest-correlation window overlaid.
+
+    The full dataset is drawn in one color with its linear fit; the points in the
+    highlight window (the highest-correlation window from the fixed-window
+    positional analysis) are drawn on top in a second color with their own fit.
+
+    Args:
+        prediction_df: Analysis-ready dataframe.
+        window_center: Center position of the highlight window (fixed-window
+            ``x_pos``); defaults to :data:`HIGHLIGHT_WINDOW_CENTER`.
+        subset_label: Optional subset suffix applied to folder, title and file.
+
+    Returns:
+        The tuple from :func:`compute_overlay_correlation_data`.
+    """
+    return _plot_overlay_correlation(
+        prediction_df,
+        "prediction_mutated",
+        "enrichment",
+        window_center,
+        "deepcre_starrseq_correlation_highlight_window.png",
+        "deepCRE vs STARR-seq with highest-correlation window highlighted",
+        "deepCRE Prediction",
+        "STARR-seq Enrichment",
+        "deepcre_starrseq",
+        include_differences=True,
+        subset_label=subset_label,
+    )
+
+
 def load_starrseq_data(starrseq_file):
     starrseq_data = []
     starr_fasta = Fasta(starrseq_file)
@@ -826,8 +1030,7 @@ def _compute_and_save_correlation_by_position(
             bucket_df = sorted_df[
                 (sorted_df["group_overlap_start"] >= start) & (sorted_df["group_overlap_start"] < end)
             ]
-            print(len(bucket_df))
-            if len(bucket_df) > 50:
+            if len(bucket_df) > MIN_POINTS_PER_FIXED_WINDOW:
                 slope, _, correlation, p_value = _fit_linear_model(
                     bucket_df["prediction_mutated"], bucket_df["enrichment"]
                 )
@@ -956,9 +1159,11 @@ def run_correlation_analysis(enrichment_df: pd.DataFrame) -> None:
     """Generate every correlation plot and bucket-statistics CSV for one dataset.
 
     This is the transcription-factor-agnostic analysis stage shared by all
-    entry-point scripts: it produces the position-series plots and, for each
-    subset (overall, reference/synthetic, binding/non-binding, and light/dark
-    when a ``condition`` column with both values is present), the three scatter
+    entry-point scripts: it produces the position-series plots, a single
+    overlay plot (full dataset plus the highest-correlation fixed-window
+    highlighted on top, on the full dataset only) and, for each subset
+    (overall, reference/synthetic, binding/non-binding, and light/dark when a
+    ``condition`` column with both values is present), the three scatter
     correlation plots, the individual bucket views, and the per-bucket fit
     statistics CSV.
 
@@ -985,6 +1190,7 @@ def run_correlation_analysis(enrichment_df: pd.DataFrame) -> None:
         position_series = [(enrichment_df, "all", POSITION_SERIES_COLORS["all"])]
     plot_correlation_over_positions_fixed_window(position_series)
     plot_correlation_over_positions_fixed_number_elements(position_series)
+    plot_overlay_highlight_correlation(enrichment_df)
     subsets = [
         ("", enrichment_df),
         ("reference", enrichment_df[enrichment_df["starr_reference"] == True]),
