@@ -30,6 +30,7 @@ src/workflows/mutation_distance_analysis/results/
 src/workflows/overlap_analysis/correct_construct/*.fa
 src/workflows/overlap_analysis/correct_construct/*.fai
 src/workflows/overlap_analysis/correct_construct/plots/*
+src/workflows/overlap_analysis/binding_vs_nonbinding/plots/*
 !src/workflows/overlap_analysis/correct_construct/pPSntF_enhLib_35Spr.fa
 !src/workflows/overlap_analysis/correct_construct/barcode1.fa
 !src/workflows/overlap_analysis/correct_construct/barcode2.fa
