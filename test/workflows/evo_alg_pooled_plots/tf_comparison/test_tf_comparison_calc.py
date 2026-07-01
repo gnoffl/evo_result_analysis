@@ -1,4 +1,4 @@
-"""Unit tests for the cross-run TF comparison script."""
+"""Unit tests for the TF-comparison calculation toolbox."""
 
 import json
 import math
@@ -9,22 +9,22 @@ from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
-from matplotlib.figure import Figure
 
-from workflows.evo_alg_pooled_plots.tf_comparison.compare_TFs import (
+from workflows.evo_alg_pooled_plots.tf_comparison.tf_comparison_calc import (
     build_matrix,
     count_genes,
     load_per_gene_diffs,
-    order_tfs,
+    order_tfs_by_group_contrast,
+    order_tfs_by_mean,
     paired_tf_significance,
-    plot_heatmap,
-    q_to_stars,
     single_run_tf_significance,
+    top_bottom_tfs,
 )
 
 
 def _write_run(run_dir: str, n_genes: int, summary_df: pd.DataFrame) -> None:
     """Create a run dir with a stats_*.json and a deepcis_scan peak summary."""
+    os.makedirs(run_dir, exist_ok=True)
     stats = {f"gene_{i}": {"final_fitness": 0.5} for i in range(n_genes)}
     with open(os.path.join(run_dir, "stats_run.json"), "w", encoding="utf-8") as handle:
         json.dump(stats, handle)
@@ -67,64 +67,79 @@ class CountGenesTest(unittest.TestCase):
 class BuildMatrixTest(unittest.TestCase):
     """Tests for matrix assembly across runs."""
 
-    def test_union_rows_normalized_and_max_before_min(self) -> None:
+    def test_union_rows_normalized_and_columns_in_given_order(self) -> None:
         # Arrange: two runs with partially overlapping TF sets.
         with tempfile.TemporaryDirectory() as tmp:
-            max_dir = os.path.join(tmp, "max_run")
-            min_dir = os.path.join(tmp, "min_run")
-            os.makedirs(max_dir)
-            os.makedirs(min_dir)
-            _write_run(max_dir, 10, pd.DataFrame({"tf": ["WRKY", "bHLH"], "diff_calc": [10, -20]}))
-            _write_run(min_dir, 10, pd.DataFrame({"tf": ["WRKY", "MYB"], "diff_calc": [-30, 5]}))
-            # Pass min before max to confirm reordering.
-            runs = [(min_dir, "min", "MIN"), (max_dir, "max", "MAX")]
+            first_dir = os.path.join(tmp, "first_run")
+            second_dir = os.path.join(tmp, "second_run")
+            _write_run(first_dir, 10, pd.DataFrame({"tf": ["WRKY", "MYB"], "diff_calc": [-30, 5]}))
+            _write_run(second_dir, 10, pd.DataFrame({"tf": ["WRKY", "bHLH"], "diff_calc": [10, -20]}))
+            # Columns must follow the given order, not be reshuffled.
+            runs = [(first_dir, "FIRST"), (second_dir, "SECOND")]
 
             # Act
             matrix = build_matrix(runs)
 
-        # Assert: union rows, max column first, NaN for absent TFs, normalized values.
-        self.assertEqual(list(matrix.columns), ["MAX", "MIN"])
+        # Assert: column order preserved, union rows, NaN for absent TFs, normalized values.
+        self.assertEqual(list(matrix.columns), ["FIRST", "SECOND"])
         self.assertEqual(set(matrix.index), {"WRKY", "bHLH", "MYB"})
-        self.assertAlmostEqual(matrix.loc["WRKY", "MAX"], 1.0)
-        self.assertTrue(np.isnan(matrix.loc["bHLH", "MIN"]))
-        self.assertTrue(np.isnan(matrix.loc["MYB", "MAX"]))
+        self.assertAlmostEqual(matrix.loc["WRKY", "SECOND"], 1.0)
+        self.assertTrue(np.isnan(matrix.loc["bHLH", "FIRST"]))
+        self.assertTrue(np.isnan(matrix.loc["MYB", "SECOND"]))
 
 
-class OrderTfsTest(unittest.TestCase):
-    """Tests for the max-minus-min ordering score."""
+class OrderTfsByGroupContrastTest(unittest.TestCase):
+    """Tests for the left-minus-right group contrast ordering."""
 
-    def test_high_in_max_low_in_min_ranks_first(self) -> None:
-        # Arrange: introduced is high in max / low in min; removed is its mirror.
+    def test_high_in_left_low_in_right_ranks_first(self) -> None:
+        # Arrange: introduced is high in left / low in right; removed is its mirror.
         matrix = pd.DataFrame(
             {
-                "MAX": {"introduced": 5.0, "removed": -5.0},
-                "MIN": {"introduced": -5.0, "removed": 5.0},
+                "MIN": {"introduced": 5.0, "removed": -5.0},
+                "MAX": {"introduced": -5.0, "removed": 5.0},
             }
         )
-        directions = {"MAX": "max", "MIN": "min"}
 
         # Act
-        ordered = order_tfs(matrix, directions)
+        ordered = order_tfs_by_group_contrast(matrix, ["MAX"], ["MIN"])
 
         # Assert
-        self.assertEqual(list(ordered.index), ["introduced", "removed"])
+        self.assertEqual(list(ordered.index), ["removed", "introduced"])
 
-    def test_missing_direction_counts_as_zero(self) -> None:
-        # Arrange: only_min appears only in min with -2 -> score 0-(-2)=+2,
+    def test_missing_group_value_counts_as_zero(self) -> None:
+        # Arrange: only_min appears only in the right group with -2 -> score 0-(-2)=+2,
         # above only_max whose score is +1.
         matrix = pd.DataFrame(
             {
-                "MAX": {"only_max": 1.0, "only_min": np.nan},
-                "MIN": {"only_max": np.nan, "only_min": -2.0},
+                "MIN": {"only_max": 1.0, "only_min": np.nan},
+                "MAX": {"only_max": np.nan, "only_min": -2.0},
             }
         )
-        directions = {"MAX": "max", "MIN": "min"}
 
         # Act
-        ordered = order_tfs(matrix, directions)
+        ordered = order_tfs_by_group_contrast(matrix, ["MAX"], ["MIN"])
 
         # Assert
-        self.assertEqual(list(ordered.index), ["only_min", "only_max"])
+        self.assertEqual(list(ordered.index), ["only_max", "only_min"])
+
+
+class OrderTfsByMeanTest(unittest.TestCase):
+    """Tests for the flat overall-mean ordering."""
+
+    def test_rows_sorted_by_descending_row_mean(self) -> None:
+        # Arrange: high mean on top, low mean on bottom; NaN ignored in the mean.
+        matrix = pd.DataFrame(
+            {
+                "A": {"low": -3.0, "mid": 1.0, "top": 4.0},
+                "B": {"low": -6.0, "mid": np.nan, "top": 4.0},
+            }
+        )
+
+        # Act
+        ordered = order_tfs_by_mean(matrix)
+
+        # Assert: means are 5.0, 1.0, -4.0.
+        self.assertEqual(list(ordered.index), ["top", "mid", "low"])
 
 
 class LoadPerGeneDiffsTest(unittest.TestCase):
@@ -163,30 +178,30 @@ class PairedTfSignificanceTest(unittest.TestCase):
     """Tests for the paired Wilcoxon + BH significance table."""
 
     def _make_runs(self, tmp: str) -> Tuple[str, str]:
-        """Build a max and a min run sharing 8 genes with a SIG and a FLAT TF."""
-        max_dir = os.path.join(tmp, "max_run")
-        min_dir = os.path.join(tmp, "min_run")
-        max_peaks: List[Tuple[str, str, str, int]] = []
-        min_peaks: List[Tuple[str, str, str, int]] = []
+        """Build an A and a B run sharing 8 genes with a SIG and a FLAT TF."""
+        run_a_dir = os.path.join(tmp, "run_a")
+        run_b_dir = os.path.join(tmp, "run_b")
+        a_peaks: List[Tuple[str, str, str, int]] = []
+        b_peaks: List[Tuple[str, str, str, int]] = []
         for i in range(8):
             gene = f"{i}_GENE{i}_loc_{i}"
-            # SIG: introduced when maximizing (diff +2), removed when minimizing (diff -1).
-            max_peaks += [(gene, "SIG", "reference", 1), (gene, "SIG", "max_mutated", 3)]
-            min_peaks += [(gene, "SIG", "reference", 1)]  # no max_mutated peaks -> count 0
+            # SIG: introduced in run A (diff +2), removed in run B (diff -1).
+            a_peaks += [(gene, "SIG", "reference", 1), (gene, "SIG", "max_mutated", 3)]
+            b_peaks += [(gene, "SIG", "reference", 1)]  # no max_mutated peaks -> count 0
             # FLAT: identical in both runs (diff 0 everywhere).
-            max_peaks += [(gene, "FLAT", "reference", 2), (gene, "FLAT", "max_mutated", 2)]
-            min_peaks += [(gene, "FLAT", "reference", 2), (gene, "FLAT", "max_mutated", 2)]
-        _write_annotated_peaks(max_dir, max_peaks)
-        _write_annotated_peaks(min_dir, min_peaks)
-        return max_dir, min_dir
+            a_peaks += [(gene, "FLAT", "reference", 2), (gene, "FLAT", "max_mutated", 2)]
+            b_peaks += [(gene, "FLAT", "reference", 2), (gene, "FLAT", "max_mutated", 2)]
+        _write_annotated_peaks(run_a_dir, a_peaks)
+        _write_annotated_peaks(run_b_dir, b_peaks)
+        return run_a_dir, run_b_dir
 
     def test_significant_and_flat_tfs(self) -> None:
         # Arrange
         with tempfile.TemporaryDirectory() as tmp:
-            max_dir, min_dir = self._make_runs(tmp)
+            run_a_dir, run_b_dir = self._make_runs(tmp)
 
             # Act
-            result = paired_tf_significance(max_dir, min_dir)
+            result = paired_tf_significance(run_a_dir, run_b_dir)
 
         # Assert: SIG moves consistently (D = 2 - (-1) = 3) -> significant.
         sig = result.set_index("tf").loc["SIG"]
@@ -206,17 +221,21 @@ class PairedTfSignificanceTest(unittest.TestCase):
         # Sorted by q_contrast ascending -> the significant TF comes first.
         self.assertEqual(result.iloc[0]["tf"], "SIG")
 
+    def test_neutral_per_run_columns_present(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            run_a_dir, run_b_dir = self._make_runs(tmp)
 
-class QToStarsTest(unittest.TestCase):
-    """Tests for the q-value to star mapping."""
+            # Act
+            result = paired_tf_significance(run_a_dir, run_b_dir)
 
-    def test_thresholds_and_nan(self) -> None:
-        # Arrange / Act / Assert
-        self.assertEqual(q_to_stars(0.0005), "***")
-        self.assertEqual(q_to_stars(0.005), "**")
-        self.assertEqual(q_to_stars(0.02), "*")
-        self.assertEqual(q_to_stars(0.2), "")
-        self.assertEqual(q_to_stars(float("nan")), "")
+        # Assert: per-run columns use neutral a/b names, contrast columns keep names.
+        for col in (
+            "n_genes", "median_D", "n_nonzero_D", "p_contrast", "q_contrast",
+            "median_diff_a", "n_nonzero_a", "p_a", "q_a",
+            "median_diff_b", "n_nonzero_b", "p_b", "q_b",
+        ):
+            self.assertIn(col, result.columns)
 
 
 class SingleRunTfSignificanceTest(unittest.TestCase):
@@ -259,55 +278,8 @@ class SingleRunTfSignificanceTest(unittest.TestCase):
             self.assertIn(col, result.columns)
 
 
-class PlotHeatmapTest(unittest.TestCase):
-    """Smoke test for figure creation."""
-
-    def test_returns_figure(self) -> None:
-        # Arrange
-        matrix = pd.DataFrame(
-            {"MAX": {"WRKY": 1.0, "bHLH": -2.0}, "MIN": {"WRKY": -1.0, "bHLH": 2.0}}
-        )
-
-        # Act
-        fig = plot_heatmap(matrix, n_max_runs=1, annotate=True)
-
-        # Assert
-        self.assertIsInstance(fig, Figure)
-
-    def test_row_stars_annotate_tf_labels(self) -> None:
-        # Arrange
-        matrix = pd.DataFrame(
-            {"MAX": {"WRKY": 1.0, "bHLH": -2.0}, "MIN": {"WRKY": -1.0, "bHLH": 2.0}}
-        )
-
-        # Act
-        fig = plot_heatmap(matrix, n_max_runs=1, annotate=True, row_stars={"WRKY": "** "})
-
-        # Assert: the WRKY row label carries its stars, bHLH stays plain.
-        labels = [tick.get_text() for tick in fig.axes[0].get_yticklabels()]
-        self.assertIn("WRKY ** ", labels)
-        self.assertIn("bHLH    ", labels)
-
-    def test_cell_stars_embedded_in_annotation_text(self) -> None:
-        # Arrange: WRKY in MAX is significant; bHLH in MIN is significant.
-        matrix = pd.DataFrame(
-            {"MAX": {"WRKY": 1.0, "bHLH": -2.0}, "MIN": {"WRKY": -1.0, "bHLH": 2.0}}
-        )
-        cell_stars = {"MAX": {"WRKY": "*  "}, "MIN": {"bHLH": "** "}}
-
-        # Act
-        fig = plot_heatmap(matrix, n_max_runs=1, annotate=True, cell_stars=cell_stars)
-
-        # Assert: cell texts contain both the numeric value and the star string.
-        texts = [t.get_text() for t in fig.axes[0].texts]
-        self.assertTrue(any("1.00*  " in t for t in texts), f"Expected '1.00*  ' in {texts}")
-        self.assertTrue(any("2.00** " in t for t in texts), f"Expected '2.00** ' in {texts}")
-        # Cells with no stars have just the number.
-        self.assertTrue(any("-2.00" in t and "**" not in t for t in texts))
-
-
-class TopBottomNTfsSlicingTest(unittest.TestCase):
-    """Tests for the TOP_BOTTOM_N_TFS slicing logic applied to an ordered matrix."""
+class TopBottomTfsTest(unittest.TestCase):
+    """Tests for top_bottom_tfs row slicing of an ordered matrix."""
 
     def _make_ordered_matrix(self) -> pd.DataFrame:
         """Return a 6-TF ordered matrix (rows already sorted best → worst)."""
@@ -316,17 +288,12 @@ class TopBottomNTfsSlicingTest(unittest.TestCase):
             index=["tf1", "tf2", "tf3", "tf4", "tf5", "tf6"],
         )
 
-    def _apply_slice(self, matrix: pd.DataFrame, n: int) -> pd.DataFrame:
-        """Apply the same slicing logic used in main()."""
-        keep = list(dict.fromkeys(list(matrix.index[:n]) + list(matrix.index[-n:])))
-        return matrix.loc[keep]
-
     def test_top_and_bottom_n_rows_are_kept(self) -> None:
         # Arrange
         matrix = self._make_ordered_matrix()
 
         # Act
-        sliced = self._apply_slice(matrix, 2)
+        sliced = top_bottom_tfs(matrix, 2)
 
         # Assert: first 2 and last 2 rows are kept, middle rows are dropped.
         self.assertEqual(list(sliced.index), ["tf1", "tf2", "tf5", "tf6"])
@@ -336,7 +303,7 @@ class TopBottomNTfsSlicingTest(unittest.TestCase):
         matrix = self._make_ordered_matrix()
 
         # Act
-        sliced = self._apply_slice(matrix, 2)
+        sliced = top_bottom_tfs(matrix, 2)
 
         # Assert
         self.assertAlmostEqual(sliced.loc["tf1", "MAX"], 5.0)
@@ -347,7 +314,7 @@ class TopBottomNTfsSlicingTest(unittest.TestCase):
         matrix = self._make_ordered_matrix()
 
         # Act
-        sliced = self._apply_slice(matrix, 4)
+        sliced = top_bottom_tfs(matrix, 4)
 
         # Assert: all 6 TFs present with no duplicates.
         self.assertEqual(len(sliced), 6)
@@ -358,7 +325,7 @@ class TopBottomNTfsSlicingTest(unittest.TestCase):
         matrix = self._make_ordered_matrix()
 
         # Act
-        sliced = self._apply_slice(matrix, len(matrix))
+        sliced = top_bottom_tfs(matrix, len(matrix))
 
         # Assert
         self.assertEqual(len(sliced), len(matrix))
@@ -368,7 +335,7 @@ class TopBottomNTfsSlicingTest(unittest.TestCase):
         matrix = self._make_ordered_matrix()
 
         # Act
-        sliced = self._apply_slice(matrix, 2)
+        sliced = top_bottom_tfs(matrix, 2)
 
         # Assert: top rows appear before bottom rows, each group retains its order.
         self.assertEqual(list(sliced.index), ["tf1", "tf2", "tf5", "tf6"])
