@@ -16,9 +16,11 @@ from workflows.evo_alg_pooled_plots.tf_comparison.tf_comparison_calc import (
     count_genes,
     interaction_model_tf_significance,
     load_per_gene_diffs,
+    load_per_gene_tf_counts,
     order_tfs_by_group_contrast,
     order_tfs_by_mean,
     paired_tf_significance,
+    per_gene_tf_binding_summary,
     pooled_model_tf_significance,
     single_run_tf_significance,
     top_bottom_tfs,
@@ -203,6 +205,149 @@ class LoadPerGeneDiffsTest(unittest.TestCase):
             set(distinct.index.get_level_values("core_gene")),
             {"random_sequence_000", "random_sequence_001"},
         )
+
+
+class LoadPerGeneTfCountsTest(unittest.TestCase):
+    """Tests for the shared reference/max_mutated peak-count loader."""
+
+    def test_reference_mutated_and_diff_columns(self) -> None:
+        # Arrange: WRKY has 2 reference and 3 max_mutated peaks (diff +1); MYB has
+        # 4 reference peaks and no max_mutated (diff -4); a "difference" row is noise.
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_annotated_peaks(
+                tmp,
+                [
+                    ("1_ATX_a_111", "WRKY", "reference", 2),
+                    ("1_ATX_a_111", "WRKY", "max_mutated", 3),
+                    ("1_ATX_a_111", "WRKY", "difference", 5),
+                    ("1_ATX_a_111", "MYB", "reference", 4),
+                ],
+            )
+
+            # Act
+            counts = load_per_gene_tf_counts(tmp)
+
+        # Assert
+        self.assertEqual(list(counts.columns), ["reference", "max_mutated", "diff"])
+        self.assertEqual(counts.loc[("1_ATX", "WRKY"), "reference"], 2)
+        self.assertEqual(counts.loc[("1_ATX", "WRKY"), "max_mutated"], 3)
+        self.assertEqual(counts.loc[("1_ATX", "WRKY"), "diff"], 1)
+        # MYB has no max_mutated peaks -> count 0, diff -4.
+        self.assertEqual(counts.loc[("1_ATX", "MYB"), "max_mutated"], 0)
+        self.assertEqual(counts.loc[("1_ATX", "MYB"), "diff"], -4)
+
+    def test_diff_matches_load_per_gene_diffs(self) -> None:
+        # Arrange: the refactored load_per_gene_diffs must return exactly this loader's
+        # diff column, so their values agree cell for cell.
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_annotated_peaks(
+                tmp,
+                [
+                    ("1_ATX_a_111", "WRKY", "reference", 2),
+                    ("1_ATX_a_111", "WRKY", "max_mutated", 3),
+                    ("2_ATY_b_222", "MYB", "reference", 4),
+                ],
+            )
+
+            # Act
+            counts = load_per_gene_tf_counts(tmp)
+            diffs = load_per_gene_diffs(tmp)
+
+        # Assert
+        pd.testing.assert_series_equal(
+            counts["diff"], diffs["diff"], check_names=False
+        )
+
+
+class PerGeneTfBindingSummaryTest(unittest.TestCase):
+    """Tests for per-TF mean/std of reference, max_mutated, and diff over genes."""
+
+    def test_means_divide_by_all_genes_with_zero_fill(self) -> None:
+        # Arrange: 2 genes. WRKY appears in both (max_mutated 2 and 4 -> mean 3);
+        # RARE appears only in gene 1 (max_mutated 5), so gene 2 contributes 0 and
+        # the mean over both genes is 2.5.
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_annotated_peaks(
+                tmp,
+                [
+                    ("1_G1_a_0", "WRKY", "reference", 1),
+                    ("1_G1_a_0", "WRKY", "max_mutated", 2),
+                    ("2_G2_b_0", "WRKY", "reference", 1),
+                    ("2_G2_b_0", "WRKY", "max_mutated", 4),
+                    ("1_G1_a_0", "RARE", "reference", 0),
+                    ("1_G1_a_0", "RARE", "max_mutated", 5),
+                ],
+            )
+
+            # Act
+            summary = per_gene_tf_binding_summary(tmp).set_index("tf")
+
+        # Assert
+        self.assertTrue((summary["n_genes"] == 2).all())
+        self.assertAlmostEqual(summary.loc["WRKY", "mean_max_mutated"], 3.0)
+        # RARE: (5 + 0) / 2 genes = 2.5 thanks to zero-fill over the absent gene.
+        self.assertAlmostEqual(summary.loc["RARE", "mean_max_mutated"], 2.5)
+        self.assertAlmostEqual(summary.loc["RARE", "mean_reference"], 0.0)
+        self.assertAlmostEqual(summary.loc["RARE", "mean_diff"], 2.5)
+
+    def test_std_is_sample_std_and_zero_for_constant_tf(self) -> None:
+        # Arrange: CONST has max_mutated 3 in both genes (std 0); VARIED has 2 and 4
+        # (sample std of [2, 4] is sqrt(2) ~= 1.4142).
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_annotated_peaks(
+                tmp,
+                [
+                    ("1_G1_a_0", "CONST", "max_mutated", 3),
+                    ("2_G2_b_0", "CONST", "max_mutated", 3),
+                    ("1_G1_a_0", "VARIED", "max_mutated", 2),
+                    ("2_G2_b_0", "VARIED", "max_mutated", 4),
+                ],
+            )
+
+            # Act
+            summary = per_gene_tf_binding_summary(tmp).set_index("tf")
+
+        # Assert
+        self.assertAlmostEqual(summary.loc["CONST", "std_max_mutated"], 0.0)
+        self.assertAlmostEqual(summary.loc["VARIED", "std_max_mutated"], math.sqrt(2.0))
+
+    def test_columns_and_sorted_by_mean_max_mutated_descending(self) -> None:
+        # Arrange: HIGH binds more than LOW in the optimized sequence.
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_annotated_peaks(
+                tmp,
+                [
+                    ("1_G1_a_0", "HIGH", "max_mutated", 5),
+                    ("1_G1_a_0", "LOW", "max_mutated", 1),
+                ],
+            )
+
+            # Act
+            summary = per_gene_tf_binding_summary(tmp)
+
+        # Assert
+        self.assertEqual(
+            list(summary.columns),
+            [
+                "tf", "n_genes", "mean_reference", "std_reference",
+                "mean_max_mutated", "std_max_mutated", "mean_diff", "std_diff",
+            ],
+        )
+        self.assertEqual(list(summary["tf"]), ["HIGH", "LOW"])
+
+    def test_single_gene_gives_nan_std(self) -> None:
+        # Arrange: one gene -> sample std (ddof=1) is undefined.
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_annotated_peaks(
+                tmp, [("1_G1_a_0", "WRKY", "max_mutated", 3)]
+            )
+
+            # Act
+            summary = per_gene_tf_binding_summary(tmp).set_index("tf")
+
+        # Assert
+        self.assertEqual(summary.loc["WRKY", "n_genes"], 1)
+        self.assertTrue(math.isnan(summary.loc["WRKY", "std_max_mutated"]))
 
 
 class PairedTfSignificanceTest(unittest.TestCase):

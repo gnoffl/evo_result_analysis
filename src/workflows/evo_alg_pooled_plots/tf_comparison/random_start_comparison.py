@@ -27,6 +27,7 @@ from workflows.evo_alg_pooled_plots.tf_comparison.tf_comparison_calc import (
     TF_COLUMN,
     build_matrix,
     order_tfs_by_mean,
+    per_gene_tf_binding_summary,
     single_run_tf_significance,
     top_bottom_tfs,
 )
@@ -51,6 +52,7 @@ CORE_ID_FIELDS: int = 3
 OUTPUT_DIR = Path(__file__).parent / "random_start_comparison"
 OUTPUT_BASENAME = "random_start_comparison"
 SIGNIFICANCE_BASENAME = "random_start_comparison_significance"
+BINDING_SUMMARY_BASENAME = "random_start_comparison_binding_summary"
 FIGURE_FORMAT = "png"
 TOP_BOTTOM_N_TFS: Optional[int] = None
 
@@ -68,7 +70,7 @@ def main(
     top_bottom_n: Optional[int] = TOP_BOTTOM_N_TFS,
     core_id_fields: int = CORE_ID_FIELDS,
 ) -> None:
-    """Compute the intra-run significance, write the CSV, and save the heatmaps.
+    """Write the per-TF binding summary and significance CSVs, and save the heatmaps.
 
     Args:
         run_dir: Random-start maximization run directory.
@@ -81,6 +83,13 @@ def main(
     """
     output_dir = Path(output_dir)
     os.makedirs(output_dir, exist_ok=True)
+
+    # Descriptive per-TF binding: mean +/- std over genes for the reference,
+    # optimized, and diff peak counts.
+    binding_summary = per_gene_tf_binding_summary(run_dir, core_id_fields)
+    binding_summary_path = output_dir / f"{BINDING_SUMMARY_BASENAME}.csv"
+    binding_summary.to_csv(binding_summary_path, index=False)
+    print(f"Saved {binding_summary_path}")
 
     # Intra-run significance for the single run.
     significance = single_run_tf_significance(run_dir, core_id_fields)

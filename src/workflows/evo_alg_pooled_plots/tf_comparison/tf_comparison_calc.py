@@ -149,6 +149,48 @@ def top_bottom_tfs(matrix: pd.DataFrame, n: int) -> pd.DataFrame:
     return matrix.loc[keep]
 
 
+def load_per_gene_tf_counts(run_dir: str, n_core_fields: int = 2) -> pd.DataFrame:
+    """Load per-replicate, per-TF reference and max_mutated peak counts for one run.
+
+    Reads the run's ``*_annotated_peaks_*.csv`` (one peak per row) and counts peaks
+    per replicate/TF for the reference and optimized (``max_mutated``) sequences.
+    Each replicate is reduced to its core id — the first ``n_core_fields``
+    underscore-separated fields of the sequence id — so the per-run trailing
+    timestamp is dropped and replicates match across runs (see
+    :func:`load_per_gene_diffs` for the field-count convention and examples).
+
+    Args:
+        run_dir: Run directory containing the ``deepcis_scan`` subfolder.
+        n_core_fields: Number of leading underscore-separated fields that uniquely
+            identify a replicate.
+
+    Returns:
+        DataFrame indexed by (core_gene, tf) with columns ``reference``,
+        ``max_mutated`` and ``diff`` (``max_mutated`` minus ``reference``). Only
+        (gene, TF) combinations with at least one reference or max_mutated peak
+        appear; filling absent combinations with 0 is the caller's responsibility.
+
+    Raises:
+        FileNotFoundError: If there is not exactly one annotated-peaks CSV.
+    """
+    matches = glob.glob(os.path.join(run_dir, "deepcis_scan", ANNOTATED_PEAKS_GLOB))
+    if len(matches) != 1:
+        raise FileNotFoundError(
+            f"Expected one {ANNOTATED_PEAKS_GLOB} in {run_dir}/deepcis_scan, found {matches}"
+        )
+    peaks = pd.read_csv(matches[0])
+    peaks = peaks[peaks[SIGNAL_TYPE_COLUMN].isin([REF_COLUMN, MUTATED_COLUMN])].copy()
+    peaks["core_gene"] = peaks[GENE_COLUMN].str.split("_").str[:n_core_fields].str.join("_")
+    counts = (
+        peaks.groupby(["core_gene", TF_COLUMN, SIGNAL_TYPE_COLUMN])
+        .size()
+        .unstack(SIGNAL_TYPE_COLUMN, fill_value=0)
+        .reindex(columns=[REF_COLUMN, MUTATED_COLUMN], fill_value=0)
+    )
+    counts["diff"] = counts[MUTATED_COLUMN] - counts[REF_COLUMN]
+    return counts
+
+
 def load_per_gene_diffs(run_dir: str, n_core_fields: int = 2) -> pd.DataFrame:
     """Load per-replicate, per-TF binding diffs for one run.
 
@@ -177,22 +219,8 @@ def load_per_gene_diffs(run_dir: str, n_core_fields: int = 2) -> pd.DataFrame:
     Raises:
         FileNotFoundError: If there is not exactly one annotated-peaks CSV.
     """
-    matches = glob.glob(os.path.join(run_dir, "deepcis_scan", ANNOTATED_PEAKS_GLOB))
-    if len(matches) != 1:
-        raise FileNotFoundError(
-            f"Expected one {ANNOTATED_PEAKS_GLOB} in {run_dir}/deepcis_scan, found {matches}"
-        )
-    peaks = pd.read_csv(matches[0])
-    peaks = peaks[peaks[SIGNAL_TYPE_COLUMN].isin([REF_COLUMN, MUTATED_COLUMN])].copy()
-    peaks["core_gene"] = peaks[GENE_COLUMN].str.split("_").str[:n_core_fields].str.join("_")
-    counts = (
-        peaks.groupby(["core_gene", TF_COLUMN, SIGNAL_TYPE_COLUMN])
-        .size()
-        .unstack(SIGNAL_TYPE_COLUMN, fill_value=0)
-        .reindex(columns=[REF_COLUMN, MUTATED_COLUMN], fill_value=0)
-    )
-    diff = counts[MUTATED_COLUMN] - counts[REF_COLUMN]
-    return diff.to_frame("diff")
+    counts = load_per_gene_tf_counts(run_dir, n_core_fields)
+    return counts[["diff"]].copy()
 
 
 def _wilcoxon_pvalue(values: np.ndarray) -> float:
@@ -369,6 +397,58 @@ def single_run_tf_significance(run_dir: str, n_core_fields: int = 2) -> pd.DataF
     result = pd.DataFrame(rows)
     result["q_intra"] = _bh_qvalues(result["p_intra"])
     return result.sort_values("q_intra").reset_index(drop=True)
+
+
+def per_gene_tf_binding_summary(run_dir: str, n_core_fields: int = 2) -> pd.DataFrame:
+    """Mean and standard deviation of per-gene TF binding within one run.
+
+    For every TF, aggregates over all genes in the run and reports the mean and
+    sample standard deviation (ddof=1) of three per-(gene, TF) quantities: the
+    ``reference`` peak count (binding in the starting sequence), the
+    ``max_mutated`` peak count (binding in the optimized sequence), and their
+    ``diff`` (net change introduced by the optimizer).
+
+    Genes are the replicates. A gene with no peak for a given TF counts as 0, so
+    the means divide by the full gene count — matching the 0-fill convention of
+    :func:`single_run_tf_significance`. With a single gene the standard deviations
+    are NaN (undefined for ddof=1).
+
+    Args:
+        run_dir: Run directory containing the ``deepcis_scan`` subfolder.
+        n_core_fields: Number of leading underscore-separated fields identifying a
+            replicate; passed to :func:`load_per_gene_tf_counts`. Use 3 for
+            random-start runs (see :func:`load_per_gene_diffs`).
+
+    Returns:
+        DataFrame with one row per TF and columns ``tf``, ``n_genes``,
+        ``mean_reference``, ``std_reference``, ``mean_max_mutated``,
+        ``std_max_mutated``, ``mean_diff`` and ``std_diff``, sorted by
+        ``mean_max_mutated`` descending.
+
+    Raises:
+        FileNotFoundError: If there is not exactly one annotated-peaks CSV.
+    """
+    counts = load_per_gene_tf_counts(run_dir, n_core_fields)
+    all_genes = sorted(set(counts.index.get_level_values("core_gene")))
+    all_tfs = sorted(set(counts.index.get_level_values(TF_COLUMN)))
+
+    reference = _diff_series_to_matrix(counts[REF_COLUMN], all_genes, all_tfs)
+    mutated = _diff_series_to_matrix(counts[MUTATED_COLUMN], all_genes, all_tfs)
+    diff = _diff_series_to_matrix(counts["diff"], all_genes, all_tfs)
+
+    summary = pd.DataFrame(
+        {
+            TF_COLUMN: all_tfs,
+            "n_genes": len(all_genes),
+            "mean_reference": reference.mean(axis=0).to_numpy(),
+            "std_reference": reference.std(axis=0).to_numpy(),
+            "mean_max_mutated": mutated.mean(axis=0).to_numpy(),
+            "std_max_mutated": mutated.std(axis=0).to_numpy(),
+            "mean_diff": diff.mean(axis=0).to_numpy(),
+            "std_diff": diff.std(axis=0).to_numpy(),
+        }
+    )
+    return summary.sort_values("mean_max_mutated", ascending=False).reset_index(drop=True)
 
 
 def pooled_model_tf_significance(

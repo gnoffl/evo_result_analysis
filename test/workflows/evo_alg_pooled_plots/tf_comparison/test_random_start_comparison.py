@@ -78,8 +78,10 @@ class RandomStartComparisonIntegrationTest(unittest.TestCase):
                 output_dir=output_dir,
             )
 
-            # Assert: the significance CSV and both heatmap PNGs were written.
+            # Assert: the binding summary CSV, significance CSV and both heatmap
+            # PNGs were written.
             expected = [
+                "random_start_comparison_binding_summary.csv",
                 "random_start_comparison_significance.csv",
                 "random_start_comparison_per_gene.png",
                 "random_start_comparison_log_fold_change.png",
@@ -88,6 +90,16 @@ class RandomStartComparisonIntegrationTest(unittest.TestCase):
                 path = os.path.join(output_dir, name)
                 self.assertTrue(os.path.exists(path), f"Expected output {name} was not created")
                 self.assertGreater(os.path.getsize(path), 0, f"Output {name} is empty")
+
+            # The binding summary carries mean/std per TF over the 8 replicates:
+            # SIG has 3 max_mutated peaks in every sequence (mean 3, std 0).
+            binding_summary = pd.read_csv(
+                os.path.join(output_dir, "random_start_comparison_binding_summary.csv")
+            ).set_index("tf")
+            self.assertTrue((binding_summary["n_genes"] == 8).all())
+            self.assertAlmostEqual(binding_summary.loc["SIG", "mean_max_mutated"], 3.0)
+            self.assertAlmostEqual(binding_summary.loc["SIG", "std_max_mutated"], 0.0)
+            self.assertAlmostEqual(binding_summary.loc["SIG", "mean_diff"], 2.0)
 
             # Regression guard: the 8 sequences must be kept as 8 replicates (not
             # collapsed to a single "random_sequence" gene, which would force p=1).
