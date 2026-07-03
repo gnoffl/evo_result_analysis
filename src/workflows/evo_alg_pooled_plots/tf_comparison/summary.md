@@ -169,25 +169,41 @@ Private helpers:
 - **`_tf_stats(arr)`** — returns `(median, n_nonzero, wilcoxon_p)` for one
   per-gene diff vector. Used in both significance functions (four call sites total).
 - **`_wilcoxon_pvalue`**, **`_bh_qvalues`** — the test and the BH correction.
+- **`_pair_contrast_matrix(run_a_directory, run_b_directory)`** — builds the
+  shared-gene × union-TF matrices `a_mat`, `b_mat` and their difference
+  `contrast_mat = a_mat − b_mat` for a run pair (fill-0 for absent combinations).
+  `paired_tf_significance`, `pooled_model_tf_significance`, and
+  `interaction_model_tf_significance` all share this one copy of the
+  intersect/unstack/fill-0 logic.
 
 Public functions:
 
-1. **`load_per_gene_diffs(run_dir)`** — reads the run's single
+1. **`load_per_gene_diffs(run_dir, n_core_fields=2)`** — reads the run's single
    `deepcis_scan/*_annotated_peaks_*.csv`, keeps the `reference` and
    `max_mutated` rows (the `difference` signal is ignored), collapses each full
-   gene id to its **core id** (first two underscore fields, e.g.
+   sequence id to its **core id** (first `n_core_fields` underscore fields, e.g.
    `1_AT1G01150_gene:..._<timestamp>` → `1_AT1G01150`; this is what makes the two
    runs matchable, since full ids differ only by timestamp), counts peaks per
    `(core_gene, tf, signal_type)`, and returns `diff = max_mutated − reference`
    per `(core_gene, tf)`. Note: `max_mutated` is the *optimized* sequence in both
    directions — it is legacy naming, so in the min run it is the *minimized*
-   sequence.
-2. **`paired_tf_significance(run_a_directory, run_b_directory)`** — intersects the
-   genes, builds the three per-gene vectors per TF via `_diff_series_to_matrix`
-   and `_tf_stats`, runs the three Wilcoxon tests (NaN on failure), and
-   BH-corrects each p-column. The contrast columns are `median_D, n_nonzero_D,
-   p_contrast, q_contrast, n_genes`; the per-run columns use neutral names
-   `median_diff_a/_b, n_nonzero_a/_b, p_a/_b, q_a/_b`. Sorted by `q_contrast`.
+   sequence. **`n_core_fields`** defaults to 2 (natural-gene ids like
+   `1_AT1G01150`). Random-start sequences are named
+   `random_sequence_<index>_<timestamp>` whose first two fields are always
+   `random_sequence`; they need `n_core_fields=3` (core `random_sequence_000`),
+   otherwise **all sequences collapse into one replicate** and every intra-run
+   Wilcoxon test degenerates to n=1 → `p = 1`. `single_run_tf_significance` takes
+   the same argument and `random_start_comparison.py` passes 3.
+2. **`paired_tf_significance(run_a_directory, run_b_directory, label_a="a",
+   label_b="b")`** — intersects the genes, builds the three per-gene vectors per
+   TF via `_diff_series_to_matrix` and `_tf_stats`, runs the three Wilcoxon tests
+   (NaN on failure), and BH-corrects each p-column. The contrast columns are
+   `median_D, n_nonzero_D, p_contrast, q_contrast, n_genes`; the per-run columns
+   are `median_diff_<label_a>, n_nonzero_<label_a>, p_<label_a>, q_<label_a>` and
+   their `<label_b>` counterparts. `label_a`/`label_b` default to the neutral
+   `a`/`b` (so `minmax_comparison` keeps `q_a`/`q_b`); a caller passes meaningful
+   names (e.g. `ara_model`/`zea_model`) to make its CSV self-describing. Sorted by
+   `q_contrast`.
 3. **`single_run_tf_significance(run_dir)`** — loads per-gene diffs for one run,
    builds the per-TF diff matrix via `_diff_series_to_matrix`, tests each TF's
    diff vs 0 with `_tf_stats`, and BH-corrects. Returns one row per TF with
@@ -202,6 +218,26 @@ Public functions:
    case, for analyses with no left/right grouping).
 6. **`top_bottom_tfs(matrix, n)`** — keeps the top-N and bottom-N rows of an
    already-ordered matrix (order preserved, overlaps de-duplicated).
+7. **`pooled_model_tf_significance(model_pairs)`** — pooled per-TF **model main
+   effect** across several paired gene sources. Each pair is
+   `(model_a_run_dir, model_b_run_dir)` sharing that source's genes; the per-gene
+   contrast `D = diff_a − diff_b` is formed within each pair (via
+   `_pair_contrast_matrix`), the D vectors from all pairs are concatenated over
+   the disjoint gene sets, and tested against 0 with a two-sided Wilcoxon test,
+   BH-corrected across TFs. Columns: `tf, n_genes, median_D, n_nonzero_D,
+   p_model, q_model`, sorted by `q_model`. Caveat: a TF whose model effect flips
+   sign between gene sources washes out here (that interaction is what function 8
+   surfaces).
+8. **`interaction_model_tf_significance(group_a_pair, group_b_pair, label_a="a",
+   label_b="b")`** — per-TF test of whether the model effect **differs between
+   two gene groups**. The per-group contrast `D = diff_a − diff_b` is formed
+   within each pair, and the two D distributions (group A genes vs group B genes)
+   are compared with a two-sided **Mann–Whitney U** test (unpaired: the groups
+   have different genes), BH-corrected across TFs. Columns: `tf, n_<label_a>,
+   n_<label_b>, median_D_<label_a>, median_D_<label_b>, u_stat, p_interaction,
+   q_interaction`, sorted by `q_interaction`; `label_a`/`label_b` default to
+   `a`/`b` and `model_comparison` passes `ara_genes`/`zea_genes`. A degenerate TF
+   (test undefined) records NaN.
 
 ### `tf_comparison_plot.py` — visualization
 
@@ -285,12 +321,95 @@ In both:
 - Cell stars are independent per column and BH-corrected within each run
   separately — they do not correct across runs.
 
-## 6. Reproducing
+## 6. Sibling scripts
+
+### `random_start_comparison.py` — single random-start maximization run
+
+The single-run analogue of `minmax_comparison.py`: one maximization run whose
+starting sequences are **random** (not natural plant genes). It answers *starting
+from random sequence, which TF families does the optimizer systematically
+introduce/remove to raise predicted expression?*
+
+Pure reuse of the toolbox — no new functions. Per normalization:
+`build_matrix([(RUN_DIR, LABEL)])` → `order_tfs_by_mean` (flat, no left/right
+grouping) → optional `top_bottom_tfs` → `plot_heatmap(cell_stars=…,
+row_stars=None, separator_after_column=None)`. The single intra-run significance
+layer comes from `single_run_tf_significance(RUN_DIR, CORE_ID_FIELDS)` (`q_intra`
+→ cell stars); there are no row-label stars because there is only one run.
+
+**`CORE_ID_FIELDS = 3`** (not the default 2): random-start sequences are named
+`random_sequence_<index>_<timestamp>`, so 3 fields are needed to keep each of the
+~104 sequences a distinct replicate. With the default 2 they would all collapse
+to `random_sequence` and every intra-run test would degenerate to n=1 → `p = 1`.
+
+Outputs in `random_start_comparison/`: `random_start_comparison_significance.csv`
+plus `random_start_comparison_per_gene.png` and `…_log_fold_change.png`.
+
+### `model_comparison.py` — 2×2 gene-source × fitness-model, grouped by model
+
+A four-run 2×2 analysis: natural genes from two species (Arabidopsis "ara", *Zea
+mays* "zea") each optimized under two deepCRE fitness models (ara model, zea
+model). **All four runs maximize.** Headline question: *does the predictor model
+drive the TF strategy?*
+
+**Pairing structure:** the two ara-gene runs share the same ara genes; the two
+zea-gene runs share the same zea genes; ara and zea gene sets are disjoint. So
+the model swap is **paired by gene within each gene source**, and the gene-source
+axis is **unpaired**. A consistent **A = ara model, B = zea model** convention is
+used so `D = diff_a − diff_b` means the same thing in both sources.
+
+**Figure — grouped by model:** left group = both ara-model runs (`araG/araM`,
+`zeaG/araM`), right group = both zea-model runs (`araG/zeaM`, `zeaG/zeaM`),
+divider after column 2; rows ordered by `order_tfs_by_group_contrast` =
+`mean(ara-model) − mean(zea-model)`. **Row-label (inter-run) stars are dropped**
+by choice; only **cell (intra-run) stars** stay. Those cell stars are reused from
+the two stratified paired tables' per-model q-columns (one paired table per gene
+source covers its two runs' intra-run tests), so no separate
+`single_run_tf_significance` calls are needed. To make the CSVs self-describing,
+`model_comparison` passes meaningful side-labels (`label_a="ara_model"`,
+`label_b="zea_model"`) so the columns read `q_ara_model` / `q_zea_model` rather
+than the toolbox-default `q_a` / `q_b`:
+
+- `araG/araM` → ara pair `q_ara_model`; `araG/zeaM` → ara pair `q_zea_model`
+- `zeaG/araM` → zea pair `q_ara_model`; `zeaG/zeaM` → zea pair `q_zea_model`
+
+**Statistics (all CSV-only, not shown on the figure):**
+
+- Two **stratified paired model contrasts** (`paired_tf_significance` per gene
+  source): `model_comparison_significance_ara_genes.csv` (model effect on ara
+  genes) and `…_zea_genes.csv` (model effect on zea genes). `q_contrast` = the
+  model effect within that gene source; `q_ara_model` / `q_zea_model` = each
+  model's intra-run change vs wild-type.
+- **A — pooled model main effect** (`pooled_model_tf_significance` over both
+  pairs): `model_comparison_significance_pooled_model.csv`. Tests the overall
+  model effect with maximum power by blocking on gene.
+- **C — interaction / species-specificity** (`interaction_model_tf_significance`
+  of the two pairs, labelled `ara_genes` / `zea_genes`):
+  `model_comparison_significance_interaction.csv`. Columns `median_D_ara_genes` /
+  `median_D_zea_genes` give the model contrast within each gene source; the
+  Mann–Whitney `q_interaction` tests whether the model swap does *different*
+  things depending on gene source.
+
+Figure outputs in `model_comparison/`: `model_comparison_per_gene.png` and
+`model_comparison_log_fold_change.png`.
+
+**Reference-cancellation assumption (verified):** `D = diff(ara-model) −
+diff(zea-model)` per gene assumes the wild-type reference peak counts are
+identical across the two models of a gene source (the deepCIS reference scan is
+model-independent — the "model" is the evolution *fitness* predictor, not the TF
+annotator). This mirrors §3.4, so `D` reduces to `optimized_a − optimized_b`.
+Verified on the real runs (2026-07-02): within each gene source the two runs
+share exactly the same genes (105 ara / 100 zea) with **zero** reference-count
+mismatches across all `(gene, TF)` pairs, so no reference delta leaks into `D`.
+
+## 7. Reproducing
 
 From the repo root, in the `deepCREshap` conda env:
 
 ```bash
 conda run -n deepCREshap python -m src.workflows.evo_alg_pooled_plots.tf_comparison.minmax_comparison
+conda run -n deepCREshap python -m src.workflows.evo_alg_pooled_plots.tf_comparison.random_start_comparison
+conda run -n deepCREshap python -m src.workflows.evo_alg_pooled_plots.tf_comparison.model_comparison
 ```
 
 Unit tests:

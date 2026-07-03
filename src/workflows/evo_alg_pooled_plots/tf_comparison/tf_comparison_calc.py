@@ -21,7 +21,7 @@ from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
-from scipy.stats import wilcoxon
+from scipy.stats import mannwhitneyu, wilcoxon
 from statsmodels.stats.multitest import multipletests
 
 # Data-schema column names shared by the loaders and significance functions.
@@ -149,16 +149,26 @@ def top_bottom_tfs(matrix: pd.DataFrame, n: int) -> pd.DataFrame:
     return matrix.loc[keep]
 
 
-def load_per_gene_diffs(run_dir: str) -> pd.DataFrame:
-    """Load per-gene, per-TF binding diffs for one run.
+def load_per_gene_diffs(run_dir: str, n_core_fields: int = 2) -> pd.DataFrame:
+    """Load per-replicate, per-TF binding diffs for one run.
 
     Reads the run's ``*_annotated_peaks_*.csv`` (one peak per row), counts peaks
-    per gene/TF for the reference and optimized (``max_mutated``) sequences, and
-    returns their difference. Genes are reduced to their core id (the first two
-    underscore fields, e.g. ``1_AT1G01150``) so they match across runs.
+    per replicate/TF for the reference and optimized (``max_mutated``) sequences,
+    and returns their difference. Each replicate is reduced to its core id — the
+    first ``n_core_fields`` underscore-separated fields of the sequence id — so the
+    per-run trailing timestamp is dropped and replicates match across runs.
+
+    The default of 2 fields suits natural-gene ids like
+    ``1_AT1G01150_gene:..._<timestamp>`` (core ``1_AT1G01150``). Random-start
+    sequences are named ``random_sequence_<index>_<timestamp>``, whose first two
+    fields are always ``random_sequence``; they need ``n_core_fields=3`` (core
+    ``random_sequence_000``) to keep each sequence a distinct replicate instead of
+    collapsing all of them into one.
 
     Args:
         run_dir: Run directory containing the ``deepcis_scan`` subfolder.
+        n_core_fields: Number of leading underscore-separated fields that uniquely
+            identify a replicate.
 
     Returns:
         DataFrame indexed by (core_gene, tf) with a single ``diff`` column
@@ -174,7 +184,7 @@ def load_per_gene_diffs(run_dir: str) -> pd.DataFrame:
         )
     peaks = pd.read_csv(matches[0])
     peaks = peaks[peaks[SIGNAL_TYPE_COLUMN].isin([REF_COLUMN, MUTATED_COLUMN])].copy()
-    peaks["core_gene"] = peaks[GENE_COLUMN].str.split("_").str[:2].str.join("_")
+    peaks["core_gene"] = peaks[GENE_COLUMN].str.split("_").str[:n_core_fields].str.join("_")
     counts = (
         peaks.groupby(["core_gene", TF_COLUMN, SIGNAL_TYPE_COLUMN])
         .size()
@@ -219,24 +229,23 @@ def _tf_stats(arr: np.ndarray) -> Tuple[float, int, float]:
     return float(np.median(arr)), int(np.count_nonzero(arr)), _wilcoxon_pvalue(arr)
 
 
-def paired_tf_significance(run_a_directory: str, run_b_directory: str) -> pd.DataFrame:
-    """Per-TF paired significance between two runs over their shared genes.
+def _pair_contrast_matrix(
+    run_a_directory: str, run_b_directory: str
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, List[str], List[str]]:
+    """Return ``(a_mat, b_mat, contrast_mat, shared_genes, all_tfs)`` for a run pair.
 
-    For every TF, builds per-gene diff vectors over the genes shared by both runs
-    (absent gene/TF combinations count as 0) and runs three two-sided Wilcoxon
-    signed-rank tests: the A-vs-B contrast (``diff_a - diff_b``), A-only
-    (``diff_a`` vs 0) and B-only (``diff_b`` vs 0). The three p-value columns are
-    each BH-corrected to q-values across TFs.
+    ``a_mat``/``b_mat`` are genes × TFs matrices (absent (gene, TF) = 0) over the
+    genes shared by both runs and the union of their TFs; ``contrast_mat =
+    a_mat - b_mat``. Extracted so the paired/pooled/interaction significance
+    functions share one copy of the intersect/unstack/fill-0 logic.
 
     Args:
-        run_a_directory: First run directory (the "left"/A side of the contrast).
-        run_b_directory: Second run directory (the "right"/B side of the contrast).
+        run_a_directory: First run directory (the "A" side of the contrast).
+        run_b_directory: Second run directory (the "B" side of the contrast).
 
     Returns:
-        One row per TF with the contrast columns (``median_D``, ``n_nonzero_D``,
-        ``p_contrast``, ``q_contrast``, ``n_genes``) and the neutral per-run
-        columns (``median_diff_a``, ``n_nonzero_a``, ``p_a``, ``q_a`` and their
-        ``_b`` counterparts), sorted by ``q_contrast`` ascending.
+        Tuple of the A matrix, B matrix, their difference, the sorted shared-gene
+        list, and the sorted union of TFs.
     """
     diff_a = load_per_gene_diffs(run_a_directory)["diff"]
     diff_b = load_per_gene_diffs(run_b_directory)["diff"]
@@ -252,6 +261,41 @@ def paired_tf_significance(run_a_directory: str, run_b_directory: str) -> pd.Dat
     a_mat = _diff_series_to_matrix(diff_a, shared_genes, all_tfs)
     b_mat = _diff_series_to_matrix(diff_b, shared_genes, all_tfs)
     contrast_mat = a_mat - b_mat
+    return a_mat, b_mat, contrast_mat, shared_genes, all_tfs
+
+
+def paired_tf_significance(
+    run_a_directory: str,
+    run_b_directory: str,
+    label_a: str = "a",
+    label_b: str = "b",
+) -> pd.DataFrame:
+    """Per-TF paired significance between two runs over their shared genes.
+
+    For every TF, builds per-gene diff vectors over the genes shared by both runs
+    (absent gene/TF combinations count as 0) and runs three two-sided Wilcoxon
+    signed-rank tests: the A-vs-B contrast (``diff_a - diff_b``), A-only
+    (``diff_a`` vs 0) and B-only (``diff_b`` vs 0). The three p-value columns are
+    each BH-corrected to q-values across TFs.
+
+    Args:
+        run_a_directory: First run directory (the "left"/A side of the contrast).
+        run_b_directory: Second run directory (the "right"/B side of the contrast).
+        label_a: Suffix naming the A-side columns; defaults to ``"a"``. Pass a
+            meaningful name (e.g. ``"ara_model"``) to make the CSV self-describing.
+        label_b: Suffix naming the B-side columns; defaults to ``"b"``.
+
+    Returns:
+        One row per TF with the contrast columns (``median_D``, ``n_nonzero_D``,
+        ``p_contrast``, ``q_contrast``, ``n_genes``) and the per-run columns
+        ``median_diff_<label_a>``, ``n_nonzero_<label_a>``, ``p_<label_a>``,
+        ``q_<label_a>`` and their ``<label_b>`` counterparts, sorted by
+        ``q_contrast`` ascending. With the default labels the per-run columns are
+        the neutral ``*_a`` / ``*_b``.
+    """
+    a_mat, b_mat, contrast_mat, shared_genes, all_tfs = _pair_contrast_matrix(
+        run_a_directory, run_b_directory
+    )
 
     rows = []
     for tf in all_tfs:
@@ -265,30 +309,37 @@ def paired_tf_significance(run_a_directory: str, run_b_directory: str) -> pd.Dat
                 "median_D": median_contrast,
                 "n_nonzero_D": n_nonzero_contrast,
                 "p_contrast": p_contrast,
-                "median_diff_a": median_a,
-                "n_nonzero_a": n_nonzero_a,
-                "p_a": p_a,
-                "median_diff_b": median_b,
-                "n_nonzero_b": n_nonzero_b,
-                "p_b": p_b,
+                f"median_diff_{label_a}": median_a,
+                f"n_nonzero_{label_a}": n_nonzero_a,
+                f"p_{label_a}": p_a,
+                f"median_diff_{label_b}": median_b,
+                f"n_nonzero_{label_b}": n_nonzero_b,
+                f"p_{label_b}": p_b,
             }
         )
 
     result = pd.DataFrame(rows)
-    for p_col, q_col in [("p_contrast", "q_contrast"), ("p_a", "q_a"), ("p_b", "q_b")]:
+    for p_col, q_col in [
+        ("p_contrast", "q_contrast"),
+        (f"p_{label_a}", f"q_{label_a}"),
+        (f"p_{label_b}", f"q_{label_b}"),
+    ]:
         result[q_col] = _bh_qvalues(result[p_col])
     return result.sort_values("q_contrast").reset_index(drop=True)
 
 
-def single_run_tf_significance(run_dir: str) -> pd.DataFrame:
+def single_run_tf_significance(run_dir: str, n_core_fields: int = 2) -> pd.DataFrame:
     """Per-TF significance of diff (max_mutated − reference) vs 0 within one run.
 
-    Loads per-gene diffs from the run's annotated-peaks CSV, tests each TF's
+    Loads per-replicate diffs from the run's annotated-peaks CSV, tests each TF's
     distribution against zero with a two-sided Wilcoxon signed-rank test, and
     BH-corrects the p-values across TFs.
 
     Args:
         run_dir: Run directory containing the deepcis_scan subfolder.
+        n_core_fields: Number of leading underscore-separated fields identifying a
+            replicate; passed to :func:`load_per_gene_diffs`. Use 3 for
+            random-start runs (see that function's note).
 
     Returns:
         DataFrame with columns tf, n_genes, median_diff, n_nonzero, p_intra,
@@ -297,7 +348,7 @@ def single_run_tf_significance(run_dir: str) -> pd.DataFrame:
     Raises:
         FileNotFoundError: If there is not exactly one annotated-peaks CSV.
     """
-    diff = load_per_gene_diffs(run_dir)["diff"]
+    diff = load_per_gene_diffs(run_dir, n_core_fields)["diff"]
     all_genes = sorted(set(diff.index.get_level_values("core_gene")))
     all_tfs = sorted(set(diff.index.get_level_values(TF_COLUMN)))
     mat = _diff_series_to_matrix(diff, all_genes, all_tfs)
@@ -318,3 +369,140 @@ def single_run_tf_significance(run_dir: str) -> pd.DataFrame:
     result = pd.DataFrame(rows)
     result["q_intra"] = _bh_qvalues(result["p_intra"])
     return result.sort_values("q_intra").reset_index(drop=True)
+
+
+def pooled_model_tf_significance(
+    model_pairs: List[Tuple[str, str]],
+) -> pd.DataFrame:
+    """Pooled per-TF model main effect across several paired gene sources.
+
+    Each element of ``model_pairs`` is ``(model_a_run_dir, model_b_run_dir)`` for
+    one gene source (the two runs share that source's genes). For every TF, the
+    per-gene contrast ``D = diff_a - diff_b`` is computed within each pair and the
+    D vectors from all pairs are concatenated (gene sets are disjoint across
+    pairs), then tested against 0 with a two-sided Wilcoxon signed-rank test.
+    p-values are BH-corrected across TFs.
+
+    Because each ``D`` is a within-gene difference, per-gene wild-type baselines
+    cancel and genes (nested in gene source) act as blocks, so pooling tests the
+    model main effect with maximum power. Caveat: a TF whose model effect flips
+    sign between gene sources washes out here; that interaction is surfaced by
+    :func:`interaction_model_tf_significance`.
+
+    Args:
+        model_pairs: ``(model_a_run_dir, model_b_run_dir)`` tuples, one per gene
+            source, sharing an A = model-A / B = model-B convention.
+
+    Returns:
+        One row per TF with columns ``tf, n_genes, median_D, n_nonzero_D,
+        p_model, q_model``, sorted by ``q_model`` ascending. ``n_genes`` is the
+        total pooled gene count.
+
+    Raises:
+        ValueError: If ``model_pairs`` is empty.
+    """
+    if not model_pairs:
+        raise ValueError("model_pairs must contain at least one (run_a, run_b) pair")
+
+    contrast_matrices = []
+    tf_union: set = set()
+    for run_a_directory, run_b_directory in model_pairs:
+        _, _, contrast_mat, _, pair_tfs = _pair_contrast_matrix(
+            run_a_directory, run_b_directory
+        )
+        contrast_matrices.append(contrast_mat)
+        tf_union.update(pair_tfs)
+
+    all_tfs = sorted(tf_union)
+    # Reindex every pair's columns to the global TF set (fill 0) so pooled columns
+    # align, and give each pair a distinct gene-index prefix to avoid collisions.
+    aligned = [
+        contrast_mat.reindex(columns=all_tfs, fill_value=0.0).set_axis(
+            [f"pair{pair_index}_{gene}" for gene in contrast_mat.index], axis=0
+        )
+        for pair_index, contrast_mat in enumerate(contrast_matrices)
+    ]
+    pooled = pd.concat(aligned, axis=0)
+
+    rows = []
+    for tf in all_tfs:
+        median_contrast, n_nonzero_contrast, p_model = _tf_stats(pooled[tf].to_numpy())
+        rows.append(
+            {
+                TF_COLUMN: tf,
+                "n_genes": len(pooled),
+                "median_D": median_contrast,
+                "n_nonzero_D": n_nonzero_contrast,
+                "p_model": p_model,
+            }
+        )
+
+    result = pd.DataFrame(rows)
+    result["q_model"] = _bh_qvalues(result["p_model"])
+    return result.sort_values("q_model").reset_index(drop=True)
+
+
+def interaction_model_tf_significance(
+    group_a_pair: Tuple[str, str],
+    group_b_pair: Tuple[str, str],
+    label_a: str = "a",
+    label_b: str = "b",
+) -> pd.DataFrame:
+    """Per-TF test of whether the model effect DIFFERS between two gene groups.
+
+    Each ``*_pair`` is ``(model_a_run_dir, model_b_run_dir)`` for one gene group.
+    For every TF, the per-gene contrast ``D = diff_a - diff_b`` is formed within
+    each group and the two D distributions (group A genes vs group B genes) are
+    compared with a two-sided Mann-Whitney U test (unpaired: the groups have
+    different genes). p-values are BH-corrected across TFs.
+
+    A significant TF means the model swap does *different* things to that TF
+    depending on the gene group (group-dependent model behavior). This is the
+    unpaired interaction axis, distinct from the "is there a model effect at all"
+    main effect tested by :func:`pooled_model_tf_significance`.
+
+    Args:
+        group_a_pair: ``(model_a_run_dir, model_b_run_dir)`` for the first gene group.
+        group_b_pair: ``(model_a_run_dir, model_b_run_dir)`` for the second gene group.
+        label_a: Suffix naming the group-A columns; defaults to ``"a"``. Pass a
+            meaningful name (e.g. ``"ara_genes"``) to make the CSV self-describing.
+        label_b: Suffix naming the group-B columns; defaults to ``"b"``.
+
+    Returns:
+        One row per TF with columns ``tf, n_<label_a>, n_<label_b>,
+        median_D_<label_a>, median_D_<label_b>, u_stat, p_interaction,
+        q_interaction``, sorted by ``q_interaction`` ascending. Degenerate TFs
+        (Mann-Whitney undefined) get NaN for ``u_stat`` and ``p_interaction``.
+    """
+    _, _, contrast_mat_a, _, tfs_a = _pair_contrast_matrix(*group_a_pair)
+    _, _, contrast_mat_b, _, tfs_b = _pair_contrast_matrix(*group_b_pair)
+
+    all_tfs = sorted(set(tfs_a) | set(tfs_b))
+    # A TF absent in a group contributes that group's all-zero D vector.
+    contrast_mat_a = contrast_mat_a.reindex(columns=all_tfs, fill_value=0.0)
+    contrast_mat_b = contrast_mat_b.reindex(columns=all_tfs, fill_value=0.0)
+
+    rows = []
+    for tf in all_tfs:
+        d_a = contrast_mat_a[tf].to_numpy()
+        d_b = contrast_mat_b[tf].to_numpy()
+        try:
+            u_stat, p_interaction = mannwhitneyu(d_a, d_b, alternative="two-sided")
+            u_stat, p_interaction = float(u_stat), float(p_interaction)
+        except ValueError:
+            u_stat, p_interaction = float("nan"), float("nan")
+        rows.append(
+            {
+                TF_COLUMN: tf,
+                f"n_{label_a}": int(len(d_a)),
+                f"n_{label_b}": int(len(d_b)),
+                f"median_D_{label_a}": float(np.median(d_a)) if len(d_a) else float("nan"),
+                f"median_D_{label_b}": float(np.median(d_b)) if len(d_b) else float("nan"),
+                "u_stat": u_stat,
+                "p_interaction": p_interaction,
+            }
+        )
+
+    result = pd.DataFrame(rows)
+    result["q_interaction"] = _bh_qvalues(result["p_interaction"])
+    return result.sort_values("q_interaction").reset_index(drop=True)

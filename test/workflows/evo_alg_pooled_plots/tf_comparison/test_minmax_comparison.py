@@ -113,12 +113,17 @@ class MinmaxComparisonIntegrationTest(unittest.TestCase):
             )
 
             # Assert: both significance CSVs and both heatmap PNGs were written.
+            # The heatmap filename suffix is derived from the module's
+            # TOP_BOTTOM_N_TFS constant (None -> no suffix) so the test tracks the
+            # script's default instead of hardcoding a stale "_top5".
+            top_bottom_n = minmax_comparison.TOP_BOTTOM_N_TFS
+            suffix = f"_top{top_bottom_n}" if top_bottom_n is not None else ""
             expected = [
                 "compare_TFs_significance.csv",
                 "compare_TFs_significance_GOF.csv",
                 "compare_TFs_significance_LOF.csv",
-                "compare_TFs_per_gene_top5.png",
-                "compare_TFs_log_fold_change_top5.png",
+                f"compare_TFs_per_gene{suffix}.png",
+                f"compare_TFs_log_fold_change{suffix}.png",
             ]
             for name in expected:
                 self.assertTrue(

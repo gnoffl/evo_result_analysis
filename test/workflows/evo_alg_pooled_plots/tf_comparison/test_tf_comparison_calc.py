@@ -11,12 +11,15 @@ import numpy as np
 import pandas as pd
 
 from workflows.evo_alg_pooled_plots.tf_comparison.tf_comparison_calc import (
+    _pair_contrast_matrix,
     build_matrix,
     count_genes,
+    interaction_model_tf_significance,
     load_per_gene_diffs,
     order_tfs_by_group_contrast,
     order_tfs_by_mean,
     paired_tf_significance,
+    pooled_model_tf_significance,
     single_run_tf_significance,
     top_bottom_tfs,
 )
@@ -173,6 +176,34 @@ class LoadPerGeneDiffsTest(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 load_per_gene_diffs(tmp)
 
+    def test_n_core_fields_controls_replicate_grouping(self) -> None:
+        # Arrange: two random-start sequences whose first two underscore fields are
+        # identical ("random_sequence") but whose first three fields differ.
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_annotated_peaks(
+                tmp,
+                [
+                    ("random_sequence_000_ts_a", "WRKY", "reference", 1),
+                    ("random_sequence_000_ts_a", "WRKY", "max_mutated", 3),
+                    ("random_sequence_001_ts_b", "WRKY", "reference", 2),
+                    ("random_sequence_001_ts_b", "WRKY", "max_mutated", 2),
+                ],
+            )
+
+            # Act
+            collapsed = load_per_gene_diffs(tmp)  # default 2 fields
+            distinct = load_per_gene_diffs(tmp, n_core_fields=3)
+
+        # Assert: 2 fields collapse both sequences into one replicate; 3 fields keep
+        # them separate (the random-start naming convention).
+        self.assertEqual(
+            set(collapsed.index.get_level_values("core_gene")), {"random_sequence"}
+        )
+        self.assertEqual(
+            set(distinct.index.get_level_values("core_gene")),
+            {"random_sequence_000", "random_sequence_001"},
+        )
+
 
 class PairedTfSignificanceTest(unittest.TestCase):
     """Tests for the paired Wilcoxon + BH significance table."""
@@ -237,6 +268,27 @@ class PairedTfSignificanceTest(unittest.TestCase):
         ):
             self.assertIn(col, result.columns)
 
+    def test_custom_labels_rename_per_run_columns(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            run_a_dir, run_b_dir = self._make_runs(tmp)
+
+            # Act
+            result = paired_tf_significance(
+                run_a_dir, run_b_dir, label_a="ara_model", label_b="zea_model"
+            )
+
+        # Assert: the per-run columns carry the meaningful suffixes; the neutral
+        # a/b names are gone; the contrast columns are unchanged.
+        for col in (
+            "median_diff_ara_model", "n_nonzero_ara_model", "p_ara_model", "q_ara_model",
+            "median_diff_zea_model", "n_nonzero_zea_model", "p_zea_model", "q_zea_model",
+            "median_D", "q_contrast",
+        ):
+            self.assertIn(col, result.columns)
+        for col in ("p_a", "q_a", "p_b", "q_b"):
+            self.assertNotIn(col, result.columns)
+
 
 class SingleRunTfSignificanceTest(unittest.TestCase):
     """Tests for single_run_tf_significance."""
@@ -276,6 +328,28 @@ class SingleRunTfSignificanceTest(unittest.TestCase):
         # Assert
         for col in ("tf", "n_genes", "median_diff", "n_nonzero", "p_intra", "q_intra"):
             self.assertIn(col, result.columns)
+
+    def test_n_core_fields_recovers_per_sequence_replicates(self) -> None:
+        # Arrange: 8 random-start sequences (first two fields all "random_sequence"),
+        # SIG gains a peak in each (diff +2 per sequence).
+        with tempfile.TemporaryDirectory() as tmp:
+            peaks: List[Tuple[str, str, str, int]] = []
+            for i in range(8):
+                sequence = f"random_sequence_{i:03d}_ts_{i}"
+                peaks += [(sequence, "SIG", "reference", 1), (sequence, "SIG", "max_mutated", 3)]
+            _write_annotated_peaks(tmp, peaks)
+
+            # Act
+            collapsed = single_run_tf_significance(tmp)  # default 2 fields
+            recovered = single_run_tf_significance(tmp, n_core_fields=3)
+
+        # Assert: the default field count collapses all sequences into one replicate
+        # (n_genes 1 -> Wilcoxon on a single value is never significant); 3 fields
+        # recover the 8 per-sequence replicates and detect SIG.
+        self.assertEqual(collapsed.set_index("tf").loc["SIG", "n_genes"], 1)
+        recovered_sig = recovered.set_index("tf").loc["SIG"]
+        self.assertEqual(recovered_sig["n_genes"], 8)
+        self.assertLess(recovered_sig["p_intra"], 0.05)
 
 
 class TopBottomTfsTest(unittest.TestCase):
@@ -339,6 +413,260 @@ class TopBottomTfsTest(unittest.TestCase):
 
         # Assert: top rows appear before bottom rows, each group retains its order.
         self.assertEqual(list(sliced.index), ["tf1", "tf2", "tf5", "tf6"])
+
+
+_PAIR_REF_COUNT = 3
+
+
+def _write_model_pair(
+    model_a_dir: str,
+    model_b_dir: str,
+    gene_indices: List[int],
+    per_tf_diff: "dict[str, List[int]]",
+) -> None:
+    """Write a shared-gene run pair with a known per-gene contrast D per TF.
+
+    For each gene and TF, ``D = diff_a - diff_b`` is split into non-negative
+    per-run diffs (``diff_a = max(D, 0)``, ``diff_b = max(-D, 0)``) and realized
+    as reference/max_mutated peak counts around a fixed reference count, so the
+    two runs share ``gene_indices`` and the model-A vs model-B contrast equals the
+    requested D.
+
+    Args:
+        model_a_dir: Directory for the model-A run.
+        model_b_dir: Directory for the model-B run.
+        gene_indices: Gene ids (as integers) shared by both runs.
+        per_tf_diff: ``{tf: [D per gene]}`` (length must match ``gene_indices``).
+    """
+    a_peaks: List[Tuple[str, str, str, int]] = []
+    b_peaks: List[Tuple[str, str, str, int]] = []
+    for position, gene_index in enumerate(gene_indices):
+        gene = f"{gene_index}_GENE{gene_index}_loc_{gene_index}"
+        for tf, contrast_values in per_tf_diff.items():
+            contrast = contrast_values[position]
+            diff_a = max(contrast, 0)
+            diff_b = max(-contrast, 0)
+            a_peaks += [
+                (gene, tf, "reference", _PAIR_REF_COUNT),
+                (gene, tf, "max_mutated", _PAIR_REF_COUNT + diff_a),
+            ]
+            b_peaks += [
+                (gene, tf, "reference", _PAIR_REF_COUNT),
+                (gene, tf, "max_mutated", _PAIR_REF_COUNT + diff_b),
+            ]
+    _write_annotated_peaks(model_a_dir, a_peaks)
+    _write_annotated_peaks(model_b_dir, b_peaks)
+
+
+class PairContrastMatrixTest(unittest.TestCase):
+    """Tests for the shared _pair_contrast_matrix helper."""
+
+    def test_shared_genes_tf_union_and_fill_zero(self) -> None:
+        # Arrange: run A has genes 0,1,2 with TF X; run B has genes 1,2,3 with X and Y.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_a_dir = os.path.join(tmp, "a")
+            run_b_dir = os.path.join(tmp, "b")
+            a_peaks = []
+            for i in (0, 1, 2):
+                gene = f"{i}_G{i}_loc_{i}"
+                a_peaks += [(gene, "X", "reference", 1), (gene, "X", "max_mutated", 3)]
+            b_peaks = []
+            for i in (1, 2, 3):
+                gene = f"{i}_G{i}_loc_{i}"
+                b_peaks += [(gene, "X", "reference", 1), (gene, "X", "max_mutated", 2)]
+                b_peaks += [(gene, "Y", "reference", 2), (gene, "Y", "max_mutated", 4)]
+            _write_annotated_peaks(run_a_dir, a_peaks)
+            _write_annotated_peaks(run_b_dir, b_peaks)
+
+            # Act
+            a_mat, b_mat, contrast_mat, shared_genes, all_tfs = _pair_contrast_matrix(
+                run_a_dir, run_b_dir
+            )
+
+        # Assert: only genes 1,2 are shared; TFs are the union; Y absent in A -> 0.
+        self.assertEqual(shared_genes, ["1_G1", "2_G2"])
+        self.assertEqual(all_tfs, ["X", "Y"])
+        self.assertTrue((a_mat["Y"] == 0.0).all())
+        # X: diff_a = 3-1 = 2, diff_b = 2-1 = 1 -> contrast 1; Y contrast = 0 - 2 = -2.
+        self.assertTrue((contrast_mat["X"] == 1.0).all())
+        self.assertTrue((contrast_mat["Y"] == -2.0).all())
+
+
+class PooledModelTfSignificanceTest(unittest.TestCase):
+    """Tests for the pooled per-TF model main effect across gene sources."""
+
+    def _make_pairs(self, tmp: str) -> List[Tuple[str, str]]:
+        """Two disjoint-gene pairs with known per-gene contrast D per TF.
+
+        CONSISTENT has D=+2 in every gene of both sources; FLIP has D=+2 for the
+        first source and D=-2 for the second (sign flip); ONLYARA has D=+3 in the
+        first source and is absent from the second (fill-0 case).
+        """
+        ara_a = os.path.join(tmp, "ara_a")
+        ara_b = os.path.join(tmp, "ara_b")
+        zea_a = os.path.join(tmp, "zea_a")
+        zea_b = os.path.join(tmp, "zea_b")
+        _write_model_pair(
+            ara_a,
+            ara_b,
+            list(range(8)),
+            {"CONSISTENT": [2] * 8, "FLIP": [2] * 8, "ONLYARA": [3] * 8},
+        )
+        _write_model_pair(
+            zea_a,
+            zea_b,
+            list(range(8, 16)),
+            {"CONSISTENT": [2] * 8, "FLIP": [-2] * 8},
+        )
+        return [(ara_a, ara_b), (zea_a, zea_b)]
+
+    def test_pooled_statistics_columns_and_sort(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            pairs = self._make_pairs(tmp)
+
+            # Act
+            result = pooled_model_tf_significance(pairs)
+
+        # Assert: expected columns.
+        self.assertEqual(
+            list(result.columns),
+            ["tf", "n_genes", "median_D", "n_nonzero_D", "p_model", "q_model"],
+        )
+        indexed = result.set_index("tf")
+        # Pooled gene count is the total across both sources.
+        self.assertTrue((result["n_genes"] == 16).all())
+        # CONSISTENT: D=+2 everywhere -> median 2, all 16 nonzero, significant.
+        self.assertEqual(indexed.loc["CONSISTENT", "median_D"], 2)
+        self.assertEqual(indexed.loc["CONSISTENT", "n_nonzero_D"], 16)
+        self.assertLess(indexed.loc["CONSISTENT", "p_model"], 0.05)
+        # ONLYARA absent from the second source -> 8 nonzero, median 1.5 (fill-0).
+        self.assertEqual(indexed.loc["ONLYARA", "n_nonzero_D"], 8)
+        self.assertAlmostEqual(indexed.loc["ONLYARA", "median_D"], 1.5)
+        # Sorted by q_model ascending -> the strongest effect (CONSISTENT) is first.
+        self.assertEqual(result.iloc[0]["tf"], "CONSISTENT")
+
+    def test_sign_flip_effect_attenuates(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            pairs = self._make_pairs(tmp)
+
+            # Act
+            result = pooled_model_tf_significance(pairs).set_index("tf")
+
+        # Assert: the sign-flip TF washes out (median 0, far less significant than
+        # the consistent TF) -> documents the pooled main-effect caveat.
+        self.assertEqual(result.loc["FLIP", "median_D"], 0)
+        self.assertGreater(result.loc["FLIP", "p_model"], result.loc["CONSISTENT", "p_model"])
+
+    def test_q_values_monotone_in_p(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            pairs = self._make_pairs(tmp)
+
+            # Act
+            result = pooled_model_tf_significance(pairs)
+
+        # Assert: BH q-values are non-decreasing when ordered by p-value.
+        finite = result.dropna(subset=["p_model"]).sort_values("p_model")
+        self.assertTrue((finite["q_model"].diff().dropna() >= -1e-12).all())
+
+    def test_empty_pairs_raises(self) -> None:
+        # Act / Assert
+        with self.assertRaises(ValueError):
+            pooled_model_tf_significance([])
+
+
+class InteractionModelTfSignificanceTest(unittest.TestCase):
+    """Tests for the unpaired per-TF interaction (model effect differs by group)."""
+
+    def _make_groups(self, tmp: str) -> Tuple[Tuple[str, str], Tuple[str, str]]:
+        """Two disjoint-gene groups with a differing, a matched, and a degenerate TF.
+
+        DIFFERS has D=+3 in group A and D=-3 in group B (clearly different); MATCHED
+        has the same alternating D distribution in both groups; DEGENERATE has D=0
+        everywhere (Mann-Whitney degenerate).
+        """
+        group_a_model_a = os.path.join(tmp, "ga_ma")
+        group_a_model_b = os.path.join(tmp, "ga_mb")
+        group_b_model_a = os.path.join(tmp, "gb_ma")
+        group_b_model_b = os.path.join(tmp, "gb_mb")
+        matched = [0, 2, 0, 2, 0, 2, 0, 2]
+        _write_model_pair(
+            group_a_model_a,
+            group_a_model_b,
+            list(range(8)),
+            {"DIFFERS": [3] * 8, "MATCHED": matched, "DEGENERATE": [0] * 8},
+        )
+        _write_model_pair(
+            group_b_model_a,
+            group_b_model_b,
+            list(range(8, 16)),
+            {"DIFFERS": [-3] * 8, "MATCHED": matched, "DEGENERATE": [0] * 8},
+        )
+        return (group_a_model_a, group_a_model_b), (group_b_model_a, group_b_model_b)
+
+    def test_differing_tf_is_most_significant(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            group_a_pair, group_b_pair = self._make_groups(tmp)
+
+            # Act
+            result = interaction_model_tf_significance(group_a_pair, group_b_pair)
+
+        # Assert: expected columns.
+        self.assertEqual(
+            list(result.columns),
+            [
+                "tf", "n_a", "n_b", "median_D_a", "median_D_b",
+                "u_stat", "p_interaction", "q_interaction",
+            ],
+        )
+        indexed = result.set_index("tf")
+        # DIFFERS separates the two groups -> smallest p; MATCHED does not.
+        self.assertLess(
+            indexed.loc["DIFFERS", "p_interaction"], indexed.loc["MATCHED", "p_interaction"]
+        )
+        self.assertEqual(indexed.loc["DIFFERS", "n_a"], 8)
+        self.assertEqual(indexed.loc["DIFFERS", "n_b"], 8)
+        self.assertAlmostEqual(indexed.loc["DIFFERS", "median_D_a"], 3.0)
+        self.assertAlmostEqual(indexed.loc["DIFFERS", "median_D_b"], -3.0)
+        # Sorted by q_interaction ascending -> the differing TF comes first.
+        self.assertEqual(result.iloc[0]["tf"], "DIFFERS")
+
+    def test_custom_labels_rename_group_columns(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            group_a_pair, group_b_pair = self._make_groups(tmp)
+
+            # Act
+            result = interaction_model_tf_significance(
+                group_a_pair, group_b_pair, label_a="ara_genes", label_b="zea_genes"
+            )
+
+        # Assert: the group columns carry the meaningful suffixes and the neutral
+        # a/b names are gone; the shared stat columns are unchanged.
+        for col in (
+            "n_ara_genes", "n_zea_genes", "median_D_ara_genes", "median_D_zea_genes",
+            "u_stat", "p_interaction", "q_interaction",
+        ):
+            self.assertIn(col, result.columns)
+        for col in ("n_a", "n_b", "median_D_a", "median_D_b"):
+            self.assertNotIn(col, result.columns)
+
+    def test_degenerate_tf_is_not_significant(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            group_a_pair, group_b_pair = self._make_groups(tmp)
+
+            # Act
+            result = interaction_model_tf_significance(group_a_pair, group_b_pair).set_index("tf")
+
+        # Assert: an all-equal (D=0 in both groups) TF cannot be significant.
+        # scipy 1.10 returns p=1.0 here rather than raising; the function's
+        # ValueError guard still protects the empty-input path.
+        degenerate_p = result.loc["DEGENERATE", "p_interaction"]
+        self.assertTrue(math.isnan(degenerate_p) or degenerate_p >= 0.99)
 
 
 if __name__ == "__main__":
