@@ -27,6 +27,11 @@ src/workflows/mutation_distribution_analysis/*/*.json
 src/workflows/mutation_distribution_analysis/*/*.csv
 src/workflows/mutation_distribution_analysis/visualizations/*
 src/workflows/mutation_distance_analysis/results/
+src/workflows/compare_reruns/**/*.png
+src/workflows/compare_reruns/**/*.svg
+src/workflows/compare_reruns/**/*.pdf
+src/workflows/compare_reruns/**/*.csv
+src/workflows/compare_reruns/**/*.txt
 src/workflows/overlap_analysis/correct_construct/*.fa
 src/workflows/overlap_analysis/correct_construct/*.fai
 src/workflows/overlap_analysis/correct_construct/plots/*
