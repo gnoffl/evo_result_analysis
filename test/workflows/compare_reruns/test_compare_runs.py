@@ -211,14 +211,14 @@ class TestComputeSummary(unittest.TestCase):
                     "gene": "g2", "before": 0.8, "after_A": 0.9, "after_B": 0.9,
                     "n_mutations_A": 2.0, "n_mutations_B": 2.0,
                     "delta_after": 0.0, "delta_n_mutations": 0.0,
-                    "shared_mutations": 2, "a_only_mutations": 0, "b_only_mutations": 0,
+                    "shared_mutations": 2, "a_only_mutations": 1, "b_only_mutations": 1,
                 },
             ],
             columns=PER_GENE_COLUMNS,
         )
         summary = compute_summary(per_gene, {"both": 2, "a_only": 0, "b_only": 0}, "a", "b")
         # Only g2 contributes: fraction 1.0
-        self.assertAlmostEqual(summary["mean_shared_fraction"], 1.0)
+        self.assertAlmostEqual(summary["mean_shared_fraction"], 0.5)
 
 
 class TestFormatSummary(unittest.TestCase):
