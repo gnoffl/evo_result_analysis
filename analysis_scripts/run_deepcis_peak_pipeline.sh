@@ -26,10 +26,11 @@ usage() {
     echo "  --deepcis-window-size <int>     Sliding window size in bp"
     echo "  --deepcis-step <int>            Step size between windows in bp"
     echo "  --deepcis-batch-size <int>      Batch size for model inference"
+    echo "  --mutation-count <int>          Exact mutation count of the optimized sequence per gene (default: use max-mutation entry). Suffixes analysis_name with _mut<N> and skips genes lacking the exact count."
     echo "  --overwrite                     Re-run deepcis_scanner even if output exists"
     echo ""
     echo "Optional Arguments (peak_scanner):"
-    echo "  --signal-type <type>            Peak signal type: reference|max_mutated|difference|all (default: all)"
+    echo "  --signal-type <type>            Peak signal type: reference|optimized|difference|all (default: all)"
     echo "  --annotator-window-size <int>   PeakAnnotator window size in bp"
     echo "  --annotator-step-size <int>     PeakAnnotator step size in bp"
     echo "  --annotator-threshold-peak <f>  PeakAnnotator detection threshold"
@@ -50,7 +51,7 @@ usage() {
     echo "  1) Runs deepcis_scanner"
     echo "  2) Runs peak_scanner (all signal types by default)"
     echo "  3) Runs analyze_peaks peak summary"
-    echo "  4) Clears visualization folder and runs deepcis_visualize with --random-subset"
+    echo "  4) Clears visualization folder and runs deepcis_visualize (--random-subset only when neither --genes nor --tfs is given)"
     echo ""
     echo "Output layout inside <output_folder>:"
     echo "  deepcis_scan/deepcis_window_scan_<analysis_name>.csv"
@@ -84,6 +85,7 @@ MODEL_PATH="models/deepcis/deepCIS_model_chrom_1_model.h5"
 DEEPCIS_WINDOW_SIZE=""
 DEEPCIS_STEP_SIZE=""
 DEEPCIS_BATCH_SIZE=""
+MUTATION_COUNT=""
 OVERWRITE_FLAG=""
 
 SIGNAL_TYPE="all"
@@ -119,6 +121,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --deepcis-batch-size)
             DEEPCIS_BATCH_SIZE="$2"
+            shift 2
+            ;;
+        --mutation-count)
+            MUTATION_COUNT="$2"
             shift 2
             ;;
         --overwrite)
@@ -190,13 +196,24 @@ fi
 
 # Validate signal type upfront to fail fast.
 case "$SIGNAL_TYPE" in
-    reference|max_mutated|difference|all)
+    reference|optimized|difference|all)
         ;;
     *)
-        echo -e "${RED}Error: --signal-type must be one of reference|max_mutated|difference|all${NC}"
+        echo -e "${RED}Error: --signal-type must be one of reference|optimized|difference|all${NC}"
         exit 1
         ;;
 esac
+
+# Validate mutation count and encode it into the analysis name so every
+# downstream filename (scan CSV, peak CSVs, viz dir) carries it. When unset the
+# name is left unchanged, preserving prior filenames and the max-mutation path.
+if [ -n "$MUTATION_COUNT" ]; then
+    if ! [[ "$MUTATION_COUNT" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}Error: --mutation-count must be a non-negative integer${NC}"
+        exit 1
+    fi
+    ANALYSIS_NAME="${ANALYSIS_NAME}_mut${MUTATION_COUNT}"
+fi
 
 # Prepare output folder first so realpath always works.
 mkdir -p "$OUTPUT_FOLDER"
@@ -236,7 +253,7 @@ SCAN_BASENAME="deepcis_window_scan_${ANALYSIS_NAME}"
 SCAN_CSV="$SCAN_DIR/${SCAN_BASENAME}.csv"
 PEAK_DIR="$SCAN_DIR"
 if [ "$SIGNAL_TYPE" = "all" ]; then
-    PEAK_SIGNAL_LABEL="reference_max_mutated_difference"
+    PEAK_SIGNAL_LABEL="reference_optimized_difference"
 else
     PEAK_SIGNAL_LABEL="$SIGNAL_TYPE"
 fi
@@ -285,6 +302,12 @@ if [ -n "$DEEPCIS_BATCH_SIZE" ]; then
 fi
 if [ -n "$OVERWRITE_FLAG" ]; then
     SCAN_CMD+=("$OVERWRITE_FLAG")
+fi
+if [ -n "$MUTATION_COUNT" ]; then
+    SCAN_CMD+=(--mutation-count "$MUTATION_COUNT")
+fi
+if [ ${#GENES_ARR[@]} -gt 0 ]; then
+    SCAN_CMD+=(--genes "${GENES_ARR[@]}")
 fi
 
 "${SCAN_CMD[@]}"
@@ -367,9 +390,14 @@ declare -a VIZ_CMD=(
     --input "$SCAN_CSV"
     --peaks "$PEAK_OUTPUT_FILE"
     --output "$VIS_DIR"
-    --random-subset
     --format "$VIZ_FORMAT"
 )
+
+# Only fall back to a random subset when the user has not explicitly restricted
+# the plots via --genes or --tfs; otherwise plot exactly what was requested.
+if [ ${#GENES_ARR[@]} -eq 0 ] && [ ${#TFS_ARR[@]} -eq 0 ]; then
+    VIZ_CMD+=(--random-subset)
+fi
 
 if [ "$HIGHLIGHT_PADDING" = false ]; then
     VIZ_CMD+=(--no-highlight-padding)

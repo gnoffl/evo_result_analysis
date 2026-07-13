@@ -81,7 +81,7 @@ class AnalyzePeaksIntegrationBase(unittest.TestCase):
                 "peak_end": [120, 170, 220, 320, 370],
                 "peak_area": [0.5, 0.3, 0.7, 0.6, -0.4],
                 "signal_type": [
-                    "reference", "difference", "max_mutated",
+                    "reference", "difference", "optimized",
                     "reference", "difference",
                 ],
             }
@@ -290,7 +290,7 @@ class TestPeakSummarizationMode(AnalyzePeaksIntegrationBase):
             assert "peak_count" not in summary.columns
 
             # Signal types become columns
-            for col in ("reference", "diff_added", "diff_removed", "max_mutated"):
+            for col in ("reference", "diff_added", "diff_removed", "optimized"):
                 assert col in summary.columns, f"Expected column '{col}' in summary"
 
             # WRKY40: 2 reference peaks, 1 diff_added, 1 diff_removed, diff_calc=0
@@ -299,7 +299,7 @@ class TestPeakSummarizationMode(AnalyzePeaksIntegrationBase):
             self.assertEqual(wrky_row["reference"], 2)
             self.assertEqual(wrky_row["diff_added"], 1)
             self.assertEqual(wrky_row["diff_removed"], 1)
-            self.assertEqual(wrky_row["max_mutated"], 0)
+            self.assertEqual(wrky_row["optimized"], 0)
             self.assertEqual(wrky_row["diff_calc"], -2)
 
             # Output is sorted by diff_calc descending
@@ -324,7 +324,7 @@ class TestPeakSummarizationMode(AnalyzePeaksIntegrationBase):
                 "peak_end": [120, 170, 220, 230, 370, 420],
                 "peak_area": [0.5, 0.3, 0.7, 0.6, -0.4, 0.2],
                 "signal_type": [
-                    "reference", "difference", "max_mutated", "difference",
+                    "reference", "difference", "optimized", "difference",
                     "reference", "difference",
                 ],
             }
@@ -347,7 +347,7 @@ class TestPeakSummarizationMode(AnalyzePeaksIntegrationBase):
 
             # After filtering to target region [240, 340] for gene "01":
             #   AT1G01_01 WRKY40 150-170 (middle=285) → retained → diff_added (area=0.3>0)
-            #   AT1G01_01 bHLH74 200-220 (middle=335) → retained → max_mutated
+            #   AT1G01_01 bHLH74 200-220 (middle=335) → retained → optimized
             # AT2G02_02 peaks fall outside the region and are excluded.
             # Wide format: one row per TF (WRKY40, bHLH74).
             self.assertEqual(len(summary), 2)
@@ -355,12 +355,12 @@ class TestPeakSummarizationMode(AnalyzePeaksIntegrationBase):
 
             wrky_row = summary[summary["tf"] == "WRKY40"].iloc[0]
             self.assertEqual(wrky_row["diff_added"], 1)
-            self.assertEqual(wrky_row["max_mutated"], 0)
+            self.assertEqual(wrky_row["optimized"], 0)
             self.assertEqual(wrky_row["diff_calc"], 0)
 
             bhlh_row = summary[summary["tf"] == "bHLH74"].iloc[0]
             self.assertEqual(bhlh_row["diff_added"], 0)
-            self.assertEqual(bhlh_row["max_mutated"], 1)
+            self.assertEqual(bhlh_row["optimized"], 1)
             self.assertEqual(bhlh_row["diff_calc"], 1)
 
             assert (output_dir / "peak_summary.csv").exists()
@@ -381,7 +381,7 @@ class TestPrepareDiffCalcData(unittest.TestCase):
             {
                 "tf": ["A_tnt", "B_tnt", "C_tnt"],
                 "reference": [10, 5, 8],
-                "max_mutated": [12, 3, 8],
+                "optimized": [12, 3, 8],
                 "diff_calc": [2, -2, 0],
             }
         )

@@ -213,6 +213,66 @@ def _get_max_mutation_entry(pareto_front: List[ParetoEntry]) -> ParetoEntry:
     return max(pareto_front, key=lambda e: e[2])
 
 
+def _get_entry_by_mutation_count(
+    pareto_front: List[ParetoEntry], target: int
+) -> ParetoEntry:
+    """Return the pareto entry whose mutation count matches *target* exactly.
+
+    Mutation counts are compared after rounding the stored count to the nearest
+    integer, so a target of ``30`` matches an entry with count ``30`` (or a
+    float that rounds to ``30``). Exact match only: when no entry matches, the
+    gene is meant to be skipped, so this raises :class:`ValueError`.
+
+    Args:
+        pareto_front: Loaded pareto front as a list of
+            ``(mutable_sequence, fitness, mutation_count)`` tuples.
+        target: Desired mutation count.
+
+    Returns:
+        The (first) entry whose rounded mutation count equals *target*.
+
+    Raises:
+        ValueError: If no entry has the requested mutation count.
+    """
+    for entry in pareto_front:
+        if round(entry[2]) == target:
+            return entry
+    available_counts = sorted({round(entry[2]) for entry in pareto_front})
+    raise ValueError(
+        f"No pareto entry with mutation count {target}. "
+        f"Available counts: {available_counts}"
+    )
+
+
+def _reject_stale_scan(scan_df: pd.DataFrame, source: str) -> None:
+    """Raise if a scan DataFrame uses the pre-"optimized" ``max_mutated`` label.
+
+    Older pipeline versions labeled the optimized sequence ``max_mutated`` in the
+    ``sequence_type`` column.  Silently reusing such a file yields near-empty
+    downstream results, since the current pipeline filters on ``optimized``, so
+    detect it and fail loudly instead.
+
+    Args:
+        scan_df: Loaded scan results.
+        source: Path the data was read from (used in the error message).
+
+    Raises:
+        ValueError: If any ``sequence_type`` value is ``max_mutated``.
+    """
+    stale_label = "max_mutated"
+    if (
+        "sequence_type" in scan_df.columns
+        and stale_label in set(scan_df["sequence_type"].unique())
+    ):
+        raise ValueError(
+            f"Scan output at {source} is stale: its 'sequence_type' column "
+            f"contains '{stale_label}', the label used by a previous pipeline "
+            f"version (the current pipeline expects 'optimized'). Re-run with "
+            f"--overwrite to regenerate it, or use a fresh output folder / delete "
+            f"the old deepcis_scan artifacts first."
+        )
+
+
 def find_padding_region(sequence: str):
     """Uses docstrings to find longest stretch of consequtive "N" and returns start and end index of it.
 
@@ -320,14 +380,20 @@ def scan_single_gene_folder(
     window_size: int = DEFAULT_WINDOW_SIZE,
     step: int = DEFAULT_STEP_SIZE,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    mutation_count: Optional[int] = None,
 ) -> pd.DataFrame:
-    """Scan the 0-mutation and max-mutation sequences of one gene with deepCIS.
+    """Scan the reference and one optimized sequence of a gene with deepCIS.
 
     Reads the pareto front and reference sequence directly from *gene_data*
     (pre-loaded from the gene folder).  For each of the two sequences
-    (``'reference'`` and ``'max_mutated'``), generates overlapping 250 bp
+    (``'reference'`` and ``'optimized'``), generates overlapping 250 bp
     windows, encodes them as one-hot arrays, and runs them through deepCIS
     in batches.
+
+    The optimized sequence is selected from the pareto front by mutation count:
+    when *mutation_count* is ``None`` the entry with the most mutations is used
+    (default behavior); otherwise the entry whose mutation count matches
+    *mutation_count* exactly is used.
 
     Args:
         model: Loaded deepCIS ``tf.keras.Model``.
@@ -335,23 +401,35 @@ def scan_single_gene_folder(
         window_size: Sliding-window size in bp (default 250).
         step: Step size between window starts in bp (default 50).
         batch_size: Number of windows per model call.
-        extragenic: Extragenic bp used during sequence extraction.
-        intragenic: Intragenic bp used during sequence extraction.
-        central_padding: Length of the central N-pad (default 20).
+        mutation_count: Exact mutation count of the optimized sequence to scan.
+            When ``None``, the maximally-mutated entry is used.
 
     Returns:
         ``pd.DataFrame`` with columns::
 
             gene, sequence_type, window_start, window_end,
             contains_padding, tf_0, tf_1, …, tf_45
+
+    Raises:
+        ValueError: If *mutation_count* is given but no pareto entry has that
+            exact mutation count.
     """
     ref_full = gene_data.reference_sequence_full
-    max_entry = _get_max_mutation_entry(gene_data.pareto_front)
-    max_full = get_full_sequence(max_entry[0], gene_data.reference_sequence_full, gene_data.mutation_start,
-                                 gene_data.mutation_end,)
+    if mutation_count is None:
+        optimized_entry = _get_max_mutation_entry(gene_data.pareto_front)
+    else:
+        optimized_entry = _get_entry_by_mutation_count(
+            gene_data.pareto_front, mutation_count
+        )
+    optimized_full = get_full_sequence(
+        optimized_entry[0],
+        gene_data.reference_sequence_full,
+        gene_data.mutation_start,
+        gene_data.mutation_end,
+    )
 
     rows: List[dict] = []
-    for seq_str, seq_type in [(ref_full, "reference"), (max_full, "max_mutated")]:
+    for seq_str, seq_type in [(ref_full, "reference"), (optimized_full, "optimized")]:
         windows = slide_windows(seq_str, window_size=window_size, step=step)
         if not windows:
             raise ValueError(f"Could not generate any windows for gene {gene_data.gene_name} with sequence type {seq_type}.")
@@ -383,6 +461,8 @@ def scan_all_genes(
     step: int = DEFAULT_STEP_SIZE,
     batch_size: int = DEFAULT_BATCH_SIZE,
     overwrite: bool = False,
+    mutation_count: Optional[int] = None,
+    genes: Optional[List[str]] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, GeneRunData]]:
     """Run deepCIS sliding-window scan over all gene folders in a run folder.
 
@@ -405,6 +485,14 @@ def scan_all_genes(
         batch_size: Inference batch size (default 64).
         overwrite: When False, load and return an existing output file without
             re-running inference (genes_data dict will be empty in that case).
+        mutation_count: Exact mutation count of the optimized sequence to scan
+            for every gene.  When ``None``, the maximally-mutated entry is used.
+            Genes whose pareto front lacks the exact count are skipped and
+            logged.
+        genes: Optional list of gene-folder basenames to restrict the scan to.
+            When given, only matching gene folders are scanned and any requested
+            gene not found in the run folder is logged.  When ``None``, all
+            discovered gene folders are scanned.
 
     Returns:
         Tuple of:
@@ -418,13 +506,31 @@ def scan_all_genes(
     if os.path.exists(csv_path) and not overwrite:
         print_status(f"Output already exists: {csv_path}", "WARNING")
         print_status("Loading existing file.  Pass --overwrite to re-run.", "INFO")
-        return pd.read_csv(csv_path), {}
+        existing_df = pd.read_csv(csv_path)
+        _reject_stale_scan(existing_df, csv_path)
+        return existing_df, {}
 
     gene_folders = find_gene_folders(run_folder)
     print_status(f"Found {len(gene_folders)} gene folders in {run_folder}")
     if not gene_folders:
         raise FileNotFoundError(
             f"No valid gene folders found in {run_folder}."
+        )
+
+    if genes is not None:
+        requested = set(genes)
+        gene_folders = [
+            folder for folder in gene_folders
+            if os.path.basename(folder) in requested
+        ]
+        found = {os.path.basename(folder) for folder in gene_folders}
+        for missing in sorted(requested - found):
+            print_status(
+                f"Requested gene not found in run folder: {missing}", "WARNING"
+            )
+        print_status(
+            f"Restricted scan to {len(gene_folders)} of {len(requested)} "
+            "requested genes"
         )
 
     os.makedirs(os.path.join(output_path, "deepcis_scan"), exist_ok=True)
@@ -439,7 +545,7 @@ def scan_all_genes(
             gene_data = GeneRunData.load_gene_run_data(gene_folder)
             genes_data[gene_name] = gene_data
             df = scan_single_gene_folder(model=model, gene_data=gene_data, window_size=window_size, step=step,
-                                         batch_size=batch_size)
+                                         batch_size=batch_size, mutation_count=mutation_count)
             all_frames.append(df)
         except Exception as exc:
             print_status(f"Skipping gene {gene_name}: {exc}", "WARNING")
@@ -505,7 +611,11 @@ Examples:
     
     # Optional arguments - behavior
     parser.add_argument( "--overwrite", "-ow", action="store_true", help="Overwrite existing output file (default: skip if exists)",)
-    
+
+    # Optional arguments - sequence / gene selection
+    parser.add_argument( "--mutation-count", "-mc", type=int, default=None, metavar="N", help="Exact mutation count of the optimized sequence to scan per gene (default: use the maximally-mutated pareto entry). Genes lacking this exact count are skipped.",)
+    parser.add_argument( "--genes", "-g", nargs="+", default=None, metavar="GENE", help="Restrict the scan to these gene-folder basenames (default: scan all genes).",)
+
     parsed_args = parser.parse_args(args)
     
     # Validate model path exists
@@ -523,7 +633,9 @@ Examples:
         parser.error("--step must be positive")
     if parsed_args.batch_size <= 0:
         parser.error("--batch-size must be positive")
-    
+    if parsed_args.mutation_count is not None and parsed_args.mutation_count < 0:
+        parser.error("--mutation-count must be non-negative")
+
     return parsed_args
 
 
@@ -557,6 +669,8 @@ def run_deepcis_scan(args):
             step=args.step,
             batch_size=args.batch_size,
             overwrite=args.overwrite,
+            mutation_count=args.mutation_count,
+            genes=args.genes,
         )
         
         print_status(

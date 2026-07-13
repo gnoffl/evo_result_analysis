@@ -36,7 +36,7 @@ class TestExtractPlotData(unittest.TestCase):
         # Create sample deepCIS scan data for testing
         self.sample_scan_data = pd.DataFrame({
             "gene": ["gene1", "gene1", "gene1", "gene1"],
-            "sequence_type": ["reference", "reference", "max_mutated", "max_mutated"],
+            "sequence_type": ["reference", "reference", "optimized", "optimized"],
             "window_start": [0, 50, 0, 50],
             "window_end": [250, 300, 250, 300],
             "contains_padding": [False, True, False, True],
@@ -100,7 +100,7 @@ class TestExtractPlotData(unittest.TestCase):
         """Test extraction with only one window."""
         data = {
             "gene": ["gene1", "gene1"],
-            "sequence_type": ["reference", "max_mutated"],
+            "sequence_type": ["reference", "optimized"],
             "window_start": [100, 100],
             "window_end": [350, 350],
             "contains_padding": [False, True],
@@ -125,7 +125,7 @@ class TestExtractPlotData(unittest.TestCase):
         """Test extraction when reference sequence is missing."""
         data = {
             "gene": ["gene1"],
-            "sequence_type": ["max_mutated"],
+            "sequence_type": ["optimized"],
             "window_start": [0],
             "window_end": [250],
             "contains_padding": [False],
@@ -146,7 +146,7 @@ class TestExtractPlotData(unittest.TestCase):
         """Test extraction with many windows."""
         data = {
             "gene": (["gene1"] * 6),
-            "sequence_type": ["reference"] * 3 + ["max_mutated"] * 3,
+            "sequence_type": ["reference"] * 3 + ["optimized"] * 3,
             "window_start": [0, 50, 100, 0, 50, 100],
             "window_end": [250, 300, 350, 250, 300, 350],
             "contains_padding": [False] * 6,
@@ -176,7 +176,7 @@ class TestGetTfColumns(unittest.TestCase):
         """Set up test fixtures."""
         self.sample_scan_data = pd.DataFrame({
             "gene": ["gene1", "gene1", "gene1", "gene1"],
-            "sequence_type": ["reference", "reference", "max_mutated", "max_mutated"],
+            "sequence_type": ["reference", "reference", "optimized", "optimized"],
             "window_start": [0, 50, 0, 50],
             "window_end": [250, 300, 250, 300],
             "contains_padding": [False, True, False, True],
@@ -267,7 +267,7 @@ class TestGetPaddingRegions(unittest.TestCase):
         """Set up test fixtures."""
         self.sample_scan_data = pd.DataFrame({
             "gene": ["gene1", "gene1", "gene1", "gene1"],
-            "sequence_type": ["reference", "reference", "max_mutated", "max_mutated"],
+            "sequence_type": ["reference", "reference", "optimized", "optimized"],
             "window_start": [0, 50, 0, 50],
             "window_end": [250, 300, 250, 300],
             "contains_padding": [False, True, False, True],
@@ -308,7 +308,7 @@ class TestGetPaddingRegions(unittest.TestCase):
         """Test with multiple separate padding regions."""
         data = {
             "gene": ["gene1"] * 4,
-            "sequence_type": ["reference"] * 2 + ["max_mutated"] * 2,
+            "sequence_type": ["reference"] * 2 + ["optimized"] * 2,
             "window_start": [0, 100, 0, 100],
             "window_end": [250, 350, 250, 350],
             "contains_padding": [True, False, False, True],
@@ -325,7 +325,7 @@ class TestGetPaddingRegions(unittest.TestCase):
         """Test that padding regions are sorted."""
         data = {
             "gene": ["gene1"] * 2,
-            "sequence_type": ["reference", "max_mutated"],
+            "sequence_type": ["reference", "optimized"],
             "window_start": [100, 0],
             "window_end": [350, 250],
             "contains_padding": [True, True],
@@ -345,7 +345,7 @@ class TestGetPaddingRegions(unittest.TestCase):
         data = pd.DataFrame(
             {
                 "gene": ["gene1", "gene1", "gene1", "gene1"],
-                "sequence_type": ["reference", "reference", "max_mutated", "max_mutated"],
+                "sequence_type": ["reference", "reference", "optimized", "optimized"],
                 "window_start": [0, 50, 0, 50],
                 "window_end": [250, 300, 250, 300],
                 "contains_padding": [True, True, False, False],
@@ -369,13 +369,13 @@ class TestPeakBackgroundRegions(unittest.TestCase):
         df = pd.DataFrame(
             {
                 "gene": ["gene1", "gene1", "gene1", "gene1"],
-                "sequence_type": ["reference", "reference", "max_mutated", "max_mutated"],
+                "sequence_type": ["reference", "reference", "optimized", "optimized"],
                 "window_start": [0, 50, 0, 50],
                 "window_end": [250, 300, 250, 300],
                 "contains_padding": [False, False, False, False],
                 "tf_0": [0.1, 0.5, 0.2, 0.6],
                 "tf_0__reference__in_peak": [False, True, False, False],
-                "tf_0__max_mutated__in_peak": [False, False, True, True],
+                "tf_0__optimized__in_peak": [False, False, True, True],
                 "tf_0__difference__in_peak": [False, False, False, True],
             }
         )
@@ -383,10 +383,10 @@ class TestPeakBackgroundRegions(unittest.TestCase):
         regions = _get_peak_background_regions(df, "tf_0")
 
         self.assertIn("reference", regions)
-        self.assertIn("max_mutated", regions)
+        self.assertIn("optimized", regions)
         self.assertIn("difference", regions)
         self.assertEqual(regions["reference"], [(50.0, 300.0)])
-        self.assertEqual(regions["max_mutated"], [(0.0, 300.0)])
+        self.assertEqual(regions["optimized"], [(0.0, 300.0)])
         self.assertEqual(regions["difference"], [(50.0, 300.0)])
 
     def test_get_peak_background_regions_respects_requested_types(self):
@@ -414,7 +414,7 @@ class TestPeakBackgroundRegionsFromPeaks(unittest.TestCase):
             {
                 "gene": ["gene1", "gene1", "gene1", "gene1"],
                 "tf": ["tf_0", "tf_0", "tf_0", "tf_0"],
-                "signal_type": ["reference", "reference", "max_mutated", "difference"],
+                "signal_type": ["reference", "reference", "optimized", "difference"],
                 "peak_start": [50, 80, 0, 60],
                 "peak_end": [120, 300, 250, 300],
                 "score": [0.1, 0.2, 0.3, 0.4],
@@ -427,10 +427,10 @@ class TestPeakBackgroundRegionsFromPeaks(unittest.TestCase):
         regions = _get_peak_background_regions_from_peaks(peak_df, "gene1", "tf_0")
 
         self.assertIn("reference", regions)
-        self.assertIn("max_mutated", regions)
+        self.assertIn("optimized", regions)
         self.assertIn("difference", regions)
         self.assertEqual(regions["reference"], [(175.0, 425.0)])
-        self.assertEqual(regions["max_mutated"], [(125.0, 375.0)])
+        self.assertEqual(regions["optimized"], [(125.0, 375.0)])
         self.assertEqual(regions["difference"], [(185.0, 425.0)])
 
     def test_get_peak_background_regions_from_peaks_respects_requested_types(self):
@@ -504,7 +504,7 @@ class TestValidateAndSetDefaults(unittest.TestCase):
         """Set up test fixtures."""
         self.sample_scan_data = pd.DataFrame({
             "gene": ["gene1", "gene1", "gene1", "gene1"],
-            "sequence_type": ["reference", "reference", "max_mutated", "max_mutated"],
+            "sequence_type": ["reference", "reference", "optimized", "optimized"],
             "window_start": [0, 50, 0, 50],
             "window_end": [250, 300, 250, 300],
             "contains_padding": [False, True, False, True],
@@ -518,7 +518,7 @@ class TestValidateAndSetDefaults(unittest.TestCase):
                 "geneA", "geneA", "geneA", "geneA",
                 "geneB", "geneB", "geneB", "geneB"
             ],
-            "sequence_type": ["reference", "reference", "max_mutated", "max_mutated"] * 2,
+            "sequence_type": ["reference", "reference", "optimized", "optimized"] * 2,
             "window_start": [0, 50, 0, 50, 100, 150, 100, 150],
             "window_end": [250, 300, 250, 300, 350, 400, 350, 400],
             "contains_padding": [False, True, False, True, False, False, True, True],
@@ -573,7 +573,7 @@ class TestLoadInputData(unittest.TestCase):
         """Set up test fixtures."""
         self.sample_scan_data = pd.DataFrame({
             "gene": ["gene1", "gene1", "gene1", "gene1"],
-            "sequence_type": ["reference", "reference", "max_mutated", "max_mutated"],
+            "sequence_type": ["reference", "reference", "optimized", "optimized"],
             "window_start": [0, 50, 0, 50],
             "window_end": [250, 300, 250, 300],
             "contains_padding": [False, True, False, True],
@@ -638,7 +638,7 @@ class TestVisualizeScanResults(unittest.TestCase):
         """Set up test fixtures."""
         self.sample_scan_data = pd.DataFrame({
             "gene": ["gene1", "gene1", "gene1", "gene1"],
-            "sequence_type": ["reference", "reference", "max_mutated", "max_mutated"],
+            "sequence_type": ["reference", "reference", "optimized", "optimized"],
             "window_start": [0, 50, 0, 50],
             "window_end": [250, 300, 250, 300],
             "contains_padding": [False, True, False, True],
@@ -649,7 +649,7 @@ class TestVisualizeScanResults(unittest.TestCase):
         self.sample_peak_data = pd.DataFrame({
             "gene": ["gene1", "gene1", "gene1"],
             "tf": ["tf_0", "tf_0", "tf_0"],
-            "signal_type": ["reference", "max_mutated", "difference"],
+            "signal_type": ["reference", "optimized", "difference"],
             "peak_start": [0, 50, 100],
             "peak_end": [250, 300, 350],
             "score": [0.1, 0.2, 0.3],
@@ -668,7 +668,7 @@ class TestVisualizeScanResults(unittest.TestCase):
                 {
                     "gene": ["gene1", "gene1"],
                     "tf": ["tf_0", "tf_0"],
-                    "signal_type": ["reference", "max_mutated"],
+                    "signal_type": ["reference", "optimized"],
                     "peak_start": [0, 50],
                     "peak_end": [250, 300],
                     "score": [0.1, 0.2],
@@ -762,7 +762,7 @@ class TestVisualizeScanResults(unittest.TestCase):
             base_dir = os.path.join(tmpdir, "gene1")
             expected_files = {
                 os.path.join(base_dir, "gene1_TF_0_reference.png"),
-                os.path.join(base_dir, "gene1_TF_0_max_mutated.png"),
+                os.path.join(base_dir, "gene1_TF_0_optimized.png"),
                 os.path.join(base_dir, "gene1_TF_0_difference.png"),
             }
             for expected_file in expected_files:
@@ -772,7 +772,7 @@ class TestVisualizeScanResults(unittest.TestCase):
         """Test random subset selection with multiple signal types."""
         data = pd.DataFrame({
             "gene": ["geneA", "geneA", "geneB", "geneB", "geneC", "geneC"],
-            "sequence_type": ["reference", "max_mutated"] * 3,
+            "sequence_type": ["reference", "optimized"] * 3,
             "window_start": [0, 0, 0, 0, 0, 0],
             "window_end": [250, 250, 250, 250, 250, 250],
             "contains_padding": [False, False, False, False, False, False],
@@ -784,7 +784,7 @@ class TestVisualizeScanResults(unittest.TestCase):
         peak_data = pd.DataFrame({
             "gene": ["geneA", "geneA", "geneA"],
             "tf": ["tf_0", "tf_0", "tf_0"],
-            "signal_type": ["reference", "max_mutated", "difference"],
+            "signal_type": ["reference", "optimized", "difference"],
             "peak_start": [0, 50, 100],
             "peak_end": [250, 300, 350],
             "score": [0.1, 0.2, 0.3],

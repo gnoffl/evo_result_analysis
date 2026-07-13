@@ -29,6 +29,8 @@ from analysis.motives.deepcis_scanner import (
     find_padding_region,
     get_full_sequence,
     _get_max_mutation_entry,
+    _get_entry_by_mutation_count,
+    _reject_stale_scan,
     slide_windows,
     load_deepcis_model,
     predict_windows,
@@ -450,6 +452,72 @@ class TestGetMaxMutationEntry(unittest.TestCase):
             _get_max_mutation_entry([])
 
 
+# ============================================================================
+# _get_entry_by_mutation_count Tests
+# ============================================================================
+
+class TestGetEntryByMutationCount(unittest.TestCase):
+    """Tests for the _get_entry_by_mutation_count function."""
+
+    def test_returns_entry_with_exact_count(self):
+        """Test returning the entry whose mutation count matches the target."""
+        pareto_front = [
+            ("SEQ0", 0.5, 0),
+            ("SEQ3", 0.8, 3),
+            ("SEQ5", 0.9, 5),
+        ]
+        result = _get_entry_by_mutation_count(pareto_front, 3)
+        self.assertEqual(result, ("SEQ3", 0.8, 3))
+
+    def test_returns_first_matching_entry(self):
+        """Test that the first entry with the target count is returned."""
+        pareto_front = [
+            ("SEQ_A", 0.5, 4),
+            ("SEQ_B", 0.8, 4),
+        ]
+        result = _get_entry_by_mutation_count(pareto_front, 4)
+        self.assertEqual(result[0], "SEQ_A")
+
+    def test_missing_count_raises_value_error(self):
+        """Test that a target with no matching entry raises ValueError."""
+        pareto_front = [
+            ("SEQ0", 0.5, 0),
+            ("SEQ5", 0.9, 5),
+        ]
+        with self.assertRaises(ValueError):
+            _get_entry_by_mutation_count(pareto_front, 3)
+
+
+# ============================================================================
+# _reject_stale_scan Tests
+# ============================================================================
+
+class TestRejectStaleScan(unittest.TestCase):
+    """Tests for the _reject_stale_scan guard."""
+
+    def test_stale_max_mutated_raises(self):
+        """Test that a scan with the old 'max_mutated' label raises ValueError."""
+        stale_df = pd.DataFrame({
+            "gene": ["g", "g"],
+            "sequence_type": ["reference", "max_mutated"],
+        })
+        with self.assertRaises(ValueError):
+            _reject_stale_scan(stale_df, "/path/to/stale.csv")
+
+    def test_fresh_optimized_passes(self):
+        """Test that a scan with the current 'optimized' label is accepted."""
+        fresh_df = pd.DataFrame({
+            "gene": ["g", "g"],
+            "sequence_type": ["reference", "optimized"],
+        })
+        # Should not raise.
+        _reject_stale_scan(fresh_df, "/path/to/fresh.csv")
+
+    def test_missing_sequence_type_column_passes(self):
+        """Test that a frame without a sequence_type column does not raise."""
+        _reject_stale_scan(pd.DataFrame({"gene": ["g"]}), "/path/to/other.csv")
+
+
 class TestFindPaddingRegion(unittest.TestCase):
     """Tests for the find_padding_region function."""
 
@@ -704,7 +772,7 @@ class TestScanSingleGeneFolder(unittest.TestCase):
     @patch("analysis.motives.deepcis_scanner.N_TF_FAMILIES", 2)
     @patch("analysis.motives.deepcis_scanner.TF_FAMILY_NAMES", ["CTC", "AGA"])
     def test_scan_single_gene_folder_sequence_types(self):
-        """Test that both reference and max_mutated sequences are scanned."""
+        """Test that both reference and optimized sequences are scanned."""
         model = MockDeepCISModel()
         gene_data = self._create_mock_gene_data()
         
@@ -716,7 +784,7 @@ class TestScanSingleGeneFolder(unittest.TestCase):
         )
         
         sequence_types = set(df["sequence_type"].unique())
-        self.assertEqual(sequence_types, {"reference", "max_mutated"})
+        self.assertEqual(sequence_types, {"reference", "optimized"})
 
     @patch("analysis.motives.deepcis_scanner.N_TF_FAMILIES", 2)
     @patch("analysis.motives.deepcis_scanner.TF_FAMILY_NAMES", ["CTC", "AGA"])
@@ -735,7 +803,7 @@ class TestScanSingleGeneFolder(unittest.TestCase):
 
         expected = {
             "gene": ["test_gene"] * 8,
-            "sequence_type": ["reference"] * 4 + ["max_mutated"] * 4,
+            "sequence_type": ["reference"] * 4 + ["optimized"] * 4,
             "window_start": [0, 7, 14, 15] * 2,
             "window_end": [10, 17, 24, 25] * 2,
             "contains_padding": [False, True, True, False] * 2,
@@ -744,6 +812,45 @@ class TestScanSingleGeneFolder(unittest.TestCase):
         }
 
         self.assertTrue(df.equals(pd.DataFrame(expected)))
+
+    @patch("analysis.motives.deepcis_scanner.N_TF_FAMILIES", 2)
+    @patch("analysis.motives.deepcis_scanner.TF_FAMILY_NAMES", ["CTC", "AGA"])
+    def test_scan_single_gene_folder_mutation_count_selects_entry(self):
+        """Test that mutation_count selects a specific pareto entry.
+
+        The mock gene has a 0-mutation entry equal to the reference (no CTC) and
+        a 3-mutation entry containing CTC. Selecting count 3 must place the CTC
+        motif into the optimized rows; selecting count 0 must not.
+        """
+        model = MockDeepCISModel()
+        gene_data = self._create_mock_gene_data()
+
+        df_count_3 = scan_single_gene_folder(
+            model=model, gene_data=gene_data, window_size=10, step=7,
+            mutation_count=3,
+        )
+        df_count_0 = scan_single_gene_folder(
+            model=model, gene_data=gene_data, window_size=10, step=7,
+            mutation_count=0,
+        )
+
+        optimized_ctc_3 = df_count_3[df_count_3["sequence_type"] == "optimized"]["CTC"]
+        optimized_ctc_0 = df_count_0[df_count_0["sequence_type"] == "optimized"]["CTC"]
+        self.assertEqual(optimized_ctc_3.max(), 1.0)
+        self.assertEqual(optimized_ctc_0.max(), 0.0)
+
+    @patch("analysis.motives.deepcis_scanner.N_TF_FAMILIES", 2)
+    @patch("analysis.motives.deepcis_scanner.TF_FAMILY_NAMES", ["CTC", "AGA"])
+    def test_scan_single_gene_folder_missing_count_raises(self):
+        """Test that requesting an absent mutation count raises ValueError."""
+        model = MockDeepCISModel()
+        gene_data = self._create_mock_gene_data()
+
+        with self.assertRaises(ValueError):
+            scan_single_gene_folder(
+                model=model, gene_data=gene_data, window_size=10, step=7,
+                mutation_count=7,
+            )
 
 # ============================================================================
 # scan_all_genes Tests
@@ -843,7 +950,7 @@ class TestScanAllGenes(unittest.TestCase):
 
             expected_1 = {
                 "gene": ["test_gene_1"] * 8,
-                "sequence_type": ["reference"] * 4 + ["max_mutated"] * 4,
+                "sequence_type": ["reference"] * 4 + ["optimized"] * 4,
                 "window_start": [0, 7, 14, 15] * 2,
                 "window_end": [10, 17, 24, 25] * 2,
                 "contains_padding": [False, True, True, False] * 2,
@@ -852,7 +959,7 @@ class TestScanAllGenes(unittest.TestCase):
             }
             expected_2 = {
                 "gene": ["test_gene_2"] * 8,
-                "sequence_type": ["reference"] * 4 + ["max_mutated"] * 4,
+                "sequence_type": ["reference"] * 4 + ["optimized"] * 4,
                 "window_start": [0, 7, 14, 15] * 2,
                 "window_end": [10, 17, 24, 25] * 2,
                 "contains_padding": [False, True, True, False] * 2,
@@ -893,6 +1000,121 @@ class TestScanAllGenes(unittest.TestCase):
             self.assertTrue(gene1_df.equals(df_1), "Gene 1 results should match expected")
             self.assertTrue(gene2_df.equals(df_2), "Gene 2 results should match expected")
             self.assertTrue(result_df.equals(expected_full), "Full result should match expected combined DataFrame")
+
+    def _setup_mixed_count_folders(self, tmpdir):
+        """Create two gene folders whose pareto fronts differ in available counts.
+
+        Gene 1 has a mutation count of 3; gene 2 only has counts 0 and 5. This
+        lets tests request count 3 and confirm gene 2 is skipped while gene 1 is
+        still processed.
+        """
+        gene1_folder = os.path.join(tmpdir, "test_gene_1")
+        os.makedirs(os.path.join(gene1_folder, "saved_populations"))
+        with open(os.path.join(gene1_folder, "parameters.json"), "w") as f:
+            json.dump({"mutation_start": 0, "mutation_end": 10}, f)
+        with open(os.path.join(gene1_folder, "saved_populations", "pareto_front.json"), "w") as f:
+            json.dump([["A" * 10, 0.5, 0], ["AACTCAAAAA", 0.9, 3]], f)
+        gene1_seq = "A" * 10 + "N" * 5 + "G" * 10
+        with open(os.path.join(gene1_folder, "reference_sequence.fa"), "w") as f:
+            f.write(">reference_sequence_full\n" + gene1_seq + "\n")
+
+        gene2_folder = os.path.join(tmpdir, "test_gene_2")
+        os.makedirs(os.path.join(gene2_folder, "saved_populations"))
+        with open(os.path.join(gene2_folder, "parameters.json"), "w") as f:
+            json.dump({"mutation_start": 0, "mutation_end": 10}, f)
+        with open(os.path.join(gene2_folder, "saved_populations", "pareto_front.json"), "w") as f:
+            json.dump([["G" * 10, 0.5, 0], ["GGGGAGACGG", 0.9, 5]], f)
+        gene2_seq = "G" * 10 + "N" * 5 + "A" * 10
+        with open(os.path.join(gene2_folder, "reference_sequence.fa"), "w") as f:
+            f.write(">reference_sequence_full\n" + gene2_seq + "\n")
+
+    @patch("analysis.motives.deepcis_scanner.N_TF_FAMILIES", 2)
+    @patch("analysis.motives.deepcis_scanner.TF_FAMILY_NAMES", ["CTC", "AGA"])
+    @patch("analysis.motives.deepcis_scanner.load_deepcis_model")
+    def test_scan_all_genes_gene_filter_restricts_scan(self, mock_load_model):
+        """Test that the genes= filter restricts which folders are scanned."""
+        mock_load_model.return_value = MockDeepCISModel()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._setup_gene_folders(tmpdir)
+            result_df, genes_data = scan_all_genes(
+                model_path="/model.h5", run_folder=tmpdir, output_path=tmpdir,
+                name="test_filter", window_size=10, step=7, overwrite=True,
+                genes=["test_gene_1"],
+            )
+
+            self.assertEqual(set(result_df["gene"].unique()), {"test_gene_1"})
+            self.assertEqual(set(genes_data.keys()), {"test_gene_1"})
+
+    @patch("analysis.motives.deepcis_scanner.N_TF_FAMILIES", 2)
+    @patch("analysis.motives.deepcis_scanner.TF_FAMILY_NAMES", ["CTC", "AGA"])
+    @patch("analysis.motives.deepcis_scanner.print_status")
+    @patch("analysis.motives.deepcis_scanner.load_deepcis_model")
+    def test_scan_all_genes_unknown_gene_logged(self, mock_load_model, mock_print_status):
+        """Test that a requested gene absent from the run folder is logged."""
+        mock_load_model.return_value = MockDeepCISModel()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._setup_gene_folders(tmpdir)
+            result_df, _ = scan_all_genes(
+                model_path="/model.h5", run_folder=tmpdir, output_path=tmpdir,
+                name="test_unknown", window_size=10, step=7, overwrite=True,
+                genes=["test_gene_1", "does_not_exist"],
+            )
+
+            self.assertEqual(set(result_df["gene"].unique()), {"test_gene_1"})
+            logged_messages = " ".join(
+                str(call) for call in mock_print_status.call_args_list
+            )
+            self.assertIn("does_not_exist", logged_messages)
+
+    @patch("analysis.motives.deepcis_scanner.N_TF_FAMILIES", 2)
+    @patch("analysis.motives.deepcis_scanner.TF_FAMILY_NAMES", ["CTC", "AGA"])
+    @patch("analysis.motives.deepcis_scanner.print_status")
+    @patch("analysis.motives.deepcis_scanner.load_deepcis_model")
+    def test_scan_all_genes_skips_gene_missing_count(self, mock_load_model, mock_print_status):
+        """Test that a gene without the requested count is skipped and logged.
+
+        Gene 1 has count 3 and gene 2 does not; requesting count 3 must process
+        gene 1, skip gene 2, and log the skip.
+        """
+        mock_load_model.return_value = MockDeepCISModel()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._setup_mixed_count_folders(tmpdir)
+            result_df, _ = scan_all_genes(
+                model_path="/model.h5", run_folder=tmpdir, output_path=tmpdir,
+                name="test_skip", window_size=10, step=7, overwrite=True,
+                mutation_count=3,
+            )
+
+            self.assertEqual(set(result_df["gene"].unique()), {"test_gene_1"})
+            logged_messages = " ".join(
+                str(call) for call in mock_print_status.call_args_list
+            )
+            self.assertIn("Skipping gene test_gene_2", logged_messages)
+
+    def test_scan_all_genes_reusing_stale_csv_raises(self):
+        """Test that reusing a stale 'max_mutated' scan CSV raises ValueError.
+
+        With overwrite=False the scanner would otherwise silently return the old
+        file; the stale guard must fail loudly instead.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scan_dir = os.path.join(tmpdir, "deepcis_scan")
+            os.makedirs(scan_dir)
+            stale_csv = os.path.join(scan_dir, "deepcis_window_scan_stale.csv")
+            pd.DataFrame({
+                "gene": ["g", "g"],
+                "sequence_type": ["reference", "max_mutated"],
+                "window_start": [0, 0],
+            }).to_csv(stale_csv, index=False)
+
+            with self.assertRaises(ValueError):
+                scan_all_genes(
+                    model_path="/model.h5", run_folder=tmpdir, output_path=tmpdir,
+                    name="stale", overwrite=False,
+                )
 
 if __name__ == "__main__":
     unittest.main()

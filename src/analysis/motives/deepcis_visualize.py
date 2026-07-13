@@ -15,11 +15,11 @@ from tqdm import tqdm
 from analysis.utils.io import print_status
 
 
-PEAK_SIGNAL_TYPES = ("reference", "max_mutated", "difference")
-DIFFERENCE_DIRECTIONS = ("max_mutated_minus_reference", "reference_minus_max_mutated")
+PEAK_SIGNAL_TYPES = ("reference", "optimized", "difference")
+DIFFERENCE_DIRECTIONS = ("optimized_minus_reference", "reference_minus_optimized")
 PEAK_BACKGROUND_COLORS = {
     "reference": "#999999",
-    "max_mutated": "#9999ff",
+    "optimized": "#9999ff",
     "difference": "#ff9999",
 }
 
@@ -159,7 +159,7 @@ def get_centers(data: pd.DataFrame) -> np.ndarray:
 def extract_plot_data(
     df_subset: pd.DataFrame,
     tf_col: str,
-    difference_direction: str = "max_mutated_minus_reference",
+    difference_direction: str = "optimized_minus_reference",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
     """Extract and transform data from DataFrame to plottable coordinates.
 
@@ -170,7 +170,7 @@ def extract_plot_data(
         df_subset: DataFrame filtered to contain only data for one gene and one TF.
         tf_col: Name of the TF column to extract values from.
         difference_direction: Direction for signed difference:
-            "max_mutated_minus_reference" or "reference_minus_max_mutated".
+            "optimized_minus_reference" or "reference_minus_optimized".
 
     Returns:
         Tuple of (ref_x, ref_y, mut_x, mut_y, diff_x, diff_y, x_min, x_max) where:
@@ -182,7 +182,7 @@ def extract_plot_data(
     """
     # Separate reference and mutated sequences
     ref_data = df_subset[df_subset["sequence_type"] == "reference"].sort_values(["window_start"])       #type: ignore
-    mut_data = df_subset[df_subset["sequence_type"] == "max_mutated"].sort_values(["window_start"])     #type: ignore 
+    mut_data = df_subset[df_subset["sequence_type"] == "optimized"].sort_values(["window_start"])     #type: ignore
 
     ref_x = get_centers(ref_data) if len(ref_data) > 0 else np.array([])
     ref_y = ref_data[tf_col].values if len(ref_data) > 0 else np.array([])
@@ -199,9 +199,9 @@ def extract_plot_data(
     )
     diff_x = get_centers(diff_data) if len(diff_data) > 0 else np.array([])
     if len(diff_data) > 0:
-        if difference_direction == "max_mutated_minus_reference":
+        if difference_direction == "optimized_minus_reference":
             diff_y = diff_data[f"{tf_col}_mut"].to_numpy() - diff_data[f"{tf_col}_ref"].to_numpy()
-        elif difference_direction == "reference_minus_max_mutated":
+        elif difference_direction == "reference_minus_optimized":
             diff_y = diff_data[f"{tf_col}_ref"].to_numpy() - diff_data[f"{tf_col}_mut"].to_numpy()
         else:
             raise ValueError(
@@ -242,7 +242,7 @@ def _get_padding_regions(df_subset: pd.DataFrame) -> List[Tuple[float, float]]:
 
     # Extract padding regions from mutated
     mut_padded = df_subset[
-        (df_subset["sequence_type"] == "max_mutated") &
+        (df_subset["sequence_type"] == "optimized") &
         (df_subset["contains_padding"] == True)
     ]
     if len(mut_padded) > 0:
@@ -494,7 +494,7 @@ def _plot_gene_tf(
     peak_signal_types: Optional[List[str]] = None,
     peak_df: Optional[pd.DataFrame] = None,
     show_difference: bool = True,
-    difference_direction: str = "max_mutated_minus_reference",
+    difference_direction: str = "optimized_minus_reference",
 ) -> None:
     """Plot predictions for a single gene and TF family.
 
@@ -557,12 +557,12 @@ def _plot_gene_tf(
 
     # Plot reference and mutated lines
     _plot_line(ax, ref_x, ref_y, "Reference", "black")
-    _plot_line(ax, mut_x, mut_y, "Max Mutated", "blue")
+    _plot_line(ax, mut_x, mut_y, "Optimized", "blue")
     if show_difference:
-        if difference_direction == "max_mutated_minus_reference":
-            diff_label = "Difference (max_mutated - reference)"
+        if difference_direction == "optimized_minus_reference":
+            diff_label = "Difference (optimized - reference)"
         else:
-            diff_label = "Difference (reference - max_mutated)"
+            diff_label = "Difference (reference - optimized)"
         _plot_line(ax, diff_x, diff_y, diff_label, "red")
 
     # Set axis properties
@@ -791,7 +791,7 @@ def visualize_scan_results(
     highlight_peaks: bool = False,
     peak_signal_types: Optional[List[str]] = None,
     show_difference: bool = True,
-    difference_direction: str = "max_mutated_minus_reference",
+    difference_direction: str = "optimized_minus_reference",
     random_subset: bool = False,
     *,
     peak_input: Union[str, pd.DataFrame, None] = None,
@@ -1019,13 +1019,13 @@ Examples:
     parser.add_argument(
         "--difference-direction",
         type=str,
-        default="max_mutated_minus_reference",
+        default="optimized_minus_reference",
         choices=list(DIFFERENCE_DIRECTIONS),
         metavar="DIRECTION",
         help=(
             "Direction used for the signed difference line. "
-            "Choices: max_mutated_minus_reference (default), "
-            "reference_minus_max_mutated."
+            "Choices: optimized_minus_reference (default), "
+            "reference_minus_optimized."
         ),
     )
 

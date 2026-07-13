@@ -81,7 +81,7 @@ class DeepCISPeakScanner:
         Raises:
             ValueError: If signal_type is invalid.
         """
-        valid_types = {"reference", "max_mutated", "difference"}
+        valid_types = {"reference", "optimized", "difference"}
         if signal_type not in valid_types:
             raise ValueError(
                 f"signal_type must be one of {valid_types}, got '{signal_type}'"
@@ -143,6 +143,20 @@ class DeepCISPeakScanner:
             raise KeyError(
                 f"Missing required columns: {missing_cols}. "
                 f"Available: {list(df.columns)}"
+            )
+
+        # Reject scan output from the pre-"optimized" pipeline version. Such a
+        # file still labels the optimized sequence "max_mutated"; the current
+        # scanner would find no "optimized" rows and silently emit near-empty
+        # peaks, so fail loudly instead.
+        stale_label = "max_mutated"
+        if stale_label in set(df["sequence_type"].unique()):
+            raise ValueError(
+                f"Scanner data is stale: its 'sequence_type' column contains "
+                f"'{stale_label}', the label used by a previous pipeline version "
+                f"(the current pipeline expects 'optimized'). Re-run deepcis_scanner "
+                f"with --overwrite to regenerate this file, or use a fresh output "
+                f"folder / delete the old deepcis_scan artifacts first."
             )
 
 
@@ -231,7 +245,7 @@ class DeepCISPeakScanner:
         tf_name: str
     ) -> Optional[pd.DataFrame]:
         ref_df = gene_df[gene_df["sequence_type"] == "reference"]
-        mut_df = gene_df[gene_df["sequence_type"] == "max_mutated"]
+        mut_df = gene_df[gene_df["sequence_type"] == "optimized"]
 
         n_ref = len(ref_df)
         n_mut = len(mut_df)
@@ -279,7 +293,7 @@ class DeepCISPeakScanner:
 
         Args:
             gene_df: DataFrame containing only data for one gene
-                (with 'reference' and 'max_mutated' rows).
+                (with 'reference' and 'optimized' rows).
             tf_name: TF column name.
             signal_type: 'reference', 'mutated', or 'difference'.
 
@@ -287,10 +301,10 @@ class DeepCISPeakScanner:
             Signal DataFrame with columns [signal, window_start, window_end],
             or None if data is insufficient.
         """
-        if self.signal_type not in ["reference", "max_mutated", "difference"]:
+        if self.signal_type not in ["reference", "optimized", "difference"]:
             raise ValueError(f"Invalid signal_type: {self.signal_type}")
 
-        elif self.signal_type in["reference", "max_mutated"]:
+        elif self.signal_type in["reference", "optimized"]:
             ref_df = gene_df[gene_df["sequence_type"] == self.signal_type]
             if len(ref_df) == 0:
                 raise ValueError(f"No '{self.signal_type}' data for gene {gene_df['gene'].iloc[0]} and TF {tf_name}")
@@ -552,8 +566,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument( "scanner_data", help="Path to deepCIS prediction CSV file.",)
     parser.add_argument( "--genes", "-g", nargs="+", default=None, help="Genes to scan (space-separated and/or comma-separated).",)
     parser.add_argument( "--tfs", "-t", nargs="+", default=None, help="TF columns to scan (space-separated and/or comma-separated).",)
-    parser.add_argument("--signal-type", "-s", choices=["reference", "max_mutated", "difference", "all"], default="difference",
-        help=( "Which signal to scan (default: difference). " "Use 'all' to run reference, max_mutated, and difference in one call."),
+    parser.add_argument("--signal-type", "-s", choices=["reference", "optimized", "difference", "all"], default="difference",
+        help=( "Which signal to scan (default: difference). " "Use 'all' to run reference, optimized, and difference in one call."),
     )
     parser.add_argument( "--output-path", "-o", default="", help="Full output CSV path for results (default: next to input file with annotated_peaks in the name).",)
 
@@ -578,7 +592,7 @@ def main() -> None:
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
 
-    signal_types = ["reference", "max_mutated", "difference"] if args.signal_type == "all" else [args.signal_type]
+    signal_types = ["reference", "optimized", "difference"] if args.signal_type == "all" else [args.signal_type]
     if args.output_path is None:
         base_name = Path(args.scanner_data).stem
         signal_type_str = "_".join(sorted(signal_types))

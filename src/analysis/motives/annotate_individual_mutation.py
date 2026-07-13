@@ -76,7 +76,7 @@ def compare_sequences_df(
             max_delta, binding_changed
     """
     ref_df = df[df["sequence_type"] == "reference"].drop(columns="sequence_type")
-    max_df = df[df["sequence_type"] == "max_mutated"].drop(columns="sequence_type")
+    max_df = df[df["sequence_type"] == "optimized"].drop(columns="sequence_type")
 
     merge_keys = ["gene", "window_start", "window_end", "contains_padding"]
     merged = ref_df.merge(max_df, on=merge_keys, suffixes=("_ref", "_max_mut"))

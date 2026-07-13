@@ -28,10 +28,10 @@ class _PeakScannerTestBase(unittest.TestCase):
                 "sequence_type": [
                     "reference",
                     "reference",
-                    "max_mutated",
-                    "max_mutated",
+                    "optimized",
+                    "optimized",
                     "reference",
-                    "max_mutated",
+                    "optimized",
                 ],
                 "window_start": [0, 10, 0, 10, 0, 0],
                 "window_end": [20, 30, 20, 30, 20, 20],
@@ -118,6 +118,15 @@ class TestValidateScannerInput(_PeakScannerTestBase):
         bad_df = self.sample_df.drop(columns=["sequence_type"])
         with self.assertRaises(KeyError):
             scanner._validate_scanner_input(bad_df)
+
+    def test_validate_scanner_input_stale_max_mutated_raises(self):
+        scanner = DeepCISPeakScanner()
+        stale_df = self.sample_df.copy()
+        stale_df["sequence_type"] = stale_df["sequence_type"].replace(
+            "optimized", "max_mutated"
+        )
+        with self.assertRaises(ValueError):
+            scanner._validate_scanner_input(stale_df)
 
 
 class TestGetAvailableTfs(_PeakScannerTestBase):
@@ -264,8 +273,8 @@ class TestComputeDifferenceSignal(_PeakScannerTestBase):
                 "sequence_type": [
                     "reference",
                     "reference",
-                    "max_mutated",
-                    "max_mutated",
+                    "optimized",
+                    "optimized",
                 ],
                 "window_start": [0, 10, 0, 20],
                 "window_end": [20, 30, 20, 40],
@@ -300,12 +309,12 @@ class TestComputeGeneTfSignal(_PeakScannerTestBase):
 
     def test_compute_gene_tf_signal_reference_missing_returns_none(self):
         scanner = DeepCISPeakScanner(signal_type="reference")
-        only_mut: pd.DataFrame = self.sample_df[self.sample_df["sequence_type"] == "max_mutated"] #type: ignore
+        only_mut: pd.DataFrame = self.sample_df[self.sample_df["sequence_type"] == "optimized"] #type: ignore
         with self.assertRaises(ValueError):
             result = scanner._compute_gene_tf_signal(only_mut, "tf_1")
 
-    def test_compute_gene_tf_signal_max_mutated_success(self):
-        scanner = DeepCISPeakScanner(signal_type="max_mutated")
+    def test_compute_gene_tf_signal_optimized_success(self):
+        scanner = DeepCISPeakScanner(signal_type="optimized")
         gene_a_df: pd.DataFrame = self.sample_df[self.sample_df["gene"] == "geneA"] #type: ignore
         result = scanner._compute_gene_tf_signal(gene_a_df, "tf_2")
         self.assertIsNotNone(result)
@@ -535,7 +544,7 @@ class TestScan(_PeakScannerTestBase):
         scanner_df = pd.DataFrame(
             {
                 "gene": ["geneA"] * (2 * len(signal)),
-                "sequence_type": ["reference"] * len(signal) + ["max_mutated"] * len(signal),
+                "sequence_type": ["reference"] * len(signal) + ["optimized"] * len(signal),
                 "window_start": np.concatenate([window_start, window_start]),
                 "window_end": np.concatenate([window_end, window_end]),
                 "contains_padding": [False] * (2 * len(signal)),

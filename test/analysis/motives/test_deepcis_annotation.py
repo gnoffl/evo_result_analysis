@@ -85,7 +85,7 @@ from analysis.motives.deepcis_scanner import GeneRunData
 #         # Create data with 2 TF families for simplicity
 #         data = {
 #             "gene": ["gene1", "gene1", "gene2", "gene2"],
-#             "sequence_type": ["reference", "max_mutated", "reference", "max_mutated"],
+#             "sequence_type": ["reference", "optimized", "reference", "optimized"],
 #             "window_start": [0, 0, 100, 100],
 #             "window_end": [250, 250, 350, 350],
 #             "contains_padding": [False, False, True, True],
@@ -275,7 +275,7 @@ from analysis.motives.deepcis_scanner import GeneRunData
 #         # Create mock scan results
 #         scan_df = pd.DataFrame({
 #             "gene": ["gene1", "gene1"],
-#             "sequence_type": ["reference", "max_mutated"],
+#             "sequence_type": ["reference", "optimized"],
 #             "window_start": [0, 0],
 #             "window_end": [250, 250],
 #             "contains_padding": [False, False],
