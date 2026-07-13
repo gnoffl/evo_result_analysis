@@ -1048,6 +1048,28 @@ class TestScanAllGenes(unittest.TestCase):
 
     @patch("analysis.motives.deepcis_scanner.N_TF_FAMILIES", 2)
     @patch("analysis.motives.deepcis_scanner.TF_FAMILY_NAMES", ["CTC", "AGA"])
+    @patch("analysis.motives.deepcis_scanner.load_deepcis_model")
+    def test_scan_all_genes_gene_id_substring_restricts_scan(self, mock_load_model):
+        """Test that a bare gene ID fragment selects the folder containing it.
+
+        Folder names are ``test_gene_1`` / ``test_gene_2``; passing the
+        substring ``gene_1`` must select only the first folder.
+        """
+        mock_load_model.return_value = MockDeepCISModel()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._setup_gene_folders(tmpdir)
+            result_df, genes_data = scan_all_genes(
+                model_path="/model.h5", run_folder=tmpdir, output_path=tmpdir,
+                name="test_substring", window_size=10, step=7, overwrite=True,
+                genes=["gene_1"],
+            )
+
+            self.assertEqual(set(result_df["gene"].unique()), {"test_gene_1"})
+            self.assertEqual(set(genes_data.keys()), {"test_gene_1"})
+
+    @patch("analysis.motives.deepcis_scanner.N_TF_FAMILIES", 2)
+    @patch("analysis.motives.deepcis_scanner.TF_FAMILY_NAMES", ["CTC", "AGA"])
     @patch("analysis.motives.deepcis_scanner.print_status")
     @patch("analysis.motives.deepcis_scanner.load_deepcis_model")
     def test_scan_all_genes_unknown_gene_logged(self, mock_load_model, mock_print_status):

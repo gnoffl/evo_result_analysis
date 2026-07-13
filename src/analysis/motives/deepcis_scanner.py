@@ -13,6 +13,7 @@ import pandas as pd
 from tqdm import tqdm
 import tensorflow as tf  # type: ignore
 
+from analysis.motives.gene_matching import resolve_gene_ids
 from analysis.utils.io import print_status
 from evolution.sequences import one_hot_encode
 
@@ -489,10 +490,11 @@ def scan_all_genes(
             for every gene.  When ``None``, the maximally-mutated entry is used.
             Genes whose pareto front lacks the exact count are skipped and
             logged.
-        genes: Optional list of gene-folder basenames to restrict the scan to.
-            When given, only matching gene folders are scanned and any requested
-            gene not found in the run folder is logged.  When ``None``, all
-            discovered gene folders are scanned.
+        genes: Optional list of gene IDs to restrict the scan to.  Each ID is
+            matched as a substring against the gene-folder names, so passing a
+            bare ID (e.g. ``"AT1G12345"``) selects the folder(s) that contain
+            it.  Any requested ID matching no folder is logged.  When ``None``,
+            all discovered gene folders are scanned.
 
     Returns:
         Tuple of:
@@ -518,19 +520,20 @@ def scan_all_genes(
         )
 
     if genes is not None:
-        requested = set(genes)
+        available_names = [os.path.basename(folder) for folder in gene_folders]
+        matched_names, unmatched_ids = resolve_gene_ids(genes, available_names)
+        matched_set = set(matched_names)
         gene_folders = [
             folder for folder in gene_folders
-            if os.path.basename(folder) in requested
+            if os.path.basename(folder) in matched_set
         ]
-        found = {os.path.basename(folder) for folder in gene_folders}
-        for missing in sorted(requested - found):
+        for missing in unmatched_ids:
             print_status(
                 f"Requested gene not found in run folder: {missing}", "WARNING"
             )
         print_status(
-            f"Restricted scan to {len(gene_folders)} of {len(requested)} "
-            "requested genes"
+            f"Restricted scan to {len(gene_folders)} folders matching "
+            f"{len(set(genes))} requested gene IDs"
         )
 
     os.makedirs(os.path.join(output_path, "deepcis_scan"), exist_ok=True)
@@ -614,7 +617,7 @@ Examples:
 
     # Optional arguments - sequence / gene selection
     parser.add_argument( "--mutation-count", "-mc", type=int, default=None, metavar="N", help="Exact mutation count of the optimized sequence to scan per gene (default: use the maximally-mutated pareto entry). Genes lacking this exact count are skipped.",)
-    parser.add_argument( "--genes", "-g", nargs="+", default=None, metavar="GENE", help="Restrict the scan to these gene-folder basenames (default: scan all genes).",)
+    parser.add_argument( "--genes", "-g", nargs="+", default=None, metavar="GENE", help="Restrict the scan to these gene IDs, matched as substrings of the gene-folder names (default: scan all genes).",)
 
     parsed_args = parser.parse_args(args)
     

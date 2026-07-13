@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from tqdm import tqdm
 
+from analysis.motives.gene_matching import resolve_gene_ids
 from analysis.utils.io import print_status
 
 
@@ -252,17 +253,6 @@ def _get_padding_regions(df_subset: pd.DataFrame) -> List[Tuple[float, float]]:
     return sorted(set(padding_regions)) if padding_regions else []
 
 
-def _add_padding_background(ax: plt.Axes, padding_regions: List[Tuple[float, float]]) -> None:
-    """Add light grey background for padded regions.
-
-    Args:
-        ax: Matplotlib axes to plot on.
-        padding_regions: List of (start, end) tuples for padded regions.
-    """
-    for start, end in padding_regions:
-        ax.axvspan(start, end, alpha=0.2, color="grey", zorder=0)
-
-
 def _get_padding_edge_positions(df_subset: pd.DataFrame) -> List[float]:
     """Return center positions for first/last windows containing padding."""
     padding_regions = _get_padding_regions(df_subset)
@@ -284,7 +274,7 @@ def _add_vertical_markers(
 ) -> bool:
     """Draw vertical markers and hide them from the automatic legend."""
     marker_drawn = False
-    for x_pos, marker_name in markers:
+    for x_pos, _ in markers:
         ax.axvline(
             x=x_pos,
             color=color,
@@ -597,17 +587,20 @@ def _validate_and_set_defaults(
     Raises:
         ValueError: If no valid genes or TFs are found.
     """
-    # Set defaults
+    # Set defaults. When genes are requested they are matched as substrings of
+    # the full gene names, so a bare gene ID (e.g. "AT1G12345") resolves to the
+    # full gene name(s) that contain it.
     if genes is None:
         genes = sorted(df["gene"].unique().tolist())
+    else:
+        matched_genes, missing_genes = resolve_gene_ids(
+            genes, df["gene"].unique().tolist()
+        )
+        if missing_genes:
+            raise ValueError(f"Gene(s) not found in data: {missing_genes}.")
+        genes = matched_genes
     if tfs is None:
         tfs = get_tf_columns(df)
-
-    # Validate genes exist
-    available_genes = set(df["gene"].unique())
-    for gene in genes:
-        if gene not in available_genes:
-            raise ValueError(f"Gene '{gene}' not found in data.") # Available genes: {json.dumps(sorted(list(available_genes)), indent=2)}")
 
     # Validate TFs exist
     available_tfs = set(get_tf_columns(df))
@@ -968,7 +961,7 @@ Examples:
     parser.add_argument("--input", type=str, required=True, metavar="PATH", help="Path to CSV file with deepCIS scan results",)
     parser.add_argument("--peaks", type=str, default=None, metavar="PATH", help="Optional CSV file with raw peak annotations from peak_scanner.py",)
     parser.add_argument("--output", type=str, default=None, metavar="DIR", help="Directory to save plots (default: 'plots' next to input file)",)
-    parser.add_argument("--genes", type=str, nargs="+", default=None, metavar="GENE", help="Gene names to plot (default: all genes)",)
+    parser.add_argument("--genes", type=str, nargs="+", default=None, metavar="GENE", help="Gene IDs to plot, matched as substrings of the full gene names (default: all genes)",)
     parser.add_argument("--tfs", type=str, nargs="+", default=None, metavar="TF", help="TF columns to plot, e.g., tf_0 tf_1 (default: all TFs)",)
     parser.add_argument(
         "--random-subset",

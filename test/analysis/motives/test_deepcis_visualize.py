@@ -540,6 +540,21 @@ class TestValidateAndSetDefaults(unittest.TestCase):
         self.assertEqual(genes, ["geneA"])
         self.assertEqual(tfs, ["tf_0", "tf_1"])
 
+    def test_validate_and_set_defaults_gene_substring(self):
+        """A bare ID fragment resolves to the full gene name containing it."""
+        genes, tfs = _validate_and_set_defaults(
+            self.sample_scan_data_two_genes, ["A"], None
+        )
+        self.assertEqual(genes, ["geneA"])
+        self.assertEqual(tfs, ["tf_0", "tf_1"])
+
+    def test_validate_and_set_defaults_gene_substring_matches_multiple(self):
+        """A fragment shared by several names selects all of them."""
+        genes, _ = _validate_and_set_defaults(
+            self.sample_scan_data_two_genes, ["gene"], None
+        )
+        self.assertEqual(genes, ["geneA", "geneB"])
+
     def test_validate_and_set_defaults_specific_tfs(self):
         """Test with specific TF selection."""
         genes, tfs = _validate_and_set_defaults(self.sample_scan_data, None, ["tf_0", "tf_1"])

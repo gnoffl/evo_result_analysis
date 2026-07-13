@@ -9,10 +9,11 @@ import argparse
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple, Union, cast
+from typing import List, Optional, Union, cast
 
 import pandas as pd
 
+from analysis.motives.gene_matching import resolve_gene_ids
 from analysis.motives.peak_annotation import PeakAnnotator
 from tqdm import tqdm
 
@@ -188,23 +189,26 @@ class DeepCISPeakScanner:
         Args:
             df: Input DataFrame.
 
+        Requested genes are matched as substrings against the available gene
+        names, so a bare gene ID (e.g. ``"AT1G12345"``) selects the full gene
+        name(s) that contain it.
+
         Returns:
             List of selected gene names.
 
         Raises:
-            ValueError: If requested genes not in available genes.
+            ValueError: If a requested gene ID matches no available gene.
         """
         available_genes = df["gene"].unique().tolist()
         if self.genes is None:
             return available_genes
 
-        missing_genes = set(self.genes) - set(available_genes)
+        selected_genes, missing_genes = resolve_gene_ids(self.genes, available_genes)
         if missing_genes:
             raise ValueError(
                 f"Requested genes not found in data: {missing_genes}. "
                 f"Available: {available_genes}"
             )
-        selected_genes = [g for g in self.genes if g in available_genes]
         return selected_genes
         
     
@@ -564,7 +568,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=("Scan deepCIS predictions for TF binding peaks with configurable scanner and PeakAnnotator parameters."))
 
     parser.add_argument( "scanner_data", help="Path to deepCIS prediction CSV file.",)
-    parser.add_argument( "--genes", "-g", nargs="+", default=None, help="Genes to scan (space-separated and/or comma-separated).",)
+    parser.add_argument( "--genes", "-g", nargs="+", default=None, help="Gene IDs to scan, matched as substrings of the full gene names (space-separated and/or comma-separated).",)
     parser.add_argument( "--tfs", "-t", nargs="+", default=None, help="TF columns to scan (space-separated and/or comma-separated).",)
     parser.add_argument("--signal-type", "-s", choices=["reference", "optimized", "difference", "all"], default="difference",
         help=( "Which signal to scan (default: difference). " "Use 'all' to run reference, optimized, and difference in one call."),

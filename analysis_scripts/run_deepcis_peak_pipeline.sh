@@ -39,7 +39,7 @@ usage() {
     echo "  --log-level <level>             Peak scanner log level (default: INFO)"
     echo ""
     echo "Optional Arguments (filters shared by peak + visualization):"
-    echo "  --genes \"g1 g2\"               Genes to include (space- or comma-separated string)"
+    echo "  --genes \"g1 g2\"               Gene IDs to include, matched as substrings of the gene-folder names (space- or comma-separated string)"
     echo "  --tfs \"tf_0 tf_1\"             TFs to include (space- or comma-separated string)"
     echo ""
     echo "Optional Arguments (deepcis_visualize):"

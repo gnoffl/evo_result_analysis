@@ -165,6 +165,18 @@ class TestValidateGenes(_PeakScannerTestBase):
         with self.assertRaises(ValueError):
             scanner.validate_genes(self.sample_df)
 
+    def test_validate_genes_matches_substring(self):
+        # A bare ID fragment resolves to the full gene name containing it.
+        scanner = DeepCISPeakScanner(genes=["A"])
+        genes = scanner.validate_genes(self.sample_df)
+        self.assertEqual(genes, ["geneA"])
+
+    def test_validate_genes_substring_matches_multiple(self):
+        # A fragment shared by several names selects all of them.
+        scanner = DeepCISPeakScanner(genes=["gene"])
+        genes = scanner.validate_genes(self.sample_df)
+        self.assertEqual(genes, ["geneA", "geneB"])
+
 
 class TestValidateTfs(_PeakScannerTestBase):
     """Tests for DeepCISPeakScanner.validate_tfs."""
