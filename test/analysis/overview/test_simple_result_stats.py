@@ -970,6 +970,143 @@ class TestSimpleResultStats(unittest.TestCase):
         finally:
             plt.close(fig)
 
+    # ------------------------------------------------------------------
+    # Publication-composition parameters (add_colorbar / vmin / vmax /
+    # returned mappable / colour / error_style).
+    # ------------------------------------------------------------------
+
+    _SCATTER_STATS = {
+        "gene1": {
+            'start_fitness': 0.1, 'final_fitness': 0.9,
+            'max_mutations': 5, 'num_mutations_half_max_effect': 3,
+        },
+        "gene2": {
+            'start_fitness': 0.2, 'final_fitness': 0.8,
+            'max_mutations': 4, 'num_mutations_half_max_effect': 2,
+        },
+    }
+
+    def test_draw_scatter_returns_mappable_with_vmin_vmax(self):
+        """The scatter mappable is returned with the requested colour bounds."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            mappable = draw_visualize_start_vs_max_fitness_by_mutations(
+                self._SCATTER_STATS, "test", "png", relative=False, ax=ax,
+                add_colorbar=False, vmin=0.0, vmax=10.0,
+            )
+            self.assertIsNotNone(mappable)
+            self.assertEqual(mappable.norm.vmin, 0.0)
+            self.assertEqual(mappable.norm.vmax, 10.0)
+        finally:
+            plt.close(fig)
+
+    def test_draw_scatter_add_colorbar_false_adds_no_axes(self):
+        """add_colorbar=False leaves the figure with only the plotting axes."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            draw_visualize_start_vs_max_fitness_by_mutations(
+                self._SCATTER_STATS, "test", "png", relative=False, ax=ax,
+                add_colorbar=False,
+            )
+            self.assertEqual(len(fig.axes), 1)  # no colorbar axes was added
+        finally:
+            plt.close(fig)
+
+    def test_draw_scatter_add_colorbar_true_adds_axes(self):
+        """add_colorbar=True (default) attaches a colorbar as an extra axes."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            draw_visualize_start_vs_max_fitness_by_mutations(
+                self._SCATTER_STATS, "test", "png", relative=False, ax=ax,
+                add_colorbar=True,
+            )
+            self.assertEqual(len(fig.axes), 2)  # plotting axes + colorbar axes
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_show_average_pareto_front_error_style_band(self, mock_savefig):
+        """error_style='band' draws a filled band and no errorbar container."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            show_average_pareto_front(
+                self.results_folder, output_folder=self.temp_dir,
+                max_number_mutation=10, output_format="pdf", ax=ax,
+                error_style="band",
+            )
+            self.assertGreater(len(ax.collections), 0)  # fill_between band
+            self.assertEqual(len(ax.containers), 0)     # no errorbar container
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_show_average_pareto_front_error_style_bars_default(self, mock_savefig):
+        """The default error_style draws an errorbar container."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            show_average_pareto_front(
+                self.results_folder, output_folder=self.temp_dir,
+                max_number_mutation=10, output_format="pdf", ax=ax,
+            )
+            self.assertEqual(len(ax.containers), 1)  # one errorbar container
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    def test_show_average_pareto_front_invalid_error_style_raises(self):
+        """An unknown error_style is rejected."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            with self.assertRaises(ValueError):
+                show_average_pareto_front(
+                    self.results_folder, output_folder=self.temp_dir,
+                    max_number_mutation=10, output_format="pdf", ax=ax,
+                    error_style="shaded",
+                )
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_show_average_pareto_front_color_applied(self, mock_savefig):
+        """The colour argument sets the marker colour (checked in band mode)."""
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import to_rgba
+        fig, ax = plt.subplots()
+        try:
+            show_average_pareto_front(
+                self.results_folder, output_folder=self.temp_dir,
+                max_number_mutation=10, output_format="pdf", ax=ax,
+                color="0.35", error_style="band",
+            )
+            self.assertGreater(len(ax.lines), 0)
+            self.assertEqual(to_rgba(ax.lines[-1].get_color()), to_rgba("0.35"))
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_hist_half_max_mutations_color_applied(self, mock_savefig):
+        """The colour argument sets the histogram bar face colour."""
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import to_rgba
+        stats = get_stats_per_gene(self.results_folder, "test", output_folder=self.temp_dir)
+        fig, ax = plt.subplots()
+        try:
+            hist_half_max_mutations(
+                stats, "test", output_folder=self.temp_dir, output_format="png",
+                ax=ax, color="0.35",
+            )
+            self.assertGreater(len(ax.patches), 0)
+            self.assertEqual(ax.patches[0].get_facecolor()[:3], to_rgba("0.35")[:3])
+        finally:
+            plt.close(fig)
+
 
 if __name__ == '__main__':
     unittest.main()

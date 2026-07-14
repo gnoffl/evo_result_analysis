@@ -15,6 +15,7 @@ from workflows.paper_plots.style import (
     panel_label,
     publication_style,
     save_publication_figure,
+    sync_axis_limits,
 )
 
 
@@ -92,12 +93,69 @@ class TestSavePublicationFigure(unittest.TestCase):
         mock_figure = MagicMock()
 
         # Act
-        save_publication_figure(mock_figure, "out.pdf")
+        save_publication_figure(mock_figure, "out.svg")
 
         # Assert
         mock_figure.savefig.assert_called_once_with(
-            "out.pdf", dpi=600, bbox_inches="tight", transparent=False
+            "out.svg", dpi=600, bbox_inches="tight", transparent=False
         )
+
+
+class TestSyncAxisLimits(unittest.TestCase):
+    """Tests for the ``sync_axis_limits`` helper."""
+
+    def test_syncs_x_and_y_to_union(self) -> None:
+        # Arrange
+        fig, (ax_a, ax_b) = plt.subplots(1, 2)
+        try:
+            ax_a.set_xlim(0.0, 5.0)
+            ax_a.set_ylim(0.0, 2.0)
+            ax_b.set_xlim(1.0, 8.0)
+            ax_b.set_ylim(-1.0, 1.0)
+
+            # Act
+            sync_axis_limits([ax_a, ax_b])
+
+            # Assert: union of both ranges on both axes
+            for ax in (ax_a, ax_b):
+                self.assertEqual(ax.get_xlim(), (0.0, 8.0))
+                self.assertEqual(ax.get_ylim(), (-1.0, 2.0))
+        finally:
+            plt.close(fig)
+
+    def test_sync_x_only_leaves_y_untouched(self) -> None:
+        # Arrange
+        fig, (ax_a, ax_b) = plt.subplots(1, 2)
+        try:
+            ax_a.set_xlim(0.0, 5.0)
+            ax_a.set_ylim(0.0, 2.0)
+            ax_b.set_xlim(1.0, 8.0)
+            ax_b.set_ylim(-1.0, 1.0)
+
+            # Act
+            sync_axis_limits([ax_a, ax_b], sync_y=False)
+
+            # Assert
+            self.assertEqual(ax_a.get_xlim(), (0.0, 8.0))
+            self.assertEqual(ax_b.get_xlim(), (0.0, 8.0))
+            self.assertEqual(ax_a.get_ylim(), (0.0, 2.0))
+            self.assertEqual(ax_b.get_ylim(), (-1.0, 1.0))
+        finally:
+            plt.close(fig)
+
+    def test_single_axis_is_noop(self) -> None:
+        # Arrange
+        fig, ax = plt.subplots()
+        try:
+            ax.set_xlim(2.0, 3.0)
+
+            # Act
+            sync_axis_limits([ax])
+
+            # Assert
+            self.assertEqual(ax.get_xlim(), (2.0, 3.0))
+        finally:
+            plt.close(fig)
 
 
 if __name__ == "__main__":

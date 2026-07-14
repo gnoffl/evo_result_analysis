@@ -136,6 +136,58 @@ legends, arrows), stamp panel labels via `panel_label`, save via
 `save_publication_figure`. Kept deliberately simple — reusable logic lives in
 `style.py` and the plot functions, not here.
 
+Implemented in `compose_plots_mpl.py` (render-time matplotlib composition), one
+function per figure with hardcoded input paths so the data backing each published
+panel is recorded in version control. Sibling to `compose_plots_svg.py` (the
+SVG-scaling fallback), never a replacement for it. Output goes to
+`figures/mpl_compositions/` as `.svg`.
+
+- **`fig2()`** — two single-mutation Arabidopsis runs (max top row, min bottom
+  row), three data columns: scatter (start vs. final fitness coloured by mutations
+  at half max, magma), average Pareto front, histogram of mutations at half max.
+  Publication-level styling:
+  - Column layout is `scatter | thin shared-colorbar column | pareto | hist`, so
+    the three data columns stay equal width (a per-panel colorbar would otherwise
+    shrink only the scatter cell). Figure uses `layout="constrained"` (tight_layout
+    is incompatible with the row-spanning colorbar axes).
+  - Both scatter panels share one colour normalisation (`vmin=0`,
+    `vmax=global max mutations`) and one shared colorbar spanning both rows.
+  - Pareto and histogram columns each share x/y limits across the two runs (via
+    `sync_axis_limits`) for direct run-to-run comparison; scatter y is independent
+    (max→~1, min→~0 by objective).
+  - Neutral grey (`0.35`) Pareto markers + histogram bars (thin white bar edges);
+    Pareto spread drawn as a filled ±1 std band, not error bars.
+  - X-tick numbers kept on every panel; the x-axis *label* is shown only on the
+    bottom row. Left-margin row labels ("maximization"/"minimization"); panel
+    letters A–F.
+  - Figure height 100 mm (double-column width). Pareto x-axis cropped to
+    `_PARETO_X_MAX` (45): the fronts saturate long before the 90-mutation
+    expansion limit, so the flat tail is dropped to fill the panels.
+  - Pareto data scanned from each run's raw results folder; hist/scatter load the
+    cached `stats_<name>.json`.
+
+New reusable primitives in `style.py`:
+
+- **`sync_axis_limits(axes, sync_x, sync_y)`** — sets a group of axes to the union
+  of their limits, so same-type panels are comparable across runs.
+- Added `scatter.edgecolors="none"` and outward ticks to `PUBLICATION_RC`.
+
+Backward-compatible params added to `simple_result_stats.py` (defaults preserve
+standalone behaviour; the composition script passes the publication values):
+
+- `draw_visualize_start_vs_max_fitness_by_mutations`: `add_colorbar`, `vmin`,
+  `vmax`, and now returns the scatter mappable (for a shared colorbar). Its default
+  colormap was changed `viridis`→`magma` **globally** (intentional deviation from
+  the standalone-preservation guarantee below).
+- `show_average_pareto_front`: `color`, `error_style` (`"bars"` default / `"band"`).
+- `hist_half_max_mutations`: `color`.
+
+Test note: `sync_axis_limits` is unit-tested (`test_style.py`); the new
+`simple_result_stats` params have dedicated unit tests in
+`test_simple_result_stats.py` (`add_colorbar` axes count, `vmin`/`vmax` on the
+returned mappable, `error_style` band vs bars + invalid-value guard, `color`
+applied to Pareto markers and histogram bars).
+
 ### 4. `figure_composition.py`
 
 Unchanged in behavior; documented as a fallback for frozen raster panels only.

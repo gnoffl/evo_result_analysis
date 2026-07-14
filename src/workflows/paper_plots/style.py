@@ -27,7 +27,7 @@ Example
 from __future__ import annotations
 
 import contextlib
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Sequence
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
@@ -62,6 +62,11 @@ PUBLICATION_RC: dict[str, object] = {
     "ytick.major.width": 0.6,
     "axes.spines.top": False,
     "axes.spines.right": False,
+    # Cleaner scatter marks: no dark rings from overlapping semi-transparent
+    # points, and ticks that point outward (standard for print figures).
+    "scatter.edgecolors": "none",
+    "xtick.direction": "out",
+    "ytick.direction": "out",
     "savefig.dpi": 600,
     "savefig.bbox": "tight",
     # Keep text as editable text (not paths) in vector output.
@@ -177,8 +182,42 @@ def save_publication_figure(
         transparent: Whether the figure background should be transparent.
             Defaults to False.
     """
-    if not path.lower().endswith((".pdf", ".svg")):
+    if not path.lower().endswith(".svg"):
         raise ValueError(
-            f"Unsupported file extension in {path}. Use .pdf or .svg for publications."
+            f"Unsupported file extension in {path}. Use .svg for publications."
         )
     fig.savefig(path, dpi=dpi, bbox_inches="tight", transparent=transparent)
+
+
+def sync_axis_limits(
+    axes: Sequence[Axes],
+    *,
+    sync_x: bool = True,
+    sync_y: bool = True,
+) -> None:
+    """Give a group of axes a common set of x/y limits.
+
+    The shared limits are the union of the individual limits (minimum of the
+    lower bounds, maximum of the upper bounds), so no data is clipped. Use this
+    to make panels of the same plot type directly comparable across runs.
+
+    Args:
+        axes: The axes to harmonise. A group of fewer than two axes is a no-op.
+        sync_x: Whether to synchronise the x-axis limits. Defaults to True.
+        sync_y: Whether to synchronise the y-axis limits. Defaults to True.
+    """
+    axes = list(axes)
+    if len(axes) < 2:
+        return
+
+    if sync_x:
+        lower = min(ax.get_xlim()[0] for ax in axes)
+        upper = max(ax.get_xlim()[1] for ax in axes)
+        for ax in axes:
+            ax.set_xlim(lower, upper)
+
+    if sync_y:
+        lower = min(ax.get_ylim()[0] for ax in axes)
+        upper = max(ax.get_ylim()[1] for ax in axes)
+        for ax in axes:
+            ax.set_ylim(lower, upper)

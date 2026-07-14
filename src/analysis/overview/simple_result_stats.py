@@ -234,7 +234,7 @@ def visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]]
     draw_visualize_start_vs_max_fitness_by_mutations(stats, f"{name}_relative", relative=True, output_folder=output_folder, output_format=output_format, titles=titles)
 
 
-def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, relative: bool = False, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None) -> None:
+def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, relative: bool = False, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None, add_colorbar: bool = True, vmin: Optional[float] = None, vmax: Optional[float] = None):
     """create a scatter plot of the start fitness vs max fitness colored by mutations at half max fitness
 
     Args:
@@ -246,6 +246,18 @@ def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, 
         ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
             figure is created and saved (unchanged behaviour); when given, the
             plot is drawn onto ``ax`` and nothing is saved.
+        add_colorbar (bool): Whether to attach a colorbar to the axes. Set to
+            False when several panels should share a single external colorbar.
+            Defaults to True.
+        vmin (Optional[float]): Lower bound of the colour normalisation. When
+            None, matplotlib infers it from the data. Set (together with
+            ``vmax``) to give several panels a common colour scale.
+        vmax (Optional[float]): Upper bound of the colour normalisation. When
+            None, matplotlib infers it from the data.
+
+    Returns:
+        matplotlib.collections.PathCollection: The scatter mappable, so callers
+        can build a shared colorbar across several panels.
     """
     start_fitness = []
     max_fitness = []
@@ -269,15 +281,17 @@ def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, 
 
     # Create scatter plot with color mapped to mutations at half max fitness
     scatter = ax.scatter(start_fitness, max_fitness,
-                         c=mutations_half_max, alpha=0.6, cmap='viridis')
+                         c=mutations_half_max, alpha=0.6, cmap='magma', vmin=vmin, vmax=vmax)
 
     ax.set_xlabel('Start Fitness')
     ax.set_ylabel('Final Fitness')
     if titles:
         ax.set_title('Start Fitness vs Final Fitness (Colored by Mutations at Half Max)')
-    ax.figure.colorbar(scatter, ax=ax, label='Mutations at Half Max Effect')
+    if add_colorbar:
+        ax.figure.colorbar(scatter, ax=ax, label='Mutations at Half Max Effect')
     if own_figure:
         plt.savefig(os.path.join(output_folder, f'start_vs_final_fitness_by_mutations_{name}.{output_format}'), bbox_inches='tight')
+    return scatter
 
 
 def plot_pareto_front(pareto_path: str, out_path: str, titles: bool = True, ax: Optional[plt.Axes] = None) -> None:
@@ -388,7 +402,7 @@ def normalize_front(pareto_front: List[Tuple[str, float, int]]) -> List[Tuple[st
     return normalized_front
 
 
-def show_average_pareto_front(results_folder: str, output_format: str, output_folder: str = ".", max_number_mutation: int = 90, titles: bool = True, ax: Optional[plt.Axes] = None) -> None:
+def show_average_pareto_front(results_folder: str, output_format: str, output_folder: str = ".", max_number_mutation: int = 90, titles: bool = True, ax: Optional[plt.Axes] = None, color: str = '#1f77b4', error_style: str = 'bars') -> None:
     """Show the average pareto front from the results folder.
 
     Args:
@@ -398,7 +412,19 @@ def show_average_pareto_front(results_folder: str, output_format: str, output_fo
         ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
             figure is created and saved (unchanged behaviour); when given, the
             plot is drawn onto ``ax`` and nothing is saved.
+        color (str): Marker colour for the average points. Defaults to the
+            matplotlib blue used historically; pass a neutral grey/black for a
+            more subdued publication look.
+        error_style (str): How to show the per-point spread. ``"bars"`` draws
+            black error bars (unchanged behaviour); ``"band"`` draws a filled
+            +/- 1 std band, which stays legible when many points are packed
+            together.
+
+    Raises:
+        ValueError: If ``error_style`` is not ``"bars"`` or ``"band"``.
     """
+    if error_style not in ('bars', 'band'):
+        raise ValueError(f"error_style must be 'bars' or 'band', got {error_style!r}.")
     genes = [gene for gene in os.listdir(results_folder) if os.path.isdir(os.path.join(results_folder, gene))]
     all_fitnesses = []
     all_mutations = []
@@ -433,9 +459,17 @@ def show_average_pareto_front(results_folder: str, output_format: str, output_fo
     if own_figure:
         plt.clf()
         fig, ax = plt.subplots(figsize=(8, 5))
-    # make the dots the same shade of blue as in the show_random_fronts, but the errorbars black
-    ax.errorbar(avg_mutations, np.mean(fitnesses, axis=0),
-                    yerr=np.std(fitnesses, axis=0), fmt='o', capsize=5, label='Average Pareto Front', color='#1f77b4', ecolor='black')
+    mean_fitness = np.mean(fitnesses, axis=0)
+    std_fitness = np.std(fitnesses, axis=0)
+    if error_style == 'band':
+        # Filled +/- 1 std band: stays readable with many densely packed points.
+        ax.fill_between(avg_mutations, mean_fitness - std_fitness, mean_fitness + std_fitness,
+                        color=color, alpha=0.25, linewidth=0)
+        ax.plot(avg_mutations, mean_fitness, 'o', color=color, markersize=2.5, label='Average Pareto Front')
+    else:
+        # make the dots the same shade of blue as in the show_random_fronts, but the errorbars black
+        ax.errorbar(avg_mutations, mean_fitness,
+                        yerr=std_fitness, fmt='o', capsize=5, label='Average Pareto Front', color=color, ecolor='black')
     ax.set_xlabel('Number of Mutations')
     ax.set_ylabel('Normalized DeepCRE Output')
     if titles:
@@ -670,7 +704,7 @@ def distribution_half_max_mutations(stats_path: str) -> None:
         print(f"  {count}: {cum_percentage}%")
 
 
-def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None) -> None:
+def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None, color: Optional[str] = None) -> None:
     """Create a histogram of the number of mutations at half max effect.
 
     Args:
@@ -681,6 +715,9 @@ def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_
         ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
             figure is created and saved (unchanged behaviour); when given, the
             plot is drawn onto ``ax`` and nothing is saved.
+        color (Optional[str]): Bar colour. When None, matplotlib's default is
+            used (unchanged behaviour); pass a neutral grey/black for a more
+            subdued publication look.
     """
     half_max_mutations = []
 
@@ -697,7 +734,7 @@ def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_
     if own_figure:
         plt.clf()
         fig, ax = plt.subplots(figsize=(8, 5))
-    ax.hist(half_max_mutations, bins=bins, alpha=0.7) #type:ignore
+    ax.hist(half_max_mutations, bins=bins, alpha=0.7, color=color) #type:ignore
     ax.set_xlabel('Mutations at Half Max Effect')
     ax.set_ylabel('Frequency')
     if titles:
