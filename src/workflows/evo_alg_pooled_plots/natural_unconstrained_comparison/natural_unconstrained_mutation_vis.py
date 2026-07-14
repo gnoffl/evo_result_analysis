@@ -194,6 +194,7 @@ def _barplot_figure(
     palette: dict,
     group_order: list,
     hue_order: list,
+    ax: Optional[plt.Axes] = None,
 ) -> Tuple[plt.Figure, plt.Axes]:
     """Create a single bar plot figure for one metric.
 
@@ -205,11 +206,19 @@ def _barplot_figure(
         palette: Colour mapping for condition hue.
         group_order: Order of x-axis groups.
         hue_order: Order of hue levels.
+        ax: Axes to draw onto. When None (standalone), a figure is created with
+            the original explicit legend font sizes. When given, the bars are
+            drawn onto ``ax`` and its parent figure is returned; inline font
+            sizes are left to the active stylesheet.
 
     Returns:
         Tuple of (Figure, Axes).
     """
-    fig, ax = plt.subplots(figsize=(5, 5))
+    own_figure = ax is None
+    if own_figure:
+        fig, ax = plt.subplots(figsize=(5, 5))
+    else:
+        fig = ax.get_figure()
     sns.barplot(
         data=data,
         x="group",
@@ -226,8 +235,10 @@ def _barplot_figure(
     ax.set_xlabel("Gene group")
     ax.set_ylabel(y_label)
     ax.set_title(title)
-    ax.legend(title="Condition", loc="lower right", fontsize=8, title_fontsize=8)
-    fig.tight_layout()
+    ax.legend(title="Condition", loc="lower right")
+    if own_figure:
+        ax.legend(title="Condition", loc="lower right", fontsize=8, title_fontsize=8)
+        fig.tight_layout()
     return fig, ax
 
 

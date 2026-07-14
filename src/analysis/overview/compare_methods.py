@@ -86,35 +86,66 @@ def get_plot_vals_normalized_fronts(normalized_fronts: List[List[Tuple[float, in
         average_mutations = np.mean(mutations, axis=0)
         return average_mutations, average_fitnesses, std_fitnesses
 
-def plot_normalized_fronts(normalized_fronts: Dict[str, List[List[Tuple[float, int]]]], output_dir: str, output_format: str) -> None:
-    plt.clf()
+def plot_normalized_fronts(normalized_fronts: Dict[str, List[List[Tuple[float, int]]]], output_dir: str, output_format: str, ax: Optional[plt.Axes] = None) -> None:
+    """Plot averaged, normalized Pareto fronts with error bars.
+
+    Args:
+        normalized_fronts: Mapping of method to a list of normalized fronts.
+        output_dir: Directory to save the standalone plot into.
+        output_format: File format for the standalone plot (e.g. ``png``).
+        ax: Axes to draw onto. When None, a standalone figure is created and
+            saved and the accompanying differences plot is produced (unchanged
+            behaviour); when given, only the averaged fronts are drawn onto
+            ``ax`` and nothing is saved.
+    """
     average_fronts = {}
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots()
     for method, fronts in normalized_fronts.items():
         average_mutations, average_fitnesses, std_fitnesses = get_plot_vals_normalized_fronts(fronts)
         average_fronts[method] = [("", fitness, mutation) for fitness, mutation in zip(average_fitnesses, average_mutations)]
-        plt.errorbar(average_mutations, average_fitnesses, yerr=std_fitnesses, label=method)
-    plt.xlabel("Number of Mutations")
-    plt.ylabel("Normalized Fitness")
-    plt.title("Normalized Pareto Fronts Comparison")
-    plt.xlim(-1, 91)
-    plt.ylim(-0.05, 1.05)
-    plt.legend()
-    plt.savefig(os.path.join(output_dir, f"normalized_pareto_fronts_comparison.{output_format}"), dpi=300, bbox_inches='tight')
-    plt.close()
-    plot_differences_between_fronts(fronts=average_fronts, gene_name="average fitness", tag="normalized", output_dir=output_dir, output_name="normalized_pareto_fronts_differences.png", output_format=output_format)
+        ax.errorbar(average_mutations, average_fitnesses, yerr=std_fitnesses, label=method)
+    ax.set_xlabel("Number of Mutations")
+    ax.set_ylabel("Normalized Fitness")
+    ax.set_title("Normalized Pareto Fronts Comparison")
+    ax.set_xlim(-1, 91)
+    ax.set_ylim(-0.05, 1.05)
+    ax.legend()
+    if own_figure:
+        plt.savefig(os.path.join(output_dir, f"normalized_pareto_fronts_comparison.{output_format}"), dpi=300, bbox_inches='tight')
+        plt.close()
+        plot_differences_between_fronts(fronts=average_fronts, gene_name="average fitness", tag="normalized", output_dir=output_dir, output_name="normalized_pareto_fronts_differences.png", output_format=output_format)
 
-def plot_interesting_pareto_fronts_values(fronts: Dict[str, List[Tuple[str, float, int]]], gene_name: str, tag: str, output_dir: str, output_format: str) -> None:
-    plt.clf()
+def plot_interesting_pareto_fronts_values(fronts: Dict[str, List[Tuple[str, float, int]]], gene_name: str, tag: str, output_dir: str, output_format: str, ax: Optional[plt.Axes] = None) -> None:
+    """Plot the raw fitness-vs-mutations Pareto fronts for several methods.
+
+    Args:
+        fronts: Mapping of method to its Pareto front (sequence, fitness, mutations).
+        gene_name: Name of the gene, used in title and file name.
+        tag: Tag distinguishing the comparison, used in title and file name.
+        output_dir: Directory to save the standalone plot into.
+        output_format: File format for the standalone plot (e.g. ``png``).
+        ax: Axes to draw onto. When None, a standalone figure is created and
+            saved (unchanged behaviour); when given, the plot is drawn onto
+            ``ax`` and nothing is saved.
+    """
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots()
     for method, front in fronts.items():
         mutations = [item[2] for item in front]
         fitnesses = [item[1] for item in front]
-        plt.plot(mutations, fitnesses, label=method)
-    plt.xlabel("Number of Mutations")
-    plt.ylabel("Fitness")
-    plt.title(f"Pareto Fronts Comparison for {gene_name} ({tag})")
-    plt.xlim(-1, 91)
-    plt.legend()
-    plt.savefig(os.path.join(output_dir, f"pareto_fronts_comparison_{gene_name}_{tag}.{output_format}"), dpi=300, bbox_inches='tight')
+        ax.plot(mutations, fitnesses, label=method)
+    ax.set_xlabel("Number of Mutations")
+    ax.set_ylabel("Fitness")
+    ax.set_title(f"Pareto Fronts Comparison for {gene_name} ({tag})")
+    ax.set_xlim(-1, 91)
+    ax.legend()
+    if own_figure:
+        plt.savefig(os.path.join(output_dir, f"pareto_fronts_comparison_{gene_name}_{tag}.{output_format}"), dpi=300, bbox_inches='tight')
 
 def get_differences_and_mutations(fronts: Dict[str, List[Tuple[str, float, int]]]) -> Dict[str, Tuple[List[float], List[int]]]:
     maximization = fronts[list(fronts.keys())[0]][0][1] < fronts[list(fronts.keys())[0]][-1][1]
@@ -130,7 +161,23 @@ def get_differences_and_mutations(fronts: Dict[str, List[Tuple[str, float, int]]
         differences_dict[method] = (differences, mutations)
     return differences_dict
 
-def plot_differences_between_fronts(fronts: Dict[str, List[Tuple[str, float, int]]], gene_name: str, tag: str, output_dir: str, output_format: str, output_name: Optional[str] = None) -> None:
+def plot_differences_between_fronts(fronts: Dict[str, List[Tuple[str, float, int]]], gene_name: str, tag: str, output_dir: str, output_format: str, output_name: Optional[str] = None, ax: Optional[plt.Axes] = None) -> None:
+    """Plot the fitness differences of each front relative to the reference front.
+
+    Args:
+        fronts: Mapping of method to its Pareto front (sequence, fitness, mutations).
+        gene_name: Name of the gene, used in title and file name.
+        tag: Tag distinguishing the comparison, used in title and file name.
+        output_dir: Directory to save the standalone plot into.
+        output_format: File format for the standalone plot (e.g. ``png``).
+        output_name: Optional explicit file name for the standalone plot.
+        ax: Axes to draw onto. When None, a standalone figure is created and
+            saved (unchanged behaviour); when given, the plot is drawn onto
+            ``ax`` and nothing is saved.
+
+    Raises:
+        ValueError: If the fronts have differing lengths or mutation counts.
+    """
     # all fronts need to have the same lengths and same mutations
     lengths = [len(front) for front in fronts.values()]
     if len(set(lengths)) != 1:
@@ -139,17 +186,21 @@ def plot_differences_between_fronts(fronts: Dict[str, List[Tuple[str, float, int
     for muts in mutations[1:]:
         if muts != mutations[0]:
             raise ValueError("Cannot plot differences between fronts with different mutation counts.")
-    plt.clf()
     differences_dict = get_differences_and_mutations(fronts)
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots()
     for method, (differences, mutations) in differences_dict.items():
-        plt.plot(mutations, differences, label=f"{method}")
-    plt.xlabel("Number of Mutations")
-    plt.ylabel("Absolute Fitness Difference")
-    plt.title(f"Differences Between Pareto Fronts for {gene_name} ({tag})")
-    plt.xlim(-1, 91)
-    plt.legend()
-    output_name = output_name if output_name is not None else f"pareto_fronts_differences_{gene_name}_{tag}.{output_format}"
-    plt.savefig(os.path.join(output_dir, output_name), dpi=300, bbox_inches='tight')
+        ax.plot(mutations, differences, label=f"{method}")
+    ax.set_xlabel("Number of Mutations")
+    ax.set_ylabel("Absolute Fitness Difference")
+    ax.set_title(f"Differences Between Pareto Fronts for {gene_name} ({tag})")
+    ax.set_xlim(-1, 91)
+    ax.legend()
+    if own_figure:
+        output_name = output_name if output_name is not None else f"pareto_fronts_differences_{gene_name}_{tag}.{output_format}"
+        plt.savefig(os.path.join(output_dir, output_name), dpi=300, bbox_inches='tight')
 
 def plot_interesting_pareto_fronts(fronts: Dict[str, List[Tuple[str, float, int]]], gene_name: str, tag: str, output_dir: str, output_format: str) -> None:
     plot_interesting_pareto_fronts_values(fronts=fronts, gene_name=gene_name, tag=tag, output_dir=output_dir, output_format=output_format)
@@ -395,20 +446,35 @@ def pca_transform_all_methods(method_vectors: Dict[str, List[List[int]]]):
         transformed_vectors[method] = transformed
     return PCA_all_methods, transformed_vectors
 
-def plot_pca_all_methods(method_vectors: Dict[str, List[List[int]]], gene: str, output_dir: str, output_format: str):
+def plot_pca_all_methods(method_vectors: Dict[str, List[List[int]]], gene: str, output_dir: str, output_format: str, ax: Optional[plt.Axes] = None):
+    """Plot a joint 2D PCA scatter of mutation vectors across all methods.
+
+    Args:
+        method_vectors: Mapping of method to its list of binary mutation vectors.
+        gene: Name of the gene, used in the title and file name.
+        output_dir: Directory (a ``pca_results`` subfolder is created inside it).
+        output_format: File format for the standalone plot (e.g. ``png``).
+        ax: Axes to draw onto. When None, a standalone figure is created and
+            saved (unchanged behaviour); when given, the plot is drawn onto
+            ``ax`` and nothing is saved.
+    """
     PCA_all_methods, transformed_vectors = pca_transform_all_methods(method_vectors)
-    plt.clf()
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots()
     for method, transformed in transformed_vectors.items():
-        plt.scatter(transformed[:,0], transformed[:,1], label=method, alpha=0.5)
+        ax.scatter(transformed[:,0], transformed[:,1], label=method, alpha=0.5)
     explained_variance = PCA_all_methods.explained_variance_ratio_
-    plt.xlabel(f"PCA Component 1 ({explained_variance[0] * 100:.1f}% variance)")
-    plt.ylabel(f"PCA Component 2 ({explained_variance[1] * 100:.1f}% variance)")
-    plt.title(f"PCA of Mutation Vectors for {gene} (All Methods)")
-    plt.legend()
-    output_folder = os.path.join(output_dir, "pca_results")
-    os.makedirs(output_folder, exist_ok=True)
-    plt.savefig(os.path.join(output_folder, f"pca_{gene}_all_methods.{output_format}"), dpi=300, bbox_inches='tight')
-    plt.close()
+    ax.set_xlabel(f"PCA Component 1 ({explained_variance[0] * 100:.1f}% variance)")
+    ax.set_ylabel(f"PCA Component 2 ({explained_variance[1] * 100:.1f}% variance)")
+    ax.set_title(f"PCA of Mutation Vectors for {gene} (All Methods)")
+    ax.legend()
+    if own_figure:
+        output_folder = os.path.join(output_dir, "pca_results")
+        os.makedirs(output_folder, exist_ok=True)
+        plt.savefig(os.path.join(output_folder, f"pca_{gene}_all_methods.{output_format}"), dpi=300, bbox_inches='tight')
+        plt.close()
 
 def pca_transform_single_method(vectors: List[List[int]]):
     PCA_method = decomposition.PCA(n_components=2)
@@ -417,18 +483,34 @@ def pca_transform_single_method(vectors: List[List[int]]):
     transformed = PCA_method.transform(np_vectors)
     return PCA_method, transformed
 
-def plot_pca_single_method(vectors: List[List[int]], gene: str, method: str, output_dir: str, output_format: str):
+def plot_pca_single_method(vectors: List[List[int]], gene: str, method: str, output_dir: str, output_format: str, ax: Optional[plt.Axes] = None):
+    """Plot a 2D PCA scatter of the mutation vectors for a single method.
+
+    Args:
+        vectors: List of binary mutation vectors for the method.
+        gene: Name of the gene, used in the title and file name.
+        method: Name of the method, used in the title and file name.
+        output_dir: Directory (a ``pca_results`` subfolder is created inside it).
+        output_format: File format for the standalone plot (e.g. ``png``).
+        ax: Axes to draw onto. When None, a standalone figure is created and
+            saved (unchanged behaviour); when given, the plot is drawn onto
+            ``ax`` and nothing is saved.
+    """
     PCA_method, transformed = pca_transform_single_method(vectors)
     explained_variance = PCA_method.explained_variance_ratio_
-    plt.clf()
-    plt.scatter(transformed[:,0], transformed[:,1], alpha=0.5)
-    plt.xlabel(f"PCA Component 1 ({explained_variance[0] * 100:.1f}% variance)")
-    plt.ylabel(f"PCA Component 2 ({explained_variance[1] * 100:.1f}% variance)")
-    plt.title(f"PCA of Mutation Vectors for {gene} ({method})")
-    output_folder = os.path.join(output_dir, "pca_results")
-    os.makedirs(output_folder, exist_ok=True)
-    plt.savefig(os.path.join(output_folder, f"pca_{gene}_{method}.{output_format}"), dpi=300, bbox_inches='tight')
-    plt.close()
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots()
+    ax.scatter(transformed[:,0], transformed[:,1], alpha=0.5)
+    ax.set_xlabel(f"PCA Component 1 ({explained_variance[0] * 100:.1f}% variance)")
+    ax.set_ylabel(f"PCA Component 2 ({explained_variance[1] * 100:.1f}% variance)")
+    ax.set_title(f"PCA of Mutation Vectors for {gene} ({method})")
+    if own_figure:
+        output_folder = os.path.join(output_dir, "pca_results")
+        os.makedirs(output_folder, exist_ok=True)
+        plt.savefig(os.path.join(output_folder, f"pca_{gene}_{method}.{output_format}"), dpi=300, bbox_inches='tight')
+        plt.close()
 
 def pca_visualization(input_data: Dict[str, Tuple[str, str]], output_dir: str) -> None:
     method_dict, gene_names = load_mutation_data(input_data)
@@ -458,10 +540,24 @@ def get_area(pareto_front_path: str, max_mutations: int) -> float:
     area = sum([item[1] for item in expanded_pareto_front])
     return area
 
-def visualize_progress(generation_losses: Dict[str, Dict[int, List[float]]], output_dir: str, output_format: str, logarithmic: bool = True) -> None:
-    plt.clf()
+def visualize_progress(generation_losses: Dict[str, Dict[int, List[float]]], output_dir: str, output_format: str, logarithmic: bool = True, ax: Optional[plt.Axes] = None) -> None:
+    """Plot average loss to the best front over generations for each method.
+
+    Args:
+        generation_losses: Mapping of method to {generation: list of losses}.
+        output_dir: Directory to save the standalone plot into.
+        output_format: File format for the standalone plot (e.g. ``png``).
+        logarithmic: Whether to use a logarithmic y-axis.
+        ax: Axes to draw onto. When None, a standalone figure is created and
+            saved (unchanged behaviour); when given, the plot is drawn onto
+            ``ax`` and nothing is saved.
+    """
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots()
     if logarithmic:
-        plt.yscale("log")
+        ax.set_yscale("log")
     for method, gen_losses in generation_losses.items():
         generations = sorted(gen_losses.keys())
         avg_losses = [np.mean(gen_losses[gen]) for gen in generations]
@@ -470,14 +566,15 @@ def visualize_progress(generation_losses: Dict[str, Dict[int, List[float]]], out
         for i in range(len(std_losses)):
             if i % 1000 != -10:
                 std_losses[i] = np.nan
-        plt.errorbar(generations, avg_losses, yerr=std_losses, label=method)
-    plt.xlabel("Generation")
-    plt.ylabel("Average Loss to Best Front")
-    plt.title("Method Progress Over Generations")
-    plt.legend()
-    name = "method_progress_over_generations_log" if logarithmic else "method_progress_over_generations_linear"
-    plt.savefig(os.path.join(output_dir, f"{name}.{output_format}"), dpi=300, bbox_inches='tight')
-    plt.close()
+        ax.errorbar(generations, avg_losses, yerr=std_losses, label=method)
+    ax.set_xlabel("Generation")
+    ax.set_ylabel("Average Loss to Best Front")
+    ax.set_title("Method Progress Over Generations")
+    ax.legend()
+    if own_figure:
+        name = "method_progress_over_generations_log" if logarithmic else "method_progress_over_generations_linear"
+        plt.savefig(os.path.join(output_dir, f"{name}.{output_format}"), dpi=300, bbox_inches='tight')
+        plt.close()
 
 
 def compare_method_progress(results_paths: Dict[str, str], max_mutations: int, output_format: str, output_dir: str) -> None:

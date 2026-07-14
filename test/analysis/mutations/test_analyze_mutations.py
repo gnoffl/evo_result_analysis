@@ -573,6 +573,68 @@ class TestAnalyzeMutations(unittest.TestCase):
         mock_savefig.assert_called_once()
 
 
+    @patch('matplotlib.pyplot.savefig')
+    def test_plot_dict_as_stacked_bars_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        test_data = {1: {"A": 5, "C": 3, "G": 2, "T": 1}}
+        fig, ax = plt.subplots()
+        try:
+            plot_dict_as_stacked_bars(test_data, "T", "X", "Y", ax=ax)
+            self.assertGreater(len(ax.patches), 0)  # bars were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_make_line_plot_rolling_window_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        test_data = {i: {"A": 1, "C": 1, "G": 1, "T": 1} for i in range(100)}
+        fig, ax = plt.subplots()
+        try:
+            make_line_plot_rolling_window(
+                test_data, "test", window_size=11, output_folder=self.temp_dir,
+                output_format="pdf", ax=ax,
+            )
+            self.assertGreater(len(ax.lines), 0)  # lines were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_plot_hist_mutation_conservation_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        stats_file = os.path.join(self.temp_dir, "conservation_statistics_test_gen_1999.json")
+        with open(stats_file, 'w') as f:
+            json.dump({"gene1": 0.8, "gene2": 0.6}, f)
+        fig, ax = plt.subplots()
+        try:
+            plot_hist_mutation_conservation(
+                self.mutation_file, "test", generation=1999, output_format="pdf",
+                mutable_positions=3000, output_folder=self.temp_dir, ax=ax,
+            )
+            self.assertGreater(len(ax.patches), 0)  # histogram bars were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_plot_dist_hist_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            plot_dist_hist(
+                "test", self.temp_dir, [1, 2, 3], [10, 8, 6],
+                output_format="pdf", ax=ax,
+            )
+            self.assertGreater(len(ax.patches), 0)  # bars were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
     def test_calculate_mutation_distances_single_gene_with_positions(self):
         """Test calculating mutation distances with position list."""
         positions = [1, 3, 7, 10]

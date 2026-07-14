@@ -1,4 +1,4 @@
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -43,37 +43,59 @@ def simplest_stats():
         print(f"Mann-Whitney U test for {tf}: U={stat}, p={p}")
 
 
-def visualize_simple():
+def visualize_simple(ax: Optional[plt.Axes] = None) -> None:
+    """Draw a binding vs non-binding enrichment boxplot per transcription factor.
+
+    Args:
+        ax (Optional[plt.Axes]): Axes to draw onto. When None (standalone mode),
+            one figure per transcription factor is created, styled with the
+            original explicit sizing and saved to ``enrichment_<tf>.pdf`` (behaviour
+            unchanged). When given, the plot is drawn onto ``ax`` under the active
+            stylesheet and nothing is saved. Note: this function iterates over both
+            "WRKY" and "bHLH"; when an external ``ax`` is supplied both are drawn
+            onto that single Axes and therefore overlap. Supply a single-TF context
+            or use the standalone mode for per-TF panels.
+    """
     data = load_df()
     data = data[["id", "binding", "enrichment"]]
+    own_figure = ax is None
     for tf in ["WRKY", "bHLH"]:
         relevant_data = data[data["id"].str.startswith(tf)]
         relevant_data["binding"] = relevant_data["binding"].apply(lambda x: "binding" if x else "non-binding")
-        plt.figure(figsize=(6.666666, 4))
-    
-        # increase all fonts
-        sns.set_context("notebook", font_scale=1.2)
-        sns.boxplot(x="binding", y="enrichment", data=relevant_data)
-        #fix order of the box plots
-        plt.xticks([0, 1], ["Non-binding", "Binding"])
+        if own_figure:
+            # increase all fonts (standalone-only global styling)
+            sns.set_context("notebook", font_scale=1.2)
+            _, current_ax = plt.subplots(figsize=(6.666666, 4))
+        else:
+            current_ax = ax
+        sns.boxplot(x="binding", y="enrichment", data=relevant_data, ax=current_ax)
+        # fix order of the box plots
+        current_ax.set_xticks([0, 1])
+        current_ax.set_xticklabels(["Non-binding", "Binding"])
         # remove x-axis label
-        plt.xlabel("")
+        current_ax.set_xlabel("")
         # add a line at 0
-        plt.axhline(0, color='gray', linestyle='--', linewidth=0.8)
-        # for each boxplot add how many data points are represented by it
-        box_pairs = [("Non-binding", "Binding")]
-        for box_pair in box_pairs:
-            non_binding_count = relevant_data[relevant_data["binding"] == "non-binding"].shape[0]
-            binding_count = relevant_data[relevant_data["binding"] == "binding"].shape[0]
-            plt.text(x=0.2, y=1.5, s=f"n={non_binding_count}", ha='center', va='bottom')
-            plt.text(x=1.2, y=1.5, s=f"n={binding_count}", ha='center', va='bottom')
-
-        # add bar connecting both box plots with a star, indicating significance
-        plt.title(f"Enrichment for {tf} (Binding vs Non-binding)")
-        plt.savefig(f"enrichment_{tf}.pdf", bbox_inches='tight')
+        current_ax.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+        # add how many data points are represented by each boxplot
+        non_binding_count = relevant_data[relevant_data["binding"] == "non-binding"].shape[0]
+        binding_count = relevant_data[relevant_data["binding"] == "binding"].shape[0]
+        current_ax.text(x=0.2, y=1.5, s=f"n={non_binding_count}", ha='center', va='bottom')
+        current_ax.text(x=1.2, y=1.5, s=f"n={binding_count}", ha='center', va='bottom')
+        current_ax.set_title(f"Enrichment for {tf} (Binding vs Non-binding)")
+        if own_figure:
+            plt.savefig(f"enrichment_{tf}.pdf", bbox_inches='tight')
 
 
-def visualize_simple_2():
+def visualize_simple_2(ax: Optional[plt.Axes] = None) -> None:
+    """Draw a grouped enrichment boxplot for WRKY and bHLH by binding status.
+
+    Args:
+        ax (Optional[plt.Axes]): Axes to draw onto. When None (standalone mode),
+            a figure is created with the original explicit sizing/fonts and saved
+            to ``enrichment_WRKY_bHLH.png`` (behaviour unchanged). When given, the
+            plot is drawn onto ``ax`` under the active stylesheet and nothing is
+            saved.
+    """
     data = load_df()
     data = data[["id", "binding", "enrichment"]]
     # Extract TF name from id
@@ -84,25 +106,23 @@ def visualize_simple_2():
     data["binding"] = data["binding"].apply(lambda x: "Binding" if x else "Non-binding")
 
     # --- Plot ---
-    plt.figure(figsize=(7, 5*7/8))
-    sns.set_context("poster", font_scale=0.8)  # slightly larger, nice for presentations
+    own_figure = ax is None
+    if own_figure:
+        sns.set_context("poster", font_scale=0.8)  # slightly larger, nice for presentations
+        _, ax = plt.subplots(figsize=(7, 5 * 7 / 8))
 
-    ax = sns.boxplot(
+    sns.boxplot(
         x="TF", y="enrichment", hue="binding", data=data,
         order=["WRKY", "bHLH"], hue_order=["Non-binding", "Binding"],
-        gap=0.1
+        gap=0.1, ax=ax
     )
 
     # Axis labels
-    plt.xlabel("Transcription Factor")
-    plt.ylabel("Enrichment")
-
-    # Add a solid black line at y=0
-    # plt.axhline(0, color="black", linestyle="-", linewidth=0.8)
-    # plt.axhline(0, color=(0.5, 0.5, 0.5), linestyle='--', linewidth=0.8)
+    ax.set_xlabel("Transcription Factor")
+    ax.set_ylabel("Enrichment")
 
     # Add counts above each box
-    box_positions = {}
+    count_annotations = []
     for i, tf in enumerate(["WRKY", "bHLH"]):
         for j, binding in enumerate(["Non-binding", "Binding"]):
             subset = data[(data["TF"] == tf) & (data["binding"] == binding)]
@@ -111,25 +131,34 @@ def visualize_simple_2():
             # Calculate the x position of the box (Seaborn offsets hue groups)
             xpos = i + (j - 0.5) * 0.65  # 0.2 is approx hue offset
             ymean = subset["enrichment"].mean() if not subset.empty else 0
-            ax.text(
-                xpos,
-                ymean + 1.5,
-                f"n={n}",
-                ha="center",
-                va="bottom",
-                fontsize=12,
-                color="black",
+            count_annotations.append(
+                ax.text(
+                    xpos,
+                    ymean + 1.5,
+                    f"n={n}",
+                    ha="center",
+                    va="bottom",
+                    color="black",
+                )
             )
 
     # Legend (explicit title)
-    plt.legend(title="Binding status", loc="lower center", bbox_to_anchor=(1.2, 0.67), fontsize=15, title_fontsize=15)
+    ax.legend(title="Binding status", loc="lower center", bbox_to_anchor=(1.2, 0.67))
 
     # Title
-    plt.title("Enrichment Binding vs Non-binding")
+    ax.set_title("Enrichment Binding vs Non-binding")
 
-    # Save & close
-    plt.savefig("enrichment_WRKY_bHLH.png", bbox_inches="tight", transparent=True, dpi=1000)
-    plt.close()
+    if own_figure:
+        # re-apply the original explicit font sizes (standalone only)
+        for annotation in count_annotations:
+            annotation.set_fontsize(12)
+        legend = ax.get_legend()
+        for legend_text in legend.get_texts():
+            legend_text.set_fontsize(15)
+        legend.get_title().set_fontsize(15)
+        # Save & close
+        plt.savefig("enrichment_WRKY_bHLH.png", bbox_inches="tight", transparent=True, dpi=1000)
+        plt.close()
 
 
 def calc_averages():
@@ -255,8 +284,23 @@ def analyze(exclude_references: bool = True):
         print(f"Statistical test result: p-value={p_value}")
 
 
-def visualize_differences():
+def visualize_differences(ax: Optional[plt.Axes] = None) -> None:
+    """Compare binding vs non-binding enrichment-difference histograms per TF.
+
+    Args:
+        ax (Optional[plt.Axes]): Axes to draw onto. When None (standalone mode),
+            one two-panel figure per transcription factor is created (binding and
+            non-binding side by side) and saved to
+            ``<tf>_enrichment_differences_hist.png`` (behaviour unchanged). When
+            given, the binding and non-binding histograms are drawn overlaid onto
+            the single ``ax`` (with a legend) under the active stylesheet and
+            nothing is saved. Note: this function iterates over both "WRKY" and
+            "bHLH"; when an external ``ax`` is supplied both TFs are drawn onto that
+            single Axes and therefore overlap. Use standalone mode for per-TF
+            figures.
+    """
     data = load_df()
+    own_figure = ax is None
     for tf, ylim in zip(["WRKY", "bHLH"], [650, 1200]):
         relevant_data = data[data["id"].str.startswith(tf)]
         relevant_data = relevant_data.drop(columns=["GC", "length", "min_bc", "min_ci", "min_co", "n_experiments"])
@@ -267,17 +311,24 @@ def visualize_differences():
         relevant_data["delta_enrichment"] = abs(relevant_data["enrichment"] - relevant_data["enrichment_reference"])
         binding_delta = relevant_data[relevant_data["binding"]]["delta_enrichment"]
         non_binding_delta = relevant_data[~relevant_data["binding"]]["delta_enrichment"]
-        plt.clf()
-        #create histograms comparing binding and non binding
-        plt.subplot(1, 2, 1)
-        plt.hist(binding_delta, bins=30, color="blue", alpha=0.7)
-        plt.title("Binding")
-        plt.subplot(1, 2, 2)
-        plt.hist(non_binding_delta, bins=30, color="red", alpha=0.7)
-        plt.title("Non-Binding")
-        # make y axis scale the same for both
-        plt.ylim(0, ylim)
-        plt.savefig(f"{tf}_enrichment_differences_hist.png", bbox_inches='tight')
+        if own_figure:
+            plt.clf()
+            # create histograms comparing binding and non binding
+            binding_ax = plt.subplot(1, 2, 1)
+            binding_ax.hist(binding_delta, bins=30, color="blue", alpha=0.7)
+            binding_ax.set_title("Binding")
+            non_binding_ax = plt.subplot(1, 2, 2)
+            non_binding_ax.hist(non_binding_delta, bins=30, color="red", alpha=0.7)
+            non_binding_ax.set_title("Non-Binding")
+            # make y axis scale the same for both
+            non_binding_ax.set_ylim(0, ylim)
+            plt.savefig(f"{tf}_enrichment_differences_hist.png", bbox_inches='tight')
+        else:
+            # single-Axes representation: overlay the two distributions
+            ax.hist(binding_delta, bins=30, color="blue", alpha=0.7, label="Binding")
+            ax.hist(non_binding_delta, bins=30, color="red", alpha=0.7, label="Non-Binding")
+            ax.set_ylim(0, ylim)
+            ax.legend()
         # plt.subplot(1, 2, 1)
         # sns.swarmplot(data=binding_delta, color="blue")
         # plt.title("Binding")
@@ -437,68 +488,82 @@ def add_starrseq_results():
     return wrky_data, bhlh_data
 
 
-def binding_boxplots(data: Dict[str, pd.DataFrame], name_thing: str):
+def binding_boxplots(data: Dict[str, pd.DataFrame], name_thing: str, ax: Optional[plt.Axes] = None):
+    """Boxplot of enrichment by binding status across data categories.
+
+    Args:
+        data: Mapping of category name to a DataFrame with ``binding`` and
+            ``enrichment`` columns.
+        name_thing: Identifier used in the standalone output filename.
+        ax: Axes to draw onto. When None, a standalone figure is created and
+            saved (unchanged behaviour); when given, the plot is drawn onto
+            ``ax`` and nothing is saved.
+    """
      # Prepare data for plotting
     plot_data = []
-    
+
     for name, df in data.items():
         if len(df) == 0:
             continue
-            
+
         # Add binding data
         binding_subset = df[df["binding"]].copy()
         if len(binding_subset) > 0:
             binding_subset["category"] = name
             binding_subset["binding_status"] = "Binding"
             plot_data.append(binding_subset[["enrichment", "category", "binding_status"]])
-        
+
         # Add non-binding data
         non_binding_subset = df[~df["binding"]].copy()
         if len(non_binding_subset) > 0:
             non_binding_subset["category"] = name
             non_binding_subset["binding_status"] = "Non-binding"
             plot_data.append(non_binding_subset[["enrichment", "category", "binding_status"]])
-    
+
     if not plot_data:
         print("No data to plot")
         return
-    
+
     # Combine all data
     combined_data = pd.concat(plot_data, ignore_index=True)
-    
+
     # Create the plot
-    plt.figure(figsize=(12, 6))
-    sns.set_context("notebook", font_scale=1.0)
-    
+    own_figure = ax is None
+    if own_figure:
+        sns.set_context("notebook", font_scale=1.0)
+        fig, ax = plt.subplots(figsize=(12, 6))
+
     # Create boxplot with hue for binding status
-    ax = sns.boxplot(
+    sns.boxplot(
         data=combined_data,
-        x="category", 
-        y="enrichment", 
+        x="category",
+        y="enrichment",
         hue="binding_status",
         hue_order=["Non-binding", "Binding"],
-        palette=["blue", "orange"]
+        palette=["blue", "orange"],
+        ax=ax,
     )
-    
+
     # Rotate x-axis labels for better readability
-    plt.xticks(rotation=45, ha='right')
-    
+    plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+
     # Add horizontal line at y=0
-    plt.axhline(0, color='gray', linestyle='--', linewidth=0.8)
-    
+    ax.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+
     # Customize labels and title
-    plt.xlabel("Data Category")
-    plt.ylabel("Enrichment")
-    plt.title("Enrichment Distribution by Binding Status Across Categories")
-    
+    ax.set_xlabel("Data Category")
+    ax.set_ylabel("Enrichment")
+    ax.set_title("Enrichment Distribution by Binding Status Across Categories")
+
     # Adjust legend
-    plt.legend(title="Binding Status", loc="lower center")
-    
-    # Add sample sizes above each box
+    ax.legend(title="Binding Status", loc="lower center")
+
+    # Add sample sizes above each box (font size fixed only in standalone mode)
+    annotation_fontsize = 9 if own_figure else None
     for i, category in enumerate(combined_data["category"].unique()):
         for j, status in enumerate(["Non-binding", "Binding"]):
             subset = combined_data[
-                (combined_data["category"] == category) & 
+                (combined_data["category"] == category) &
                 (combined_data["binding_status"] == status)
             ]
             if len(subset) > 0:
@@ -506,13 +571,14 @@ def binding_boxplots(data: Dict[str, pd.DataFrame], name_thing: str):
                 x_pos = i + (j - 0.5) * 0.4  # 0.4 is approximate hue spacing
                 y_pos = subset["enrichment"].max() + 0.1
                 ax.text(
-                    x_pos, y_pos, f"n={len(subset)}", 
-                    ha="center", va="bottom", fontsize=9
+                    x_pos, y_pos, f"n={len(subset)}",
+                    ha="center", va="bottom", fontsize=annotation_fontsize
                 )
-    
+
     # Adjust layout and save
-    plt.tight_layout()
-    plt.savefig(f"binding_status_{name_thing}_boxplots.pdf", bbox_inches="tight")
+    if own_figure:
+        fig.tight_layout()
+        plt.savefig(f"binding_status_{name_thing}_boxplots.pdf", bbox_inches="tight")
 
 
 def binding_vs_non_binding(data: pd.DataFrame, name: str):

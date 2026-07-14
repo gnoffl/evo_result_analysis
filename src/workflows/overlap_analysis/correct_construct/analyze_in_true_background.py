@@ -192,17 +192,26 @@ def _draw_regression(
 
 
 def plot_barcode_comparison(
-    data: pd.DataFrame, output_dir: str, fmt: str = "png"
+    data: pd.DataFrame,
+    output_dir: Optional[str] = None,
+    fmt: str = "png",
+    ax: Optional[matplotlib.axes.Axes] = None,
 ) -> None:
     """Scatter plot of barcode 1 vs barcode 2 predictions to assess barcode influence.
 
     Args:
         data: DataFrame from prepare_barcode_comparison_data.
-        output_dir: Directory to save the figure.
+        output_dir: Directory to save the figure. Required when ``ax`` is None
+            (standalone mode); ignored when ``ax`` is given.
         fmt: Output format (e.g., 'png', 'pdf', 'svg').
+        ax: Axes to draw onto. When None, a standalone figure is created and
+            saved (unchanged behaviour); when given, the plot is drawn onto
+            ``ax`` and nothing is saved.
     """
-    sns.set_theme(style="whitegrid")
-    fig, ax = plt.subplots(figsize=(6, 6))
+    own_figure = ax is None
+    if own_figure:
+        sns.set_theme(style="whitegrid")
+        fig, ax = plt.subplots(figsize=(6, 6))
 
     for tf, group in data.groupby("tf_family"):
         ax.scatter(
@@ -225,7 +234,8 @@ def plot_barcode_comparison(
     ax.set_ylabel("deepCRE prediction (barcode 2)")
     ax.set_title("Barcode influence on deepCRE predictions")
     ax.legend(title="TF family")
-    save_figure(fig, "barcode_comparison", output_dir, fmt)
+    if own_figure:
+        save_figure(fig, "barcode_comparison", output_dir, fmt)
 
 
 def _resolve_condition_params(condition: Optional[str]) -> tuple:
@@ -341,7 +351,10 @@ def plot_prediction_vs_enrichment(
 
 
 def plot_overall_correlation(
-    data: pd.DataFrame, output_dir: str, fmt: str = "png"
+    data: pd.DataFrame,
+    output_dir: Optional[str] = None,
+    fmt: str = "png",
+    ax: Optional[matplotlib.axes.Axes] = None,
 ) -> None:
     """Scatter all deepCRE predictions against all STAR-seq enrichment values.
 
@@ -350,11 +363,17 @@ def plot_overall_correlation(
 
     Args:
         data: DataFrame from prepare_correlation_data.
-        output_dir: Directory to save the figure.
+        output_dir: Directory to save the figure. Required when ``ax`` is None
+            (standalone mode); ignored when ``ax`` is given.
         fmt: Output format (e.g., 'png', 'pdf', 'svg').
+        ax: Axes to draw onto. When None, a standalone figure is created and
+            saved (unchanged behaviour); when given, the plot is drawn onto
+            ``ax`` and nothing is saved.
     """
-    sns.set_theme(style="whitegrid")
-    fig, ax = plt.subplots(figsize=(6, 5))
+    own_figure = ax is None
+    if own_figure:
+        sns.set_theme(style="whitegrid")
+        fig, ax = plt.subplots(figsize=(6, 5))
 
     ax.scatter(data["prediction"], data["enrichment"], alpha=0.3, s=10, color="#555555")
 
@@ -371,8 +390,10 @@ def plot_overall_correlation(
     ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
     ax.set_ylabel("STAR-seq enrichment")
     ax.set_title("Overall deepCRE prediction vs. STAR-seq enrichment")
-    ax.legend(fontsize=9)
-    save_figure(fig, "prediction_vs_enrichment_overall", output_dir, fmt)
+    ax.legend()
+    if own_figure:
+        ax.legend(fontsize=9)
+        save_figure(fig, "prediction_vs_enrichment_overall", output_dir, fmt)
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ global matplotlib side effect; each entry-point script calls
 """
 import os
 import json
-from typing import Dict, List, Tuple, Union, cast
+from typing import Dict, List, Optional, Tuple, Union, cast
 import numpy as np
 import pandas as pd
 from pyfaidx import Fasta
@@ -255,12 +255,15 @@ def _plot_bucketed_correlation(
     add_overall_fit_line: bool = True,
     delta: bool = False,
     subset_label: str = "",
+    ax: Optional[plt.Axes] = None,
 ) -> List[Dict[str, Union[str, int, float]]]:
+    own_figure = ax is None
     effective_analysis = f"{analysis_name}_{subset_label}" if subset_label else analysis_name
     effective_title = f"{title} ({subset_label})" if subset_label else title
     effective_save = save_name.replace(".png", f"_{subset_label}.png") if subset_label else save_name
 
-    plt.clf()
+    if own_figure:
+        plt.clf()
     working_df = prediction_df.copy()
     if delta:
         working_df = working_df[working_df["starr_reference"] == False].copy()
@@ -268,10 +271,15 @@ def _plot_bucketed_correlation(
 
     summary_rows: List[Dict[str, Union[str, int, float]]] = []
     if working_df.empty:
-        plt.xlabel(x_label)
-        plt.ylabel(y_label)
-        plt.title(effective_title)
-        plt.savefig(os.path.join(_get_analysis_output_dir(effective_analysis), effective_save), bbox_inches="tight", dpi=OUTPUT_DPI)
+        if own_figure:
+            plt.xlabel(x_label)
+            plt.ylabel(y_label)
+            plt.title(effective_title)
+            plt.savefig(os.path.join(_get_analysis_output_dir(effective_analysis), effective_save), bbox_inches="tight", dpi=OUTPUT_DPI)
+        else:
+            ax.set_xlabel(x_label)
+            ax.set_ylabel(y_label)
+            ax.set_title(effective_title)
         return summary_rows
 
     overall_dedup = _deduplicate_bucket_rows(working_df, x_col, y_col, include_differences, delta)
@@ -293,7 +301,8 @@ def _plot_bucketed_correlation(
     )
 
     if not use_buckets:
-        fig, ax = plt.subplots(figsize=(8, 6))
+        if own_figure:
+            fig, ax = plt.subplots(figsize=(8, 6))
         ax.scatter(overall_dedup[x_col], overall_dedup[y_col], color="tab:blue", alpha=0.85, label=f"all (n={len(working_df)})")
         if np.isfinite(overall_slope) and np.isfinite(overall_intercept):
             line_x = np.linspace(overall_dedup[x_col].min(), overall_dedup[x_col].max(), 100)
@@ -301,9 +310,11 @@ def _plot_bucketed_correlation(
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
         ax.set_title(effective_title)
-        ax.legend(title="Dataset", fontsize=14)
-        fig.savefig(os.path.join(_get_analysis_output_dir(effective_analysis), effective_save), bbox_inches="tight", dpi=OUTPUT_DPI)
-        plt.close(fig)
+        ax.legend(title="Dataset")
+        if own_figure:
+            ax.legend(title="Dataset", fontsize=14)
+            fig.savefig(os.path.join(_get_analysis_output_dir(effective_analysis), effective_save), bbox_inches="tight", dpi=OUTPUT_DPI)
+            plt.close(fig)
         return summary_rows
 
     working_df = working_df.loc[
@@ -313,7 +324,8 @@ def _plot_bucketed_correlation(
     bucket_values = sorted(working_df["overlap_bucket_start"].astype(int).unique().tolist())
     bucket_colors = BUCKET_COLOR_PALETTE
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    if own_figure:
+        fig, ax = plt.subplots(figsize=(8, 6))
     for bucket_index, bucket_start in enumerate(bucket_values):
         bucket_df = working_df[working_df["overlap_bucket_start"].astype(int) == bucket_start]
         dedup = _deduplicate_bucket_rows(bucket_df, x_col, y_col, include_differences, delta)
@@ -359,9 +371,11 @@ def _plot_bucketed_correlation(
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
     ax.set_title(effective_title)
-    ax.legend(title="Overlap bucket", fontsize=14, loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0.0)
-    fig.savefig(os.path.join(_get_analysis_output_dir(effective_analysis), effective_save), bbox_inches="tight", dpi=OUTPUT_DPI)
-    plt.close(fig)
+    ax.legend(title="Overlap bucket", loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0.0)
+    if own_figure:
+        ax.legend(title="Overlap bucket", fontsize=14, loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0.0)
+        fig.savefig(os.path.join(_get_analysis_output_dir(effective_analysis), effective_save), bbox_inches="tight", dpi=OUTPUT_DPI)
+        plt.close(fig)
     return summary_rows
 
 
@@ -378,7 +392,9 @@ def _plot_individual_bucket_correlation(
     include_differences: bool,
     delta: bool = False,
     subset_label: str = "",
+    ax: Optional[plt.Axes] = None,
 ) -> None:
+    own_figure = ax is None
     effective_analysis = f"{analysis_name}_{subset_label}" if subset_label else analysis_name
     effective_title = f"{title} ({subset_label})" if subset_label else title
     effective_save = save_name.replace(".png", f"_{subset_label}.png") if subset_label else save_name
@@ -398,7 +414,8 @@ def _plot_individual_bucket_correlation(
         print(f"No plottable points found for bucket {bucket_label} in {effective_save}; skipping plot.")
         return
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    if own_figure:
+        fig, ax = plt.subplots(figsize=(8, 6))
     genes = sorted(dedup["gene"].unique()) if "gene" in dedup.columns else [None]
     for i, gene in enumerate(genes):
         gene_df = dedup[dedup["gene"] == gene] if gene is not None else dedup
@@ -421,8 +438,9 @@ def _plot_individual_bucket_correlation(
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
     ax.set_title(effective_title)
-    fig.savefig(os.path.join(_get_analysis_output_dir(effective_analysis), effective_save), bbox_inches="tight", dpi=OUTPUT_DPI)
-    plt.close(fig)
+    if own_figure:
+        fig.savefig(os.path.join(_get_analysis_output_dir(effective_analysis), effective_save), bbox_inches="tight", dpi=OUTPUT_DPI)
+        plt.close(fig)
 
 
 def plot_individual_bucket_views(prediction_df: pd.DataFrame, bucket_label: str, subset_label: str = "") -> None:
@@ -533,6 +551,7 @@ def _plot_overlay_correlation(
     include_differences: bool = True,
     window_size: int = BUCKET_SIZE,
     subset_label: str = "",
+    ax: Optional[plt.Axes] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Tuple[float, float, float, float], Tuple[float, float, float, float]]:
     """Scatter the full dataset in one color with a single highlight window on top.
 
@@ -558,6 +577,7 @@ def _plot_overlay_correlation(
     Returns:
         The tuple from :func:`compute_overlay_correlation_data`.
     """
+    own_figure = ax is None
     effective_analysis = f"{analysis_name}_{subset_label}" if subset_label else analysis_name
     effective_title = f"{title} ({subset_label})" if subset_label else title
     effective_save = save_name.replace(".png", f"_{subset_label}.png") if subset_label else save_name
@@ -569,7 +589,8 @@ def _plot_overlay_correlation(
     window_start = window_center - window_size // 2
     window_end = window_start + window_size
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    if own_figure:
+        fig, ax = plt.subplots(figsize=(8, 6))
     ax.scatter(
         all_points[x_col],
         all_points[y_col],
@@ -616,13 +637,15 @@ def _plot_overlay_correlation(
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
     ax.set_title(effective_title)
-    ax.legend(title="Overlap window", fontsize=14, loc="best")
-    fig.savefig(
-        os.path.join(_get_analysis_output_dir(effective_analysis), effective_save),
-        bbox_inches="tight",
-        dpi=OUTPUT_DPI,
-    )
-    plt.close(fig)
+    ax.legend(title="Overlap window", loc="best")
+    if own_figure:
+        ax.legend(title="Overlap window", fontsize=14, loc="best")
+        fig.savefig(
+            os.path.join(_get_analysis_output_dir(effective_analysis), effective_save),
+            bbox_inches="tight",
+            dpi=OUTPUT_DPI,
+        )
+        plt.close(fig)
     return all_points, highlight_points, all_fit, highlight_fit
 
 
@@ -630,6 +653,7 @@ def plot_overlay_highlight_correlation(
     prediction_df: pd.DataFrame,
     window_center: int = HIGHLIGHT_WINDOW_CENTER,
     subset_label: str = "",
+    ax: Optional[plt.Axes] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Tuple[float, float, float, float], Tuple[float, float, float, float]]:
     """Plot deepCRE vs STARR-seq enrichment with the highest-correlation window overlaid.
 
@@ -658,6 +682,7 @@ def plot_overlay_highlight_correlation(
         "deepcre_starrseq",
         include_differences=True,
         subset_label=subset_label,
+        ax=ax,
     )
 
 
@@ -886,7 +911,7 @@ def merge_with_starrseq_results(predictions_df: pd.DataFrame, starr_seq_results:
     merged_df.drop(columns=["id"], inplace=True)
     return merged_df
 
-def plot_deepcre_starrseq_correlation(prediction_df: pd.DataFrame, colored: bool = False, delta: bool = False, subset_label: str = ""):
+def plot_deepcre_starrseq_correlation(prediction_df: pd.DataFrame, colored: bool = False, delta: bool = False, subset_label: str = "", ax: Optional[plt.Axes] = None):
     prediction_col = "delta_prediction" if delta else "prediction_mutated"
     enrichment_col = "delta_enrichment" if delta else "enrichment"
     delta_description = "delta_" if delta else ""
@@ -905,10 +930,11 @@ def plot_deepcre_starrseq_correlation(prediction_df: pd.DataFrame, colored: bool
         add_overall_fit_line=ADD_OVERALL_FIT_TO_BUCKETED_PLOTS,
         delta=delta,
         subset_label=subset_label,
+        ax=ax,
     )
 
 
-def plot_mutation_starrseq_correlation(prediction_df: pd.DataFrame, delta: bool = False, subset_label: str = ""):
+def plot_mutation_starrseq_correlation(prediction_df: pd.DataFrame, delta: bool = False, subset_label: str = "", ax: Optional[plt.Axes] = None):
     enrichment_col = "delta_enrichment" if delta else "enrichment"
     delta_description = "delta_" if delta else ""
     save_name = f"{delta_description}mutation_starrseq_correlation.png"
@@ -926,9 +952,10 @@ def plot_mutation_starrseq_correlation(prediction_df: pd.DataFrame, delta: bool 
         add_overall_fit_line=ADD_OVERALL_FIT_TO_BUCKETED_PLOTS,
         delta=delta,
         subset_label=subset_label,
+        ax=ax,
     )
 
-def plot_mutation_deepcre_correlation(prediction_df: pd.DataFrame, delta: bool = False, subset_label: str = ""):
+def plot_mutation_deepcre_correlation(prediction_df: pd.DataFrame, delta: bool = False, subset_label: str = "", ax: Optional[plt.Axes] = None):
     prediction_col = "delta_prediction" if delta else "prediction_mutated"
     delta_description = "delta_" if delta else ""
     save_name = f"{delta_description}mutation_deepcre_correlation.png"
@@ -946,6 +973,7 @@ def plot_mutation_deepcre_correlation(prediction_df: pd.DataFrame, delta: bool =
         add_overall_fit_line=ADD_OVERALL_FIT_TO_BUCKETED_PLOTS,
         delta=delta,
         subset_label=subset_label,
+        ax=ax,
     )
 
 
@@ -958,6 +986,7 @@ def simply_plot_multi(
     subfolder: str,
     log: bool = False,
     rolling_window: int = ROLLING_WINDOW_SIZE,
+    ax: Optional[plt.Axes] = None,
 ) -> None:
     """Plot multiple series of position-correlation data on a single figure.
 
@@ -970,8 +999,13 @@ def simply_plot_multi(
         subfolder: Subdirectory under CORRELATION_OUTPUT_ROOT.
         log: Whether to use a log scale for the y-axis.
         rolling_window: Window size for the rolling average line.
+        ax: Axes to draw onto. When None, a standalone figure is created and
+            saved (unchanged behaviour); when given, the plot is drawn onto
+            ``ax`` and nothing is saved.
     """
-    fig, ax = plt.subplots(figsize=(8, 6))
+    own_figure = ax is None
+    if own_figure:
+        fig, ax = plt.subplots(figsize=(8, 6))
     for x_vals, y_vals, label, color in series:
         x_arr = np.array(x_vals)
         y_arr = np.array(y_vals)
@@ -988,10 +1022,11 @@ def simply_plot_multi(
     ax.legend()
     if log:
         ax.set_yscale("log")
-    output_folder = os.path.join(CORRELATION_OUTPUT_ROOT, subfolder)
-    os.makedirs(output_folder, exist_ok=True)
-    fig.savefig(os.path.join(output_folder, f"{output_name}.png"), bbox_inches="tight", dpi=OUTPUT_DPI)
-    plt.close(fig)
+    if own_figure:
+        output_folder = os.path.join(CORRELATION_OUTPUT_ROOT, subfolder)
+        os.makedirs(output_folder, exist_ok=True)
+        fig.savefig(os.path.join(output_folder, f"{output_name}.png"), bbox_inches="tight", dpi=OUTPUT_DPI)
+        plt.close(fig)
 
 
 

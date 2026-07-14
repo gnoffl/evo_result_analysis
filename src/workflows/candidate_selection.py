@@ -165,22 +165,44 @@ def load_selected_genes(csv_path: str) -> pd.DataFrame:
     selected = pd.read_csv(csv_path, index_col="gene")
     return selected
 
-def draw_line_plot(vis_folder, gene, single_points, multi_points):
+def draw_line_plot(
+    vis_folder: str,
+    gene: str,
+    single_points: List[Tuple[float, float]],
+    multi_points: List[Tuple[float, float]],
+    ax: Optional[plt.Axes] = None,
+) -> None:
+    """Draw the single- vs multi-mutation fitness trajectory for one gene.
+
+    Args:
+        vis_folder: Directory the standalone figure is saved into. Only used when
+            ``ax`` is None.
+        gene: Gene identifier, used in the title and (standalone) output filename.
+        single_points: ``(fitness, n_mutations)`` points of the single-mutation run.
+        multi_points: ``(fitness, n_mutations)`` points of the multi-mutation run.
+        ax: Axes to draw onto. When None (default), a standalone figure is created
+            and saved to ``vis_folder`` (unchanged behaviour). When given, the plot
+            is drawn onto ``ax`` and nothing is saved.
+    """
     single_mutations = [point[1] for point in single_points]
     multi_mutations = [point[1] for point in multi_points]
-    output_path = os.path.join(vis_folder, f"{gene}_trajectory_comparison.png")
-    plt.figure()
-    plt.plot([point[0] for point in single_points], single_mutations, marker='o', label='Single Mutation')
-    plt.plot([point[0] for point in multi_points], multi_mutations, marker='o', label='Multi Mutation')
-    plt.xlabel('Fitness')
-    plt.ylabel('Number of Mutations')
-    plt.xlim(-0.03, 1.03)
-    plt.ylim(-3, 93)
-    plt.title(f'Fitness vs. Number of Mutations for {gene}')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(output_path, bbox_inches='tight')
-    plt.close()
+    own_figure = ax is None
+    if own_figure:
+        fig = plt.figure()
+        ax = fig.gca()
+    ax.plot([point[0] for point in single_points], single_mutations, marker='o', label='Single Mutation')
+    ax.plot([point[0] for point in multi_points], multi_mutations, marker='o', label='Multi Mutation')
+    ax.set_xlabel('Fitness')
+    ax.set_ylabel('Number of Mutations')
+    ax.set_xlim(-0.03, 1.03)
+    ax.set_ylim(-3, 93)
+    ax.set_title(f'Fitness vs. Number of Mutations for {gene}')
+    ax.legend()
+    ax.grid(True)
+    if own_figure:
+        output_path = os.path.join(vis_folder, f"{gene}_trajectory_comparison.png")
+        plt.savefig(output_path, bbox_inches='tight')
+        plt.close()
 
 def get_line_plot_data(row):
     mutation_cols_single = [col for col in row.index if col.startswith("mutations_for_fitness_") and col.endswith("_single")]

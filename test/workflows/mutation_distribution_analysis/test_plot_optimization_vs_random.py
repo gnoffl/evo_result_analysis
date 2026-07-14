@@ -4,10 +4,17 @@ import textwrap
 import unittest
 from unittest.mock import mock_open, patch
 
+import matplotlib
+
+matplotlib.use("Agg")  # headless backend for tests
+import matplotlib.pyplot as plt
+import pandas as pd
+
 from workflows.mutation_distribution_analysis.plot_optimization_vs_random import (
     build_plot_dataframe,
     load_evolution_summary,
     load_random_mutation_averages,
+    plot_optimization_vs_random,
 )
 
 
@@ -128,6 +135,36 @@ class TestBuildPlotDataframe(unittest.TestCase):
         self.assertAlmostEqual(_get_score("Arabidopsis", "Before optimization"), 0.5177)
         self.assertAlmostEqual(_get_score("Arabidopsis", "After optimization"), 0.9999)
         self.assertAlmostEqual(_get_score("Arabidopsis", "After random mutations"), 0.48)
+
+
+class TestPlotOptimizationVsRandomAxInjection(unittest.TestCase):
+    """Ax-injection behaviour of the plotting function."""
+
+    @staticmethod
+    def _sample_dataframe() -> pd.DataFrame:
+        rows = []
+        for species in ("Arabidopsis", "Maize"):
+            for condition in (
+                "Before optimization",
+                "After random mutations",
+                "After optimization",
+            ):
+                rows.append({"species": species, "condition": condition, "score": 0.5})
+        return pd.DataFrame(rows)
+
+    @patch("matplotlib.pyplot.savefig")
+    def test_with_ax_draws_and_does_not_save(self, mock_savefig):
+        # Arrange
+        fig, ax = plt.subplots()
+        try:
+            # Act
+            plot_optimization_vs_random(self._sample_dataframe(), ax=ax)
+
+            # Assert
+            self.assertGreater(len(ax.patches), 0)  # bars were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
 
 
 if __name__ == "__main__":

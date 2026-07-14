@@ -166,18 +166,27 @@ def calculate_conservation_statistics(mutation_data_path: str, name: str, genera
     return conservation_stats
 
 
-def plot_dict_as_stacked_bars(data_dict: Dict, title: str, xlabel: str, ylabel: str, file_path: str, titles: bool = True):
+def plot_dict_as_stacked_bars(data_dict: Dict, title: str, xlabel: str, ylabel: str, file_path: Optional[str] = None, titles: bool = True, ax: Optional[plt.Axes] = None):
     """Plot mutations from data_dict as stacked histogram.
-    
+
     Args:
         data_dict (Dict): Dictionary containing mutation data.
         title (str): Title for the plot.
         xlabel (str): Label for x-axis.
         ylabel (str): Label for y-axis.
-        file_path (str): Filename for the output file.
+        file_path (Optional[str]): Filename for the output file. Required when
+            ``ax`` is None (standalone mode); ignored when ``ax`` is given.
+        titles (bool): Whether to draw the plot title.
+        ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
+            figure is created and saved to ``file_path`` (unchanged behaviour).
+            When given, the plot is drawn onto ``ax`` and nothing is saved.
     """
-    # plot mutations from from_dict as stacked histogram 
+    # plot mutations from from_dict as stacked histogram
     # for each mutation number, a stacked bar should appear showing the different mutations in different colors
+    own_figure = ax is None
+    if not own_figure and (file_path is None or not file_path):
+        raise ValueError("file_path must be provided when ax is None (standalone mode).") 
+
     x_labels = sorted(data_dict.keys())
     bottom_line = np.zeros(len(x_labels))
 
@@ -188,8 +197,9 @@ def plot_dict_as_stacked_bars(data_dict: Dict, title: str, xlabel: str, ylabel: 
         'T': np.array([data_dict[x].get("T", 0) for x in x_labels])
     }
 
-    plt.clf()
-    fig, ax = plt.subplots()
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots()
     for letter, counts in letter_counts_from.items():
         ax.bar(x_labels, counts, bottom=bottom_line, label=letter, color=COLORS[letter])
         bottom_line += counts
@@ -199,16 +209,21 @@ def plot_dict_as_stacked_bars(data_dict: Dict, title: str, xlabel: str, ylabel: 
     ax.set_ylabel(ylabel)
     if titles:
         ax.set_title(title)
-    plt.savefig(file_path, dpi=300, bbox_inches='tight')
+    if own_figure:
+        plt.savefig(file_path, dpi=300, bbox_inches='tight')
 
-def make_line_plot_rolling_window(data_dict: Dict, name: str, output_format: str, window_size: int = 11, output_folder: str = ".", titles: bool = True):
+def make_line_plot_rolling_window(data_dict: Dict, name: str, output_format: str, window_size: int = 11, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None):
     """Create a rolling window line plot of mutations.
-    
+
     Args:
         data_dict (Dict): Dictionary containing mutation data.
         name (str): Name to distinguish the output file.
         window_size (int): Size of the rolling window. Defaults to 11.
         output_folder (str): Path to the output folder for saving results. Defaults to ".".
+        titles (bool): Whether to draw the plot title.
+        ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
+            figure is created and saved (unchanged behaviour); when given, the
+            plot is drawn onto ``ax`` and nothing is saved.
     """
     SEQUENCE_LENGTH = 3020
     PADDING = 20
@@ -240,19 +255,28 @@ def make_line_plot_rolling_window(data_dict: Dict, name: str, output_format: str
     else:
         title = ""
     # title = f'Rolling Mean of Mutations for {name}; Window Size: {window_size}'
-    plt.clf()
-    plt.figure(figsize=(8, 5.333))
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots(figsize=(8, 5.333))
     for letter, values in results.items():
-        plt.plot(indexes, values, label=letter, color=COLORS[letter])
-    plt.xlabel('Position in Sequence', fontsize=13)
-    plt.ylabel('Frequency', fontsize=13)
+        ax.plot(indexes, values, label=letter, color=COLORS[letter])
+    ax.set_xlabel('Position in Sequence')
+    ax.set_ylabel('Frequency')
     if titles:
-        plt.title(title, fontsize=15)
-    plt.xticks([0, 500, 1000, 1500, 2000, 2500, 3000], [0, 500, "1000\nTSS", 1500, "2000\nTTS", 2500, 3000], fontsize=12)
-    plt.yticks(fontsize=12)
-    plt.grid()
-    plt.legend(fontsize=12)
-    plt.savefig(os.path.join(output_folder, f"rolling_mean_mutations_{name}_{window_size}.{output_format}"), dpi=300, bbox_inches='tight')
+        ax.set_title(title)
+    ax.set_xticks([0, 500, 1000, 1500, 2000, 2500, 3000])
+    ax.set_xticklabels([0, 500, "1000\nTSS", 1500, "2000\nTTS", 2500, 3000])
+    ax.grid()
+    ax.legend()
+    if own_figure:
+        ax.xaxis.label.set_fontsize(13)
+        ax.yaxis.label.set_fontsize(13)
+        if titles:
+            ax.title.set_fontsize(15)
+        ax.tick_params(labelsize=12)
+        ax.legend(fontsize=12)
+        plt.savefig(os.path.join(output_folder, f"rolling_mean_mutations_{name}_{window_size}.{output_format}"), dpi=300, bbox_inches='tight')
         
 
 def plot_hist_half_max_mutations_stacked(mutation_data_path: str, name: str, output_format: str, output_folder: str = ".", titles: bool = True):
@@ -355,24 +379,27 @@ def plot_mutations_location(mutation_data_path: str, name: str, output_format: s
         make_line_plot_rolling_window(diff_dict, f"{name}_diff", output_format=output_format, window_size=window_size, output_folder=output_folder, titles=titles)
 
 
-def plot_hist_mutation_conservation(mutation_data_path: str, name: str, output_format: str, generation: int = 1999, mutable_positions: int = 3000, output_folder: str = ".", titles: bool = True) -> None:
+def plot_hist_mutation_conservation(mutation_data_path: str, name: str, output_format: str, generation: int = 1999, mutable_positions: int = 3000, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None) -> None:
     out_path = os.path.join(output_folder, f"conservation_statistics_{name}_gen_{generation}.json")
     if os.path.isfile(out_path):
         with open(out_path, 'r') as f:
             conservation_stats = json.load(f)
     else:
         conservation_stats = calculate_conservation_statistics(mutation_data_path=mutation_data_path, name=name, generation=generation, mutable_positions=mutable_positions, output_folder=output_folder)
-            
+
     stats = list(conservation_stats.values())
-    
+
     # Create the histogram
-    plt.figure(figsize=(12, 6))
-    plt.hist(stats, bins=30, range=(0, 1))
-    plt.xlabel('Conservation Statistic')
-    plt.ylabel('Frequency')
+    own_figure = ax is None
+    if own_figure:
+        fig, ax = plt.subplots(figsize=(12, 6))
+    ax.hist(stats, bins=30, range=(0, 1))
+    ax.set_xlabel('Conservation Statistic')
+    ax.set_ylabel('Frequency')
     if titles:
-        plt.title(f'Conservation Statistics for {name} at Generation {generation}')
-    plt.savefig(os.path.join(output_folder, f"hist_mutation_conservation_{name}_gen_{generation}.{output_format}"), dpi=300, bbox_inches='tight')
+        ax.set_title(f'Conservation Statistics for {name} at Generation {generation}')
+    if own_figure:
+        plt.savefig(os.path.join(output_folder, f"hist_mutation_conservation_{name}_gen_{generation}.{output_format}"), dpi=300, bbox_inches='tight')
 
 
 def calculate_mutation_distances_single_gene(mutations: List[int]) -> Counter:
@@ -480,24 +507,27 @@ def plot_mutation_distances(mutation_data_path: str, name: str, output_format: s
     smaller_counts = [distances_distribution[dist] for dist in smaller_distances]
     plot_dist_hist(name=f"{name}_smaller_distances", output_folder=output_folder, distances=smaller_distances, counts=smaller_counts, output_format=output_format, titles=titles) #, random_distribution_short)
 
-def plot_dist_hist(name, output_folder, distances, counts, output_format: str, random_distribution: Optional[Counter] = None, titles: bool = True):
-    plt.clf()
-    plt.figure(figsize=(12, 6))
-    plt.bar(distances, counts, width=1.0, edgecolor='black')
+def plot_dist_hist(name, output_folder, distances, counts, output_format: str, random_distribution: Optional[Counter] = None, titles: bool = True, ax: Optional[plt.Axes] = None):
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots(figsize=(12, 6))
+    ax.bar(distances, counts, width=1.0, edgecolor='black')
     if random_distribution:
         max_count = max(counts)
         random_x = sorted(random_distribution.keys())
         random_y = [random_distribution[dist] for dist in random_x]
         max_rand = max(random_y)
         random_y = [y * (max_count / max_rand) for y in random_y]
-        plt.plot(random_x, random_y, color='green', label='Random Mutation Distribution')
-        plt.legend()
-    plt.xlabel('Mutation Distance')
-    plt.ylabel('Frequency')
+        ax.plot(random_x, random_y, color='green', label='Random Mutation Distribution')
+        ax.legend()
+    ax.set_xlabel('Mutation Distance')
+    ax.set_ylabel('Frequency')
     if titles:
-        plt.title(f'Mutation Distances Distribution for {name}')
-    plt.xlim(0, max(distances) + 1)
-    plt.savefig(os.path.join(output_folder, f"mutation_distances_{name}.{output_format}"), dpi=300, bbox_inches='tight')
+        ax.set_title(f'Mutation Distances Distribution for {name}')
+    ax.set_xlim(0, max(distances) + 1)
+    if own_figure:
+        plt.savefig(os.path.join(output_folder, f"mutation_distances_{name}.{output_format}"), dpi=300, bbox_inches='tight')
     
 
 

@@ -19,6 +19,7 @@ from analysis.motives.deepcis_visualize import (
     _get_padding_edge_positions,
     _get_peak_background_regions,
     _get_peak_background_regions_from_peaks,
+    _plot_gene_tf,
     _validate_and_set_defaults,
     _load_input_data,
     _resolve_output_directory,
@@ -844,6 +845,38 @@ class TestRandomSubsetHelper(unittest.TestCase):
 
         self.assertEqual(genes, ["gene1"])
         self.assertEqual(tfs, ["tf_0", "tf_1"])
+
+
+class TestPlotGeneTfAxInjection(unittest.TestCase):
+    """Tests that the leaf drawer draws onto a caller-supplied ax.
+
+    ``_plot_gene_tf`` already takes ``ax`` as a required parameter and never
+    creates or saves its own figure; this documents that ax-injection contract.
+    """
+
+    def setUp(self):
+        """Set up a minimal single-gene, single-TF scan DataFrame."""
+        self.gene_df = pd.DataFrame({
+            "gene": ["gene1", "gene1", "gene1", "gene1"],
+            "sequence_type": ["reference", "reference", "optimized", "optimized"],
+            "window_start": [0, 50, 0, 50],
+            "window_end": [250, 300, 250, 300],
+            "contains_padding": [False, False, False, False],
+            "tf_0": [0.1, 0.5, 0.2, 0.6],
+        })
+
+    @patch("matplotlib.pyplot.savefig")
+    def test_plot_gene_tf_with_ax_draws_and_does_not_save(self, mock_savefig):
+        """Drawing happens on the provided ax and no figure is saved."""
+        fig, ax = plt.subplots()
+        try:
+            _plot_gene_tf(self.gene_df, "gene1", "tf_0", ax)
+            # Reference and optimized (and difference) lines were drawn.
+            self.assertGreater(len(ax.lines), 0)
+            self.assertIsNotNone(ax.get_xlabel())
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
 
 
 class TestParseArguments(unittest.TestCase):

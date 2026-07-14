@@ -850,6 +850,126 @@ class TestSimpleResultStats(unittest.TestCase):
         self.assertLessEqual(len(png_files), 3)  # Can't be more than total genes
         self.assertGreater(len(png_files), 0)   # Should have at least some files
 
+    @patch('matplotlib.pyplot.savefig')
+    def test_visualize_start_vs_max_fitness_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        stats = get_stats_per_gene(self.results_folder, "test", self.temp_dir)
+        fig, ax = plt.subplots()
+        try:
+            visualize_start_vs_max_fitness(
+                stats, "test", output_folder=self.temp_dir, output_format="pdf", ax=ax,
+            )
+            self.assertGreater(len(ax.collections), 0)  # scatter points were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_draw_visualize_start_vs_max_fitness_by_mutations_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        stats = {
+            "gene1": {
+                'start_fitness': 0.1,
+                'final_fitness': 0.9,
+                'max_mutations': 5,
+                'num_mutations_half_max_effect': 3,
+            },
+            "gene2": {
+                'start_fitness': 0.2,
+                'final_fitness': 0.8,
+                'max_mutations': 4,
+                'num_mutations_half_max_effect': 2,
+            },
+        }
+        fig, ax = plt.subplots()
+        try:
+            draw_visualize_start_vs_max_fitness_by_mutations(
+                stats, "test", relative=False, output_folder=self.temp_dir,
+                output_format="png", ax=ax,
+            )
+            self.assertGreater(len(ax.collections), 0)  # scatter points were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_plot_pareto_front_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        pareto_path = os.path.join(self.results_folder, "1_gene1", "saved_populations", "pareto_front.json")
+        output_path = os.path.join(self.temp_dir, "test_pareto.png")
+        fig, ax = plt.subplots()
+        try:
+            plot_pareto_front(pareto_path, output_path, ax=ax)
+            self.assertGreater(len(ax.collections), 0)  # scatter points were drawn
+            self.assertFalse(os.path.exists(output_path))
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_show_average_pareto_front_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            show_average_pareto_front(
+                self.results_folder, output_folder=self.temp_dir,
+                max_number_mutation=10, output_format="pdf", ax=ax,
+            )
+            self.assertGreater(len(ax.lines), 0)  # errorbar markers were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_plot_loss_over_generations_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            plot_loss_over_generations(
+                self.results_loss_vis, "test", max_number_mutation=5,
+                last_generation=1999, output_folder=self.temp_dir,
+                output_format="png", ax=ax,
+            )
+            self.assertGreater(len(ax.lines), 0)  # errorbar markers were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_plot_half_max_mutations_vs_initial_fitness_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        stats = get_stats_per_gene(self.results_folder, "test", self.temp_dir)
+        fig, ax = plt.subplots()
+        try:
+            plot_half_max_mutations_vs_initial_fitness(
+                stats, "test", output_folder=self.temp_dir, output_format="png", ax=ax,
+            )
+            self.assertGreater(len(ax.collections), 0)  # scatter points were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_hist_half_max_mutations_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        stats = get_stats_per_gene(self.results_folder, "test", output_folder=self.temp_dir)
+        fig, ax = plt.subplots()
+        try:
+            hist_half_max_mutations(
+                stats, "test", output_folder=self.temp_dir, output_format="png", ax=ax,
+            )
+            self.assertGreater(len(ax.patches), 0)  # histogram bars were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
 
 if __name__ == '__main__':
     unittest.main()

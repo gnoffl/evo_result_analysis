@@ -519,7 +519,12 @@ def compute_symmetric_limit(diff_calc_values: "pd.Series | np.ndarray") -> float
     return limit if limit > 0 else 1.0
 
 
-def plot_diff_calc_barplot(plot_df: pd.DataFrame, value_limit: float, title: str = "") -> Figure:
+def plot_diff_calc_barplot(
+    plot_df: pd.DataFrame,
+    value_limit: float,
+    title: str = "",
+    ax: Optional[plt.Axes] = None,
+) -> Figure:
     """Plot net binding change per TF family as a diverging horizontal bar chart.
 
     Bars are colored by signed magnitude on a symmetric diverging scale, so on a
@@ -529,16 +534,25 @@ def plot_diff_calc_barplot(plot_df: pd.DataFrame, value_limit: float, title: str
         plot_df: Output of :func:`prepare_diff_calc_data` (already sorted).
         value_limit: Symmetric limit for the x-axis and color normalization.
         title: Optional plot title.
+        ax: Axes to draw onto. When None (standalone mode), a standalone figure
+            is created with the historical size and layout. When given, the plot
+            is drawn onto ``ax`` and its parent figure is returned without any
+            standalone-only sizing or ``tight_layout`` call.
 
     Returns:
-        The created figure.
+        The figure containing the plot. When ``ax`` is given this is
+        ``ax.get_figure()``; otherwise it is the newly created figure.
     """
+    own_figure = ax is None
     norm = Normalize(vmin=-value_limit, vmax=value_limit)
     scalar_mappable = ScalarMappable(norm=norm, cmap=DIVERGING_COLORMAP)
     colors = scalar_mappable.to_rgba(plot_df[DIFF_CALC_COLUMN].to_numpy())
 
-    height = max(4.0, 0.32 * len(plot_df))
-    fig, ax = plt.subplots(figsize=(7.0, height))
+    if own_figure:
+        height = max(4.0, 0.32 * len(plot_df))
+        fig, ax = plt.subplots(figsize=(7.0, height))
+    else:
+        fig = ax.get_figure()
     ax.barh(
         plot_df[PEAK_TF_COLUMN],
         plot_df[DIFF_CALC_COLUMN],
@@ -558,11 +572,17 @@ def plot_diff_calc_barplot(plot_df: pd.DataFrame, value_limit: float, title: str
     colorbar = fig.colorbar(scalar_mappable, ax=ax, pad=0.02)
     colorbar.set_label(DIFF_CALC_COLUMN)
 
-    fig.tight_layout()
+    if own_figure:
+        fig.tight_layout()
     return fig
 
 
-def plot_diff_calc_heatmap(plot_df: pd.DataFrame, value_limit: float, title: str = "") -> Figure:
+def plot_diff_calc_heatmap(
+    plot_df: pd.DataFrame,
+    value_limit: float,
+    title: str = "",
+    ax: Optional[plt.Axes] = None,
+) -> Figure:
     """Plot net binding change per TF family as a single-column heatmap.
 
     A one-column heatmap on a fixed, symmetric diverging scale stacks naturally
@@ -572,14 +592,23 @@ def plot_diff_calc_heatmap(plot_df: pd.DataFrame, value_limit: float, title: str
         plot_df: Output of :func:`prepare_diff_calc_data` (already sorted).
         value_limit: Symmetric limit for the color normalization.
         title: Optional plot title.
+        ax: Axes to draw onto. When None (standalone mode), a standalone figure
+            is created with the historical size and layout. When given, the plot
+            is drawn onto ``ax`` and its parent figure is returned without any
+            standalone-only sizing or ``tight_layout`` call.
 
     Returns:
-        The created figure.
+        The figure containing the plot. When ``ax`` is given this is
+        ``ax.get_figure()``; otherwise it is the newly created figure.
     """
+    own_figure = ax is None
     heat_data = plot_df.set_index(PEAK_TF_COLUMN)[[DIFF_CALC_COLUMN]]
 
-    height = max(4.0, 0.32 * len(plot_df))
-    fig, ax = plt.subplots(figsize=(3.4, height))
+    if own_figure:
+        height = max(4.0, 0.32 * len(plot_df))
+        fig, ax = plt.subplots(figsize=(3.4, height))
+    else:
+        fig = ax.get_figure()
     sns.heatmap(
         heat_data,
         cmap=DIVERGING_COLORMAP,
@@ -599,7 +628,8 @@ def plot_diff_calc_heatmap(plot_df: pd.DataFrame, value_limit: float, title: str
     if title:
         ax.set_title(title)
 
-    fig.tight_layout()
+    if own_figure:
+        fig.tight_layout()
     return fig
 
 

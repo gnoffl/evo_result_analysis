@@ -606,6 +606,7 @@ def plot_paired_scatter(
     xlabel: str,
     ylabel: str,
     title: str,
+    ax: plt.Axes | None = None,
 ) -> Figure:
     """Scatter one per-gene value of run A against run B with a y = x reference line.
 
@@ -616,25 +617,34 @@ def plot_paired_scatter(
         xlabel: X-axis label.
         ylabel: Y-axis label.
         title: Plot title.
+        ax: Axes to draw onto. When None (default), a standalone figure is created
+            (unchanged behaviour); when given, the plot is drawn onto ``ax``.
 
     Returns:
-        The matplotlib figure.
+        The matplotlib figure (the standalone figure when ``ax`` is None, otherwise
+        ``ax.get_figure()``).
     """
-    fig, axis = plt.subplots(figsize=(5.5, 5.5))
-    sns.scatterplot(data=per_gene, x=x_column, y=y_column, ax=axis, alpha=0.6, s=30)
+    own_figure = ax is None
+    if own_figure:
+        fig, ax = plt.subplots(figsize=(5.5, 5.5))
+    sns.scatterplot(data=per_gene, x=x_column, y=y_column, ax=ax, alpha=0.6, s=30)
 
     lower = min(per_gene[x_column].min(), per_gene[y_column].min())
     upper = max(per_gene[x_column].max(), per_gene[y_column].max())
-    axis.plot([lower, upper], [lower, upper], color="grey", linestyle="--", label="y = x")
+    ax.plot([lower, upper], [lower, upper], color="grey", linestyle="--", label="y = x")
 
-    axis.set_xlabel(xlabel)
-    axis.set_ylabel(ylabel)
-    axis.set_title(title)
-    axis.legend()
-    return fig
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.legend()
+    return fig if own_figure else ax.get_figure()
 
 
-def plot_mutation_overlap(per_gene: pd.DataFrame, position_only: bool = False) -> Figure:
+def plot_mutation_overlap(
+    per_gene: pd.DataFrame,
+    position_only: bool = False,
+    ax: plt.Axes | None = None,
+) -> Figure:
     """Plot the distribution of per-gene shared-mutation fractions.
 
     The shared fraction is ``shared / (shared + a_only + b_only)``; genes without any
@@ -644,9 +654,12 @@ def plot_mutation_overlap(per_gene: pd.DataFrame, position_only: bool = False) -
         per_gene: Per-gene comparison table.
         position_only: Whether mutations were matched by position only (affects the
             axis wording).
+        ax: Axes to draw onto. When None (default), a standalone figure is created
+            (unchanged behaviour); when given, the plot is drawn onto ``ax``.
 
     Returns:
-        The matplotlib figure.
+        The matplotlib figure (the standalone figure when ``ax`` is None, otherwise
+        ``ax.get_figure()``).
     """
     total_mutations = (
         per_gene["shared_mutations"]
@@ -656,12 +669,14 @@ def plot_mutation_overlap(per_gene: pd.DataFrame, position_only: bool = False) -
     shared_fraction = per_gene.loc[total_mutations > 0, "shared_mutations"] / total_mutations[total_mutations > 0]
 
     match_mode = "position only" if position_only else "position + base"
-    fig, axis = plt.subplots(figsize=(6, 4.5))
-    sns.histplot(shared_fraction, bins=20, ax=axis)
-    axis.set_xlabel(f"Per-gene shared-mutation fraction ({match_mode})")
-    axis.set_ylabel("Number of genes")
-    axis.set_title("Agreement of introduced mutations between runs")
-    return fig
+    own_figure = ax is None
+    if own_figure:
+        fig, ax = plt.subplots(figsize=(6, 4.5))
+    sns.histplot(shared_fraction, bins=20, ax=ax)
+    ax.set_xlabel(f"Per-gene shared-mutation fraction ({match_mode})")
+    ax.set_ylabel("Number of genes")
+    ax.set_title("Agreement of introduced mutations between runs")
+    return fig if own_figure else ax.get_figure()
 
 
 def render_all_figures(

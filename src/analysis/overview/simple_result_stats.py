@@ -169,22 +169,24 @@ def summarize_stats(stats: Dict[str, Dict[str, Any]], name: str, output_folder: 
     return result
 
 
-def visualize_start_vs_max_fitness(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True) -> None:
+def visualize_start_vs_max_fitness(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None) -> None:
     """create a scatter plot of the start fitness vs max fitness
 
     Args:
         stats (Dict[str, Dict[str, Any]]): Dictionary containing statistics for each gene.
         name (str): Name to distinguish the output file.
         output_folder (str): Path to the output folder for saving results. Defaults to ".".
+        titles (bool): Whether to draw the plot title.
+        ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
+            figure is created and saved (unchanged behaviour); when given, the
+            plot is drawn onto ``ax`` and nothing is saved.
     """
-    plt.clf()
-    
     # Separate data by groups
     main_chromosome_start = []
     main_chromosome_max = []
     organelle_scaffold_start = []
     organelle_scaffold_max = []
-    
+
     for stat in stats.values():
         if stat['origin_chromosome'].isnumeric():
             main_chromosome_start.append(stat['start_fitness'])
@@ -193,21 +195,31 @@ def visualize_start_vs_max_fitness(stats: Dict[str, Dict[str, Any]], name: str, 
             organelle_scaffold_start.append(stat['start_fitness'])
             organelle_scaffold_max.append(stat['final_fitness'])
 
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots()
+
     # Create scatter plots with different colors for each group
-    plt.scatter(main_chromosome_start, main_chromosome_max, 
+    ax.scatter(main_chromosome_start, main_chromosome_max,
                c='blue', alpha=0.6, label='Main Chromosome')
-    plt.scatter(organelle_scaffold_start, organelle_scaffold_max, 
+    ax.scatter(organelle_scaffold_start, organelle_scaffold_max,
                c='red', alpha=0.6, label='Organelle or Scaffold')
-    
-    plt.xlabel('Start Fitness', fontsize=13)
-    plt.ylabel('Final Fitness', fontsize=13)
+
+    ax.set_xlabel('Start Fitness')
+    ax.set_ylabel('Final Fitness')
     if titles:
-        plt.title('Start Fitness vs Final Fitness', fontsize=15)
-    # make axis tick labels size 12
-    plt.xticks(fontsize=12)
-    plt.yticks(fontsize=12)
-    plt.legend(fontsize=12)
-    plt.savefig(os.path.join(output_folder, f'start_vs_final_fitness_{name}.{output_format}'), bbox_inches='tight')
+        ax.set_title('Start Fitness vs Final Fitness')
+    ax.legend()
+    if own_figure:
+        ax.xaxis.label.set_fontsize(13)
+        ax.yaxis.label.set_fontsize(13)
+        if titles:
+            ax.title.set_fontsize(15)
+        # make axis tick labels size 12
+        ax.tick_params(labelsize=12)
+        ax.legend(fontsize=12)
+        plt.savefig(os.path.join(output_folder, f'start_vs_final_fitness_{name}.{output_format}'), bbox_inches='tight')
 
 
 def visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True) -> None:
@@ -222,7 +234,7 @@ def visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]]
     draw_visualize_start_vs_max_fitness_by_mutations(stats, f"{name}_relative", relative=True, output_folder=output_folder, output_format=output_format, titles=titles)
 
 
-def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, relative: bool = False, output_folder: str = ".", titles: bool = True) -> None:
+def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, relative: bool = False, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None) -> None:
     """create a scatter plot of the start fitness vs max fitness colored by mutations at half max fitness
 
     Args:
@@ -230,13 +242,15 @@ def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, 
         name (str): Name to distinguish the output file.
         relative (bool): determines whether the absolute number for mutations at half max fitness is used or the relative value (i.e. number of mutations at half max fitness divided by the maximum number of mutations). Defaults to False.
         output_folder (str): Path to the output folder for saving results. Defaults to ".".
+        titles (bool): Whether to draw the plot title.
+        ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
+            figure is created and saved (unchanged behaviour); when given, the
+            plot is drawn onto ``ax`` and nothing is saved.
     """
-    plt.clf()
-    
     start_fitness = []
     max_fitness = []
     mutations_half_max = []
-    
+
     for stat in stats.values():
         if 'num_mutations_half_max_effect' in stat:
             start_fitness.append(stat['start_fitness'])
@@ -248,24 +262,34 @@ def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, 
             else:
                 mutations_half_max.append(stat['num_mutations_half_max_effect'])
 
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots()
+
     # Create scatter plot with color mapped to mutations at half max fitness
-    scatter = plt.scatter(start_fitness, max_fitness, 
+    scatter = ax.scatter(start_fitness, max_fitness,
                          c=mutations_half_max, alpha=0.6, cmap='viridis')
-    
-    plt.xlabel('Start Fitness')
-    plt.ylabel('Final Fitness')
+
+    ax.set_xlabel('Start Fitness')
+    ax.set_ylabel('Final Fitness')
     if titles:
-        plt.title('Start Fitness vs Final Fitness (Colored by Mutations at Half Max)')
-    plt.colorbar(scatter, label='Mutations at Half Max Effect')
-    plt.savefig(os.path.join(output_folder, f'start_vs_final_fitness_by_mutations_{name}.{output_format}'), bbox_inches='tight')
+        ax.set_title('Start Fitness vs Final Fitness (Colored by Mutations at Half Max)')
+    ax.figure.colorbar(scatter, ax=ax, label='Mutations at Half Max Effect')
+    if own_figure:
+        plt.savefig(os.path.join(output_folder, f'start_vs_final_fitness_by_mutations_{name}.{output_format}'), bbox_inches='tight')
 
 
-def plot_pareto_front(pareto_path: str, out_path: str, titles: bool = True) -> None:
+def plot_pareto_front(pareto_path: str, out_path: str, titles: bool = True, ax: Optional[plt.Axes] = None) -> None:
     """Show the pareto front from the results folder.
 
     Args:
         pareto_path (str): Path to the pareto front JSON file.
         out_path (str): Path for the output files.
+        titles (bool): Whether to draw the plot title.
+        ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
+            figure is created and saved to ``out_path`` (unchanged behaviour);
+            when given, the plot is drawn onto ``ax`` and nothing is saved.
     """
     if not os.path.exists(pareto_path):
         print(f"Skipping {pareto_path}, not found.")
@@ -274,18 +298,21 @@ def plot_pareto_front(pareto_path: str, out_path: str, titles: bool = True) -> N
     with open(pareto_path, 'r') as f:
         pareto_front = json.load(f)
 
-    plt.clf()
-    plt.figure()
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots()
     fitnesses = [item[1] for item in pareto_front]
     num_mutations = [item[2] for item in pareto_front]
-    plt.scatter(num_mutations, fitnesses)
-    plt.xlabel('Number of Mutations')
-    plt.ylabel('Fitness')
+    ax.scatter(num_mutations, fitnesses)
+    ax.set_xlabel('Number of Mutations')
+    ax.set_ylabel('Fitness')
     gene_folder_name = os.path.basename(os.path.dirname(os.path.dirname(pareto_path)))
     gene_name = "_".join(gene_folder_name.split("_")[:2])
     if titles:
-        plt.title(f'Pareto Front for {gene_name}')
-    plt.savefig(out_path, bbox_inches='tight')
+        ax.set_title(f'Pareto Front for {gene_name}')
+    if own_figure:
+        plt.savefig(out_path, bbox_inches='tight')
 
 
 def show_random_fronts(results_folder: str, output_format: str, num_samples: int = 4, output_folder: str = ".", titles: bool = True):
@@ -361,12 +388,16 @@ def normalize_front(pareto_front: List[Tuple[str, float, int]]) -> List[Tuple[st
     return normalized_front
 
 
-def show_average_pareto_front(results_folder: str, output_format: str, output_folder: str = ".", max_number_mutation: int = 90, titles: bool = True) -> None:
+def show_average_pareto_front(results_folder: str, output_format: str, output_folder: str = ".", max_number_mutation: int = 90, titles: bool = True, ax: Optional[plt.Axes] = None) -> None:
     """Show the average pareto front from the results folder.
 
     Args:
         results_folder (str): Path to the results folder.
         output_folder (str): Path to the output folder for saving results. Defaults to ".".
+        titles (bool): Whether to draw the plot title.
+        ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
+            figure is created and saved (unchanged behaviour); when given, the
+            plot is drawn onto ``ax`` and nothing is saved.
     """
     genes = [gene for gene in os.listdir(results_folder) if os.path.isdir(os.path.join(results_folder, gene))]
     all_fitnesses = []
@@ -398,19 +429,25 @@ def show_average_pareto_front(results_folder: str, output_format: str, output_fo
     avg_mutations = np.mean(all_mutations, axis=0)
 
     # plot the average pareto front with strandard deviation
-    plt.clf()
-    plt.figure(figsize=(8, 5))
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots(figsize=(8, 5))
     # make the dots the same shade of blue as in the show_random_fronts, but the errorbars black
-    plt.errorbar(avg_mutations, np.mean(fitnesses, axis=0),
+    ax.errorbar(avg_mutations, np.mean(fitnesses, axis=0),
                     yerr=np.std(fitnesses, axis=0), fmt='o', capsize=5, label='Average Pareto Front', color='#1f77b4', ecolor='black')
-    plt.xlabel('Number of Mutations', fontsize=15)
-    plt.ylabel('Normalized DeepCRE Output', fontsize=15)
-    plt.xticks(fontsize=15)
-    plt.yticks(fontsize=15)
+    ax.set_xlabel('Number of Mutations')
+    ax.set_ylabel('Normalized DeepCRE Output')
     if titles:
-        plt.title('Average Pareto Front', fontsize=17)
-    run_name = os.path.basename(results_folder)
-    plt.savefig(os.path.join(output_folder, f'average_pareto_front_{run_name}.{output_format}'), bbox_inches='tight', dpi=1000)
+        ax.set_title('Average Pareto Front')
+    if own_figure:
+        ax.xaxis.label.set_fontsize(15)
+        ax.yaxis.label.set_fontsize(15)
+        ax.tick_params(labelsize=15)
+        if titles:
+            ax.title.set_fontsize(17)
+        run_name = os.path.basename(results_folder)
+        plt.savefig(os.path.join(output_folder, f'average_pareto_front_{run_name}.{output_format}'), bbox_inches='tight', dpi=1000)
 
 
 def calculate_loss_pareto_front(current_front: List[Tuple[str, float, int]], target_front: List[Tuple[str, float, int]], max_number_mutation: int) -> float:
@@ -509,7 +546,7 @@ def join_losses_for_visualization(loss_data: Dict[str, Dict[int, float]]) -> Tup
     return generations, loss_averages, [float(x) for x in loss_stds]
 
 
-def plot_loss_over_generations(results_folder: str, name: str, max_number_mutation: int, output_format: str, last_generation: int, output_folder: str = ".", titles: bool = True) -> None:
+def plot_loss_over_generations(results_folder: str, name: str, max_number_mutation: int, output_format: str, last_generation: int, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None) -> None:
     """Plot the average loss over generations for all genes.
 
     Args:
@@ -517,6 +554,10 @@ def plot_loss_over_generations(results_folder: str, name: str, max_number_mutati
         name (str): Name to distinguish the output file.
         last_generation (int): Generation number of the "pareto_front.json" file.
         output_folder (str): Path to the output folder for saving results. Defaults to ".".
+        titles (bool): Whether to draw the plot title.
+        ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
+            figure is created and saved (unchanged behaviour); when given, the
+            plot is drawn onto ``ax`` and nothing is saved.
     """
     loss_data = calculate_loss_over_generations(results_folder=results_folder, last_generation=last_generation, max_number_mutation=max_number_mutation)
     generations, loss_averages, loss_stds = join_losses_for_visualization(loss_data)
@@ -538,36 +579,41 @@ def plot_loss_over_generations(results_folder: str, name: str, max_number_mutati
     """
     # print(loss_for_vis)
     # print(std_loss_per_gen)
-    plt.clf()
-    plt.figure()
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots()
     # plot average loss
     # plot error bars every 100 generations
-    # plt.plot(generations, avg_loss_per_gen, label='Average Loss', color='blue')
-    plt.errorbar(generations, loss_averages,
+    # ax.plot(generations, avg_loss_per_gen, label='Average Loss', color='blue')
+    ax.errorbar(generations, loss_averages,
                  yerr=loss_stds, capsize=3, label='Average Loss', ecolor='black')
-    plt.xlabel("Generation")
-    plt.ylabel("Loss")
+    ax.set_xlabel("Generation")
+    ax.set_ylabel("Loss")
     if titles:
-        plt.title("Average Loss Over Generations")
-    plt.grid()
-    plt.legend()
-    plt.savefig(os.path.join(output_folder, f"loss_over_generations_{name}.{output_format}"), bbox_inches='tight')
-    plt.close()
+        ax.set_title("Average Loss Over Generations")
+    ax.grid()
+    ax.legend()
+    if own_figure:
+        plt.savefig(os.path.join(output_folder, f"loss_over_generations_{name}.{output_format}"), bbox_inches='tight')
+        plt.close(fig)
 
 
-def plot_half_max_mutations_vs_initial_fitness(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True) -> None:
+def plot_half_max_mutations_vs_initial_fitness(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None) -> None:
     """Plot the number of mutations at half max fitness against the initial fitness.
 
     Args:
         stats (Dict[str, Dict[str, Any]]): Dictionary containing statistics for each gene.
         name (str): Name to distinguish the output file.
         output_folder (str): Path to the output folder for saving results. Defaults to ".".
+        titles (bool): Whether to draw the plot title.
+        ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
+            figure is created and saved (unchanged behaviour); when given, the
+            plot is drawn onto ``ax`` and nothing is saved.
     """
-    plt.clf()
-    
     initial_fitness = []
     half_max_mutations = []
-    
+
     for stat in stats.values():
         if 'num_mutations_half_max_effect' in stat:
             initial_fitness.append(stat['start_fitness'])
@@ -575,12 +621,18 @@ def plot_half_max_mutations_vs_initial_fitness(stats: Dict[str, Dict[str, Any]],
         else:
             print(f"Skipping gene {stat['origin_chromosome']}, no mutations at half max effect found.")
 
-    plt.scatter(initial_fitness, half_max_mutations, alpha=0.6)
-    plt.xlabel('Initial Fitness')
-    plt.ylabel('Mutations at Half Max Effect')
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots()
+
+    ax.scatter(initial_fitness, half_max_mutations, alpha=0.6)
+    ax.set_xlabel('Initial Fitness')
+    ax.set_ylabel('Mutations at Half Max Effect')
     if titles:
-        plt.title('Initial Fitness vs Mutations at Half Max Effect')
-    plt.savefig(os.path.join(output_folder, f'half_max_mutations_vs_initial_fitness_{name}.{output_format}'), bbox_inches='tight')
+        ax.set_title('Initial Fitness vs Mutations at Half Max Effect')
+    if own_figure:
+        plt.savefig(os.path.join(output_folder, f'half_max_mutations_vs_initial_fitness_{name}.{output_format}'), bbox_inches='tight')
 
 
 def distribution_half_max_mutations(stats_path: str) -> None:
@@ -618,18 +670,20 @@ def distribution_half_max_mutations(stats_path: str) -> None:
         print(f"  {count}: {cum_percentage}%")
 
 
-def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True) -> None:
+def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None) -> None:
     """Create a histogram of the number of mutations at half max effect.
 
     Args:
         stats (Dict[str, Dict[str, Any]]): Dictionary containing statistics for each gene.
         name (str): Name to distinguish the output file.
         output_folder (str): Path to the output folder for saving results. Defaults to ".".
+        titles (bool): Whether to draw the plot title.
+        ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
+            figure is created and saved (unchanged behaviour); when given, the
+            plot is drawn onto ``ax`` and nothing is saved.
     """
-    plt.clf()
-    
     half_max_mutations = []
-    
+
     for stat in stats.values():
         if 'num_mutations_half_max_effect' in stat:
             half_max_mutations.append(stat['num_mutations_half_max_effect'])
@@ -638,16 +692,23 @@ def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_
 
     max_mutations = round(max(half_max_mutations)) if half_max_mutations else 0
     bins = np.arange(0, max_mutations + 2) - 0.5  # to center bins on integers
-    
-    plt.figure(figsize=(8, 5))
-    plt.hist(half_max_mutations, bins=bins, alpha=0.7) #type:ignore
-    plt.xlabel('Mutations at Half Max Effect', fontsize=15)
-    plt.xticks(fontsize=15)
-    plt.yticks(fontsize=15)
-    plt.ylabel('Frequency', fontsize=15)
+
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots(figsize=(8, 5))
+    ax.hist(half_max_mutations, bins=bins, alpha=0.7) #type:ignore
+    ax.set_xlabel('Mutations at Half Max Effect')
+    ax.set_ylabel('Frequency')
     if titles:
-        plt.title('Histogram of Mutations at Half Max Effect', fontsize=17)
-    plt.savefig(os.path.join(output_folder, f'hist_half_max_mutations_{name}.{output_format}'), bbox_inches='tight', dpi=1000)
+        ax.set_title('Histogram of Mutations at Half Max Effect')
+    if own_figure:
+        ax.xaxis.label.set_fontsize(15)
+        ax.yaxis.label.set_fontsize(15)
+        ax.tick_params(labelsize=15)
+        if titles:
+            ax.title.set_fontsize(17)
+        plt.savefig(os.path.join(output_folder, f'hist_half_max_mutations_{name}.{output_format}'), bbox_inches='tight', dpi=1000)
 
 
 def parse_args():

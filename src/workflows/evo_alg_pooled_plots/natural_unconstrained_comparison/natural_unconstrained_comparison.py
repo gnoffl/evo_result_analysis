@@ -29,7 +29,7 @@ It is a one-off analysis script: run it directly.
 import glob
 import json
 import os
-from typing import Dict
+from typing import Dict, Optional
 
 import matplotlib
 
@@ -198,7 +198,11 @@ def save_figure(fig: Figure, filename: str, output_dir: str, fmt: str = FIGURE_F
 
 
 def plot_paired_fitness(
-    paired: pd.DataFrame, title: str, p_value: float, log_scale: bool = False
+    paired: pd.DataFrame,
+    title: str,
+    p_value: float,
+    log_scale: bool = False,
+    ax: Optional[plt.Axes] = None,
 ) -> Figure:
     """Draw a paired box plot of final fitness with per-gene connecting lines.
 
@@ -213,11 +217,19 @@ def plot_paired_fitness(
         title: Axes title (e.g. the comparison name).
         p_value: One-sided Wilcoxon p-value to annotate.
         log_scale: If True, use a logarithmic y-axis. Requires all values > 0.
+        ax: Axes to draw onto. When None (standalone), a figure is created and
+            returned with the original explicit font sizes. When given, the plot
+            is drawn onto ``ax`` and its parent figure is returned; inline font
+            sizes are left to the active stylesheet.
 
     Returns:
         Matplotlib Figure with a single axes.
     """
-    fig, ax = plt.subplots(figsize=(4.5, 5.0))
+    own_figure = ax is None
+    if own_figure:
+        fig, ax = plt.subplots(figsize=(4.5, 5.0))
+    else:
+        fig = ax.get_figure()
     x_positions = {"unconstrained": 0, "natural": 1}
 
     for _, row in paired.iterrows():
@@ -258,20 +270,21 @@ def plot_paired_fitness(
     # Significance bracket above the data, with a tick at each end.
     tick = (text_y - bar_y) * 0.4
     ax.plot([0, 0, 1, 1], [bar_y - tick, bar_y, bar_y, bar_y - tick], color="black", linewidth=1.0)
-    ax.text(
+    significance_text = ax.text(
         0.5,
         text_y,
         f"{p_value_to_stars(p_value)}\np = {p_value:.2e}",
         ha="center",
         va="bottom",
-        fontsize=9,
     )
     ax.set_ylim(top=top)
 
     ax.set_xlabel("mutation set")
     ax.set_ylabel("final fitness")
     ax.set_title(title)
-    fig.tight_layout()
+    if own_figure:
+        significance_text.set_fontsize(9)
+        fig.tight_layout()
     return fig
 
 

@@ -201,6 +201,7 @@ def plot_overlay(
     output_dir: str,
     output_format: str = "png",
     max_distance: Optional[int] = None,
+    ax: Optional[plt.Axes] = None,
 ) -> None:
     """Plot real distances as bars overlaid with the random proportion line.
 
@@ -217,6 +218,9 @@ def plot_overlay(
         output_dir: Destination directory.
         output_format: File extension (e.g. ``"png"``, ``"pdf"``).
         max_distance: Optional upper cutoff on the plotted distance axis.
+        ax: Axes to draw onto. When None (default), a standalone figure is
+            created and saved (unchanged behaviour); when given, the plot is
+            drawn onto ``ax`` and nothing is saved.
     """
     if max_distance is not None:
         real = {d: p for d, p in real.items() if d <= max_distance}
@@ -225,7 +229,9 @@ def plot_overlay(
     distances = sorted(real.keys())
     proportions = [real[d] for d in distances]
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    own_figure = ax is None
+    if own_figure:
+        fig, ax = plt.subplots(figsize=(12, 6))
     if proportions:
         ax.bar(distances, proportions, width=1.0, edgecolor="none", alpha=0.75, label="Real")
 
@@ -246,13 +252,14 @@ def plot_overlay(
         )
         ax.set_xlim(0, last_meaningful * 1.05)
 
-    suffix = "_smaller" if max_distance is not None else ""
-    out_path = os.path.join(
-        output_dir,
-        f"mutation_distances_{name}_overlay{suffix}.{output_format}",
-    )
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    if own_figure:
+        suffix = "_smaller" if max_distance is not None else ""
+        out_path = os.path.join(
+            output_dir,
+            f"mutation_distances_{name}_overlay{suffix}.{output_format}",
+        )
+        fig.savefig(out_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
 
 
 def plot_difference(
@@ -262,6 +269,7 @@ def plot_difference(
     output_dir: str,
     output_format: str = "png",
     max_distance: Optional[int] = None,
+    ax: Optional[plt.Axes] = None,
 ) -> None:
     """Plot the per-distance difference between real and random proportions.
 
@@ -280,6 +288,9 @@ def plot_difference(
         output_dir: Destination directory.
         output_format: File extension (e.g. ``"png"``, ``"pdf"``).
         max_distance: Optional upper cutoff on the plotted distance axis.
+        ax: Axes to draw onto. When None (default), a standalone figure is
+            created and saved (unchanged behaviour); when given, the plot is
+            drawn onto ``ax`` and nothing is saved.
     """
     if max_distance is not None:
         real = {d: p for d, p in real.items() if d <= max_distance}
@@ -294,8 +305,10 @@ def plot_difference(
 
     from matplotlib.patches import Patch
 
-    plt.clf()
-    fig, ax = plt.subplots(figsize=(12, 6))
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots(figsize=(12, 6))
     ax.bar(all_distances, diff, width=1.0, color=colors, edgecolor="none")
     ax.axhline(0, color="black", linewidth=0.8)
     ax.set_xlabel("Mutation Distance")
@@ -309,13 +322,14 @@ def plot_difference(
         ]
     )
 
-    suffix = "_smaller" if max_distance is not None else ""
-    out_path = os.path.join(
-        output_dir,
-        f"mutation_distances_{name}_difference{suffix}.{output_format}",
-    )
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    if own_figure:
+        suffix = "_smaller" if max_distance is not None else ""
+        out_path = os.path.join(
+            output_dir,
+            f"mutation_distances_{name}_difference{suffix}.{output_format}",
+        )
+        fig.savefig(out_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
 
 
 def run_distance_analysis(

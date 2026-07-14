@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import os
 import argparse
+from typing import Optional
 
 FOLDERS = [
     ("analysis/multi_mutation_less_generations_unsorted", "multi_mutation", "less_generations", "unsorted", "normal_mutation_rate"),
@@ -14,27 +15,40 @@ FOLDERS = [
 ]
 
 
-def compare_conditions(index: int) -> None:
-    plt.clf()
+def compare_conditions(index: int, ax: Optional[plt.Axes] = None) -> None:
+    """Plot average accuracy grouped by the condition at a given argument index.
+
+    Args:
+        index: Position in the per-folder argument tuple used to group results.
+        ax: Axes to draw onto. When None, a standalone figure is created and
+            saved (unchanged behaviour); when given, the plot is drawn onto
+            ``ax`` and nothing is saved.
+    """
     groups = {}
     for folder, *args in FOLDERS:
         groups.setdefault(args[index], []).append(get_accuracy(folder))
-    
+
     labels = []
     values = []
-    
+
     for condition, accuracies in groups.items():
         # Create a bar plot for each condition
         labels.append(condition)
         values.append(sum(accuracies) / len(accuracies))  # Average accuracy for the condition
-    plt.bar(labels, values, label=f"Condition {index + 1}")
+
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots()
+    ax.bar(labels, values, label=f"Condition {index + 1}")
     # set y-axis lower limit to min(values)
-    plt.ylim(bottom=min(values) * 0.99, top=1.0)
-    plt.legend()
-    plt.xlabel("Conditions")
-    plt.ylabel("Accuracy")
-    plt.title("Comparison of Analysis Results")
-    plt.savefig(f"analysis/comparison_results_{index}.png", bbox_inches='tight')
+    ax.set_ylim(bottom=min(values) * 0.99, top=1.0)
+    ax.legend()
+    ax.set_xlabel("Conditions")
+    ax.set_ylabel("Accuracy")
+    ax.set_title("Comparison of Analysis Results")
+    if own_figure:
+        plt.savefig(f"analysis/comparison_results_{index}.png", bbox_inches='tight')
 
         
 
@@ -48,7 +62,14 @@ def get_accuracy(folder_path: str) -> float:
     return fitness
 
 
-def compare_all_results():
+def compare_all_results(ax: Optional[plt.Axes] = None) -> None:
+    """Plot a horizontal bar of accuracy per folder, sorted by folder labels.
+
+    Args:
+        ax: Axes to draw onto. When None, a standalone figure is created and
+            saved (unchanged behaviour); when given, the plot is drawn onto
+            ``ax`` and nothing is saved.
+    """
     # create bar plot where each folder is represented by a single bar.
     # x-axis lables are the concatenated args of the folder
     # y-axis is the accuracy
@@ -63,12 +84,16 @@ def compare_all_results():
     accuracies = [accuracies[i] for i in sorted_indices]
     labels = [labels[i] for i in sorted_indices]
 
+    own_figure = ax is None
+    if own_figure:
+        fig, ax = plt.subplots()
     # set scale such that minimal shown value is min(accuracies) - 0.1 and maximal shown value is max(accuracies) + 0.1
-    plt.barh(labels, accuracies)
-    plt.xlabel("Accuracy")
-    plt.title("Comparison of Analysis Results")
-    plt.xlim(min(accuracies) * 0.99, 1.0)
-    plt.savefig("analysis/comparison_results_sorted.png", bbox_inches='tight')
+    ax.barh(labels, accuracies)
+    ax.set_xlabel("Accuracy")
+    ax.set_title("Comparison of Analysis Results")
+    ax.set_xlim(min(accuracies) * 0.99, 1.0)
+    if own_figure:
+        plt.savefig("analysis/comparison_results_sorted.png", bbox_inches='tight')
 
 
 def main():

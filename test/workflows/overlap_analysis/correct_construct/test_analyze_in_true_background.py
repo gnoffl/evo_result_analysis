@@ -2,12 +2,19 @@ import unittest
 from unittest.mock import patch, MagicMock
 import pandas as pd
 
+import matplotlib
+
+matplotlib.use("Agg")  # headless backend for tests
+import matplotlib.pyplot as plt
+
 from workflows.overlap_analysis.correct_construct.analyze_in_true_background import (
     _parse_binding_category,
     load_starrseq_data,
     average_barcode_predictions,
     prepare_barcode_comparison_data,
     prepare_correlation_data,
+    plot_barcode_comparison,
+    plot_overall_correlation,
 )
 
 
@@ -182,6 +189,56 @@ class TestPrepareCorrelationData(unittest.TestCase):
         )
         result = prepare_correlation_data(preds, starrseq_extra)
         self.assertFalse((result["id"] == "seq_C").any())
+
+
+class TestPlotAxInjection(unittest.TestCase):
+    """Ax-injection behaviour of the single-axes plotting functions."""
+
+    @patch(
+        "workflows.overlap_analysis.correct_construct.analyze_in_true_background.save_figure"
+    )
+    def test_plot_barcode_comparison_with_ax(self, mock_save_figure) -> None:
+        # Arrange
+        data = pd.DataFrame(
+            {
+                "tf_family": ["WRKY", "WRKY", "bHLH", "bHLH"],
+                "barcode_1": [0.1, 0.2, 0.3, 0.4],
+                "barcode_2": [0.15, 0.25, 0.35, 0.45],
+            }
+        )
+        fig, ax = plt.subplots()
+        try:
+            # Act
+            plot_barcode_comparison(data, ax=ax)
+
+            # Assert
+            self.assertGreater(len(ax.collections), 0)  # scatter drawn
+            mock_save_figure.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch(
+        "workflows.overlap_analysis.correct_construct.analyze_in_true_background.save_figure"
+    )
+    def test_plot_overall_correlation_with_ax(self, mock_save_figure) -> None:
+        # Arrange
+        data = pd.DataFrame(
+            {
+                "prediction": [0.1, 0.2, 0.3, 0.4, 0.5],
+                "enrichment": [1.0, 1.4, 1.6, 2.1, 2.3],
+            }
+        )
+        fig, ax = plt.subplots()
+        try:
+            # Act
+            plot_overall_correlation(data, ax=ax)
+
+            # Assert
+            self.assertGreater(len(ax.collections), 0)  # scatter drawn
+            self.assertGreater(len(ax.lines), 0)  # regression line drawn
+            mock_save_figure.assert_not_called()
+        finally:
+            plt.close(fig)
 
 
 if __name__ == "__main__":

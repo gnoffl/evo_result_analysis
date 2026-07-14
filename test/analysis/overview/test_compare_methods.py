@@ -254,8 +254,8 @@ class TestCompareMethods(unittest.TestCase):
         np.testing.assert_array_almost_equal(std_fitness, expected_std_fitness)
     
     @patch('matplotlib.pyplot.close')
-    @patch('matplotlib.pyplot.legend')
-    @patch('matplotlib.pyplot.errorbar')
+    @patch('matplotlib.axes.Axes.legend')
+    @patch('matplotlib.axes.Axes.errorbar')
     def test_plot_normalized_fronts(self, mock_errorbar, mock_legend, mock_close):
         """Test plotting normalized fronts."""
         normalized_fronts = {
@@ -274,7 +274,7 @@ class TestCompareMethods(unittest.TestCase):
         expected_path = os.path.join(self.temp_dir, "normalized_pareto_fronts_comparison.png")
         self.assertTrue(os.path.exists(expected_path))
     
-    @patch('matplotlib.pyplot.plot')
+    @patch('matplotlib.axes.Axes.plot')
     def test_plot_interesting_pareto_fronts_values(self, mock_plot):
         """Test plotting interesting pareto fronts values."""
         fronts = self.sample_fronts
@@ -313,7 +313,7 @@ class TestCompareMethods(unittest.TestCase):
             for exp_diff, act_diff in zip(expected_diffs, actual_diffs):
                 self.assertAlmostEqual(exp_diff, act_diff)
     
-    @patch('matplotlib.pyplot.plot')
+    @patch('matplotlib.axes.Axes.plot')
     def test_plot_differences_between_fronts(self, mock_plot):
         """Test plotting differences between fronts."""
         fronts = {
@@ -1082,7 +1082,7 @@ class TestProgressFunctions(unittest.TestCase):
         self.assertAlmostEqual(best_area, 6.3)
     
     @patch('matplotlib.pyplot.savefig')
-    @patch('matplotlib.pyplot.errorbar')
+    @patch('matplotlib.axes.Axes.errorbar')
     def test_visualize_progress_linear(self, mock_errorbar, mock_savefig):
         """Test visualizing progress with linear scale."""
         generation_losses = {
@@ -1109,8 +1109,8 @@ class TestProgressFunctions(unittest.TestCase):
         mock_savefig.assert_called_with(expected_path, dpi=300, bbox_inches='tight')
     
     @patch('matplotlib.pyplot.savefig')
-    @patch('matplotlib.pyplot.yscale')
-    @patch('matplotlib.pyplot.errorbar')
+    @patch('matplotlib.axes.Axes.set_yscale')
+    @patch('matplotlib.axes.Axes.errorbar')
     def test_visualize_progress_logarithmic(self, mock_errorbar, mock_yscale, mock_savefig):
         """Test visualizing progress with logarithmic scale."""
         generation_losses = {

@@ -9,10 +9,16 @@ import os
 import tempfile
 import unittest
 
+import matplotlib
+
+matplotlib.use("Agg")  # headless backend for tests
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 from workflows.compare_reruns.compare_runs import (
+    plot_paired_scatter,
+    plot_mutation_overlap,
     PER_GENE_COLUMNS,
     GeneComparisonSkipped,
     _paired_wilcoxon_pvalue,
@@ -513,6 +519,41 @@ class TestDiscoverGeneFronts(unittest.TestCase):
             self._write_front(run_dir, "1_AT1G75760_gene:1-2_t2")
             with self.assertRaises(ValueError):
                 discover_gene_fronts(run_dir)
+
+
+class TestPlotAxInjectionContract(unittest.TestCase):
+    """Ax-injection return contract of the Figure-returning plot functions.
+
+    Rendering itself is not asserted (per this module's convention); these check
+    the logic contract that, when an ``ax`` is passed, the function draws onto it
+    and returns ``ax.get_figure()`` rather than creating a new standalone figure.
+    """
+
+    def test_plot_paired_scatter_returns_injected_axes_figure(self):
+        per_gene = pd.DataFrame({"a": [0.1, 0.2, 0.3], "b": [0.15, 0.25, 0.35]})
+        fig, ax = plt.subplots()
+        try:
+            returned = plot_paired_scatter(per_gene, "a", "b", "x", "y", "title", ax=ax)
+            self.assertIs(returned, ax.get_figure())
+            self.assertGreater(len(ax.collections), 0)  # scatter drawn onto ax
+        finally:
+            plt.close(fig)
+
+    def test_plot_mutation_overlap_returns_injected_axes_figure(self):
+        per_gene = pd.DataFrame(
+            {
+                "shared_mutations": [2, 3, 1],
+                "a_only_mutations": [1, 0, 2],
+                "b_only_mutations": [0, 1, 1],
+            }
+        )
+        fig, ax = plt.subplots()
+        try:
+            returned = plot_mutation_overlap(per_gene, ax=ax)
+            self.assertIs(returned, ax.get_figure())
+            self.assertGreater(len(ax.patches), 0)  # histogram drawn onto ax
+        finally:
+            plt.close(fig)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """Analyze correlation between deepCRE model predictions and RNA-seq TPM measurements."""
 
 import os
-from typing import Dict, Tuple, List
+from typing import Dict, Optional, Tuple, List
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -66,16 +66,30 @@ def plot_single_dataset(results: Dict, model_col: str, ax: plt.Axes) -> None:
     y_line = (results[model_col]["slope"] * x_line + results[model_col]["intercept"])
     ax.plot(x_line, y_line, "r-", linewidth=2, label="Linear fit")
 
-def create_plots(results: dict, model_cols: List[str]) -> None:
-    """Create and save separate scatter plots with regression lines for each model."""
+def create_plots(
+    results: dict, model_cols: List[str], ax: Optional[plt.Axes] = None
+) -> None:
+    """Create scatter plots with regression lines for each model.
+
+    Args:
+        results: Mapping of model column to analysis results (see ``analyze_model``).
+        model_cols: Model columns to plot; ``_low``/``_high`` partners are drawn
+            together on one axes.
+        ax: Axes to draw onto. When None (default), one standalone figure per model
+            (pair) is created and saved (unchanged behaviour). When given, only a
+            single plot (the first model / model pair) is drawn onto ``ax`` and
+            nothing is saved -- for use from a publication composition script.
+    """
     #copy model_cols
     local_model_cols = model_cols.copy()
+    own_figure = ax is None
     while True:
         if not local_model_cols:
             break
         model_col = local_model_cols.pop(0)
-        plt.clf()
-        fig, ax = plt.subplots(figsize=(8, 6))
+        if own_figure:
+            plt.clf()
+            fig, ax = plt.subplots(figsize=(8, 6))
 
         plot_single_dataset(results, model_col, ax)
         high_low = False
@@ -87,7 +101,7 @@ def create_plots(results: dict, model_cols: List[str]) -> None:
             high_low = True
         else:
             other_model_col = None
-        
+
         if other_model_col is not None and other_model_col in results:
             local_model_cols.remove(other_model_col)
             plot_single_dataset(results=results, model_col=other_model_col, ax=ax)
@@ -99,12 +113,15 @@ def create_plots(results: dict, model_cols: List[str]) -> None:
         ax.grid(True, alpha=0.3)
         ax.set_xlabel("Model Prediction")
         ax.set_ylabel("logMaxTPM")
-        plt.tight_layout()
-        filename = f"deepcre_tpm_correlation_model_{model_col}.png"
-        out_path = os.path.join("src/workflows/deepCRE_TPM_correlation", filename)
-        plt.savefig(out_path, dpi=300, bbox_inches="tight")
-        print(f"Plot saved to: {filename}")
-        plt.close(fig)
+        if own_figure:
+            plt.tight_layout()
+            filename = f"deepcre_tpm_correlation_model_{model_col}.png"
+            out_path = os.path.join("src/workflows/deepCRE_TPM_correlation", filename)
+            plt.savefig(out_path, dpi=300, bbox_inches="tight")
+            print(f"Plot saved to: {filename}")
+            plt.close(fig)
+        else:
+            break
 
 
 def analyze_subset(results: dict, model_col: str, subset_name: str, filter_low: bool = False) -> dict:

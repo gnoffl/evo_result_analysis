@@ -4,6 +4,9 @@ import json
 import tempfile
 import shutil
 from unittest.mock import patch, mock_open, MagicMock
+import matplotlib
+matplotlib.use("Agg")  # headless backend for tests
+import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from typing import List, Tuple
@@ -1121,6 +1124,26 @@ class TestRestrictionSites(unittest.TestCase):
         
         # seq2 should be kept
         self.assertIn(">seq2", content)
+
+
+class TestDrawLinePlotAxInjection(unittest.TestCase):
+    """Ax-injection behaviour of draw_line_plot."""
+
+    @patch("matplotlib.pyplot.savefig")
+    def test_draw_line_plot_with_ax(self, mock_savefig):
+        # Arrange
+        single_points = [(0.5, 10), (0.7, 20), (0.9, 30)]
+        multi_points = [(0.4, 12), (0.6, 24), (0.85, 36)]
+        fig, ax = plt.subplots()
+        try:
+            # Act
+            draw_line_plot("unused_folder", "geneX", single_points, multi_points, ax=ax)
+
+            # Assert
+            self.assertGreater(len(ax.lines), 0)  # trajectories drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
 
 
 if __name__ == '__main__':

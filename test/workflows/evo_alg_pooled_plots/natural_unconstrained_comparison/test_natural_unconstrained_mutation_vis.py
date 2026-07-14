@@ -234,6 +234,39 @@ class TestAddSignificanceBrackets(unittest.TestCase):
         plt.close(fig)
 
 
+class TestBarplotFigureWithAx(unittest.TestCase):
+    """Ax-injection behaviour for _barplot_figure."""
+
+    def _data(self):
+        return build_comparison_dataframe(
+            gof_constrained_locs=[10, 20],
+            gof_constrained_muts=[30, 60],
+            lof_constrained_locs=[15, 25],
+            lof_constrained_muts=[45, 75],
+            gof_unconstrained_pos=[1000, 2000],
+            gof_unconstrained_muts=[3000, 6000],
+            lof_unconstrained_pos=[1500, 2500],
+            lof_unconstrained_muts=[4500, 7500],
+        )
+
+    @patch("matplotlib.pyplot.savefig")
+    def test_draws_onto_provided_ax_without_saving(self, mock_savefig):
+        """Passing an ax draws onto it, returns its figure, and saves nothing."""
+        palette = {"Constrained": "#4C72B0", "Unconstrained": "#DD8452"}
+        fig, ax = plt.subplots()
+        try:
+            returned_fig, returned_ax = _barplot_figure(
+                self._data(), "positions", "y", "title", palette,
+                ["GOF", "LOF"], ["Constrained", "Unconstrained"], ax=ax,
+            )
+            self.assertIs(returned_ax, ax)
+            self.assertIs(returned_fig, ax.get_figure())
+            self.assertGreater(len(ax.patches), 0)  # bars drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+
 class TestRunStatisticalTests(unittest.TestCase):
     """Tests for run_statistical_tests."""
 

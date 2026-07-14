@@ -4,14 +4,19 @@ import json
 import unittest
 from unittest.mock import mock_open, patch
 
-import numpy as np
-import pandas as pd
+import matplotlib
 
-from src.workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.natural_unconstrained_comparison import (
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+
+from src.workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.natural_unconstrained_comparison import (  # noqa: E402
     core_gene_id,
     load_final_fitness,
     p_value_to_stars,
     pair_final_fitness,
+    plot_paired_fitness,
     rank_biserial_effect_size,
     wilcoxon_paired_test,
 )
@@ -136,6 +141,28 @@ class TestWilcoxonPairedTest(unittest.TestCase):
         result = wilcoxon_paired_test(paired, alternative="less")
         # Assert: one-sided p is half the two-sided minimum (0.125 / 2)
         self.assertAlmostEqual(result["p_value"], 0.0625)
+
+
+class TestPlotPairedFitness(unittest.TestCase):
+    @patch("matplotlib.pyplot.savefig")
+    def test_draws_onto_provided_ax_without_saving(self, mock_savefig) -> None:
+        # Arrange
+        paired = pd.DataFrame(
+            {"unconstrained": [0.9, 0.8, 0.95, 0.7], "natural": [0.6, 0.5, 0.7, 0.4]}
+        )
+        fig, ax = plt.subplots()
+
+        # Act
+        try:
+            returned = plot_paired_fitness(paired, "maximization", 0.01, ax=ax)
+
+            # Assert: drawn onto the provided ax, its figure returned, nothing saved.
+            self.assertIs(returned, ax.get_figure())
+            self.assertGreater(len(ax.patches), 0)  # boxes drawn
+            self.assertGreater(len(ax.lines), 0)  # connecting lines / bracket drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
 
 
 if __name__ == "__main__":

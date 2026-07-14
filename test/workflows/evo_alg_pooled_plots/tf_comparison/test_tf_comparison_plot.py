@@ -1,11 +1,16 @@
 """Unit tests for the TF-comparison plotting toolbox."""
 
 import unittest
+from unittest.mock import patch
 
-import pandas as pd
-from matplotlib.figure import Figure
+import matplotlib
 
-from workflows.evo_alg_pooled_plots.tf_comparison.tf_comparison_plot import (
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import pandas as pd  # noqa: E402
+from matplotlib.figure import Figure  # noqa: E402
+
+from workflows.evo_alg_pooled_plots.tf_comparison.tf_comparison_plot import (  # noqa: E402
     plot_heatmap,
     q_to_stars,
 )
@@ -99,6 +104,23 @@ class PlotHeatmapTest(unittest.TestCase):
         self.assertTrue(any("2.00** " in t for t in texts), f"Expected '2.00** ' in {texts}")
         # Cells with no stars have just the number.
         self.assertTrue(any("-2.00" in t and "**" not in t for t in texts))
+
+    @patch("matplotlib.pyplot.savefig")
+    def test_plot_heatmap_with_ax(self, mock_savefig) -> None:
+        # Arrange
+        matrix = self._matrix()
+        fig, ax = plt.subplots()
+
+        # Act
+        try:
+            returned = plot_heatmap(matrix, annotate=True, separator_after_column=1, ax=ax)
+
+            # Assert: drawn onto the provided ax, its figure returned, nothing saved.
+            self.assertIs(returned, ax.get_figure())
+            self.assertGreater(len(ax.collections), 0)  # heatmap mesh drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
 
 
 if __name__ == "__main__":

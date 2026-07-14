@@ -10,6 +10,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")  # Use non-interactive backend for testing
+import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np
 import pandas as pd
 
@@ -18,6 +21,8 @@ from analysis.motives.analyze_peaks import (
     _load_peaks,
     analyze_wrky_peak_overlaps,
     compute_symmetric_limit,
+    plot_diff_calc_barplot,
+    plot_diff_calc_heatmap,
     prepare_diff_calc_data,
     select_top_bottom,
     summarize_peaks,
@@ -523,6 +528,70 @@ class TestSelectTopBottom(unittest.TestCase):
         # Assert — clean 0-based index
         self.assertEqual(result.index.tolist(), [0, 1, 2, 3])
 
+
+class TestDiffCalcPlotAxInjection(unittest.TestCase):
+    """Tests that the Figure-returning diff_calc plots support ax-injection."""
+
+    def _make_plot_df(self) -> pd.DataFrame:
+        """Return a small descending-sorted diff_calc DataFrame for plotting."""
+        return pd.DataFrame(
+            {
+                "tf": ["WRKY40", "bHLH74", "MYB1"],
+                "diff_calc": [2.0, 0.0, -3.0],
+            }
+        )
+
+    def test_plot_diff_calc_barplot_with_ax_draws_and_reuses_figure(self):
+        """Passing an ax draws onto it, reuses its figure, and creates no new figure."""
+        plot_df = self._make_plot_df()
+        fig, ax = plt.subplots()
+        figure_count_before = len(plt.get_fignums())
+        try:
+            returned_fig = plot_diff_calc_barplot(plot_df, value_limit=3.0, ax=ax)
+            # Bars were drawn onto the provided axes.
+            self.assertGreater(len(ax.patches), 0)
+            # The returned figure is the provided axes' figure.
+            self.assertIs(returned_fig, ax.get_figure())
+            # No standalone figure was created.
+            self.assertEqual(len(plt.get_fignums()), figure_count_before)
+        finally:
+            plt.close(fig)
+
+    def test_plot_diff_calc_barplot_standalone_returns_new_figure(self):
+        """Without an ax, a standalone figure is created and returned."""
+        plot_df = self._make_plot_df()
+        returned_fig = plot_diff_calc_barplot(plot_df, value_limit=3.0)
+        try:
+            self.assertIsInstance(returned_fig, plt.Figure)
+            self.assertGreater(len(returned_fig.axes[0].patches), 0)
+        finally:
+            plt.close(returned_fig)
+
+    def test_plot_diff_calc_heatmap_with_ax_draws_and_reuses_figure(self):
+        """Passing an ax draws onto it, reuses its figure, and creates no new figure."""
+        plot_df = self._make_plot_df()
+        fig, ax = plt.subplots()
+        figure_count_before = len(plt.get_fignums())
+        try:
+            returned_fig = plot_diff_calc_heatmap(plot_df, value_limit=3.0, ax=ax)
+            # Heatmap draws a QuadMesh collection onto the provided axes.
+            self.assertGreater(len(ax.collections), 0)
+            # The returned figure is the provided axes' figure.
+            self.assertIs(returned_fig, ax.get_figure())
+            # No standalone figure was created.
+            self.assertEqual(len(plt.get_fignums()), figure_count_before)
+        finally:
+            plt.close(fig)
+
+    def test_plot_diff_calc_heatmap_standalone_returns_new_figure(self):
+        """Without an ax, a standalone figure is created and returned."""
+        plot_df = self._make_plot_df()
+        returned_fig = plot_diff_calc_heatmap(plot_df, value_limit=3.0)
+        try:
+            self.assertIsInstance(returned_fig, plt.Figure)
+            self.assertGreater(len(returned_fig.axes[0].collections), 0)
+        finally:
+            plt.close(returned_fig)
 
 
 if __name__ == "__main__":

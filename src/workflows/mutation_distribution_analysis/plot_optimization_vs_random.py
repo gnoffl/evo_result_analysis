@@ -93,20 +93,27 @@ def build_plot_dataframe(
 
 def plot_optimization_vs_random(
     data: pd.DataFrame,
-    output_dir: str,
+    output_dir: str | None = None,
     fmt: str = "png",
+    ax: plt.Axes | None = None,
 ) -> None:
     """Plot grouped bar chart of deepCIS scores across conditions and species.
 
     Args:
         data: Tidy DataFrame with columns: species, condition, score.
-        output_dir: Directory to save the figure.
+        output_dir: Directory to save the figure. Required when ``ax`` is None
+            (standalone mode); ignored when ``ax`` is given.
         fmt: Output file format (e.g. 'png', 'svg', 'pdf').
+        ax: Axes to draw onto. When None, a standalone figure is created and
+            saved (unchanged behaviour); when given, the plot is drawn onto
+            ``ax`` and nothing is saved.
     """
     condition_order = ["Before optimization", "After random mutations", "After optimization"]
 
-    sns.set_theme(style="whitegrid")
-    fig, ax = plt.subplots(figsize=(7, 5))
+    own_figure = ax is None
+    if own_figure:
+        sns.set_theme(style="whitegrid")
+        fig, ax = plt.subplots(figsize=(7, 5))
 
     sns.barplot(
         data=data,
@@ -122,9 +129,10 @@ def plot_optimization_vs_random(
     ax.set_ylim(0, 1.05)
     ax.legend(title="Condition", bbox_to_anchor=(1.01, 1), loc="upper left")
 
-    fig.tight_layout()
-    save_figure(fig, "optimization_vs_random_mutations", output_dir, fmt)
-    plt.close(fig)
+    if own_figure:
+        fig.tight_layout()
+        save_figure(fig, "optimization_vs_random_mutations", output_dir, fmt)
+        plt.close(fig)
 
 
 def save_figure(fig: plt.Figure, filename: str, output_dir: str, fmt: str = "png") -> None:

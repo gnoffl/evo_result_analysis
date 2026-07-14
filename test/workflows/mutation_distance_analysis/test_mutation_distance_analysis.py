@@ -10,6 +10,10 @@ from collections import Counter
 from typing import Dict, List
 from unittest import mock
 
+import matplotlib
+
+matplotlib.use("Agg")  # headless backend for tests
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -605,6 +609,34 @@ class TestCli(unittest.TestCase):
             seed=13,
             output_format="pdf",
         )
+
+
+class TestDistancePlotAxInjection(unittest.TestCase):
+    """Ax-injection behaviour of the distance plotting functions."""
+
+    @mock.patch("matplotlib.pyplot.savefig")
+    def test_plot_overlay_with_ax(self, mock_savefig):
+        real = {1: 0.5, 2: 0.3, 3: 0.2}
+        random_dist = {1: 0.4, 2: 0.4, 3: 0.2}
+        fig, ax = plt.subplots()
+        try:
+            mda.plot_overlay(real, random_dist, "name", "unused_dir", ax=ax)
+            self.assertGreater(len(ax.patches) + len(ax.lines), 0)
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @mock.patch("matplotlib.pyplot.savefig")
+    def test_plot_difference_with_ax(self, mock_savefig):
+        real = {1: 0.5, 2: 0.3, 3: 0.2}
+        random_dist = {1: 0.4, 2: 0.4, 3: 0.2}
+        fig, ax = plt.subplots()
+        try:
+            mda.plot_difference(real, random_dist, "name", "unused_dir", ax=ax)
+            self.assertGreater(len(ax.patches), 0)  # difference bars drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
 
 
 if __name__ == "__main__":

@@ -43,6 +43,7 @@ def plot_heatmap(
     row_stars: Optional[Dict[str, str]] = None,
     cell_stars: Optional[Dict[str, Dict[str, str]]] = None,
     separator_after_column: Optional[int] = None,
+    ax: Optional[plt.Axes] = None,
 ) -> Figure:
     """Draw the cross-run TF heatmap on a symmetric diverging scale.
 
@@ -64,13 +65,19 @@ def plot_heatmap(
             vertical divider (e.g. to split a left group from a right group). The
             divider is drawn only when ``0 < separator_after_column < n_runs``;
             ``None`` draws no separator (the flat / no-grouping case).
+        ax: Axes to draw onto. When None (standalone), a figure sized to the
+            matrix is created and returned unchanged. When given, the heatmap is
+            drawn onto ``ax`` and the parent figure is returned; figure sizing and
+            layout are left to the caller so the publication stylesheet governs.
 
     Returns:
         Matplotlib Figure with a single heatmap axes.
     """
     limit = float(np.nanmax(np.abs(matrix.to_numpy()))) or 1.0
     n_tfs, n_runs = matrix.shape
-    fig, ax = plt.subplots(figsize=(max(4.0, 0.9 * n_runs + 2.5), max(4.0, 0.3 * n_tfs + 1.0)))
+    own_figure = ax is None
+    if own_figure:
+        fig, ax = plt.subplots(figsize=(max(4.0, 0.9 * n_runs + 2.5), max(4.0, 0.3 * n_tfs + 1.0)))
 
     annot_arg: Union[bool, pd.DataFrame] = annotate
     fmt_arg = ".2f"
@@ -111,5 +118,6 @@ def plot_heatmap(
             f"{tf} {row_stars[tf]: <3}" if row_stars.get(tf) else str(tf) + "    " for tf in matrix.index
         ]
         ax.set_yticklabels(labels, rotation=0)
-    fig.tight_layout()
-    return fig
+    if own_figure:
+        fig.tight_layout()
+    return ax.get_figure()
