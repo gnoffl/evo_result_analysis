@@ -105,6 +105,47 @@ class PlotHeatmapTest(unittest.TestCase):
         # Cells with no stars have just the number.
         self.assertTrue(any("-2.00" in t and "**" not in t for t in texts))
 
+    def test_cell_stars_only_when_annotate_values_false(self) -> None:
+        # Arrange: WRKY in MAX is significant; bHLH in MIN is significant.
+        matrix = self._matrix()
+        cell_stars = {"MAX": {"WRKY": "*"}, "MIN": {"bHLH": "**"}}
+
+        # Act
+        fig = plot_heatmap(
+            matrix,
+            annotate=True,
+            cell_stars=cell_stars,
+            separator_after_column=1,
+            annotate_values=False,
+        )
+
+        # Assert: annotations are the bare stars, with no numeric value.
+        texts = [t.get_text() for t in fig.axes[0].texts]
+        self.assertIn("*", texts)
+        self.assertIn("**", texts)
+        self.assertFalse(
+            any(any(char.isdigit() for char in t) for t in texts),
+            f"Expected no numeric annotations, got {texts}",
+        )
+
+    def test_no_colorbar_when_add_colorbar_false(self) -> None:
+        # Arrange
+        matrix = self._matrix()
+
+        # Act: draw onto a known single-axes figure with the colorbar suppressed.
+        fig, ax = plt.subplots()
+        try:
+            plot_heatmap(
+                matrix, annotate=False, separator_after_column=1, add_colorbar=False, ax=ax
+            )
+
+            # Assert: no extra colorbar axes was added, and the mappable is
+            # reachable for a caller-managed colorbar.
+            self.assertEqual(len(fig.axes), 1)
+            self.assertGreater(len(ax.collections), 0)
+        finally:
+            plt.close(fig)
+
     @patch("matplotlib.pyplot.savefig")
     def test_plot_heatmap_with_ax(self, mock_savefig) -> None:
         # Arrange

@@ -1,7 +1,7 @@
 """Unit tests for the publication styling primitives in ``paper_plots.style``."""
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import matplotlib
 
@@ -96,9 +96,13 @@ class TestSavePublicationFigure(unittest.TestCase):
         save_publication_figure(mock_figure, "out.svg")
 
         # Assert
-        mock_figure.savefig.assert_called_once_with(
-            "out.svg", dpi=600, bbox_inches="tight", transparent=False
+        mock_figure.savefig.assert_has_calls(
+            [
+                call("out.svg", dpi=600, bbox_inches="tight", transparent=False),
+                call("out.png", dpi=600, bbox_inches="tight", transparent=False),
+            ]
         )
+        self.assertEqual(mock_figure.savefig.call_count, 2)
 
 
 class TestSyncAxisLimits(unittest.TestCase):

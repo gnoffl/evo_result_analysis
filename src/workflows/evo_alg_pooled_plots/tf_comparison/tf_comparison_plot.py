@@ -43,6 +43,8 @@ def plot_heatmap(
     row_stars: Optional[Dict[str, str]] = None,
     cell_stars: Optional[Dict[str, Dict[str, str]]] = None,
     separator_after_column: Optional[int] = None,
+    annotate_values: bool = True,
+    add_colorbar: bool = True,
     ax: Optional[plt.Axes] = None,
 ) -> Figure:
     """Draw the cross-run TF heatmap on a symmetric diverging scale.
@@ -65,6 +67,14 @@ def plot_heatmap(
             vertical divider (e.g. to split a left group from a right group). The
             divider is drawn only when ``0 < separator_after_column < n_runs``;
             ``None`` draws no separator (the flat / no-grouping case).
+        annotate_values: Whether the numeric cell value is included in each
+            annotation. Only relevant when ``annotate`` is True and ``cell_stars``
+            is given; set False to annotate cells with the significance stars
+            alone (centred, no number). Defaults to True (value + stars).
+        add_colorbar: Whether to draw the heatmap's own colour bar. Set False to
+            suppress it (e.g. so the caller can add one dedicated colorbar axes);
+            the mappable is then available as ``ax.collections[0]``. Defaults to
+            True.
         ax: Axes to draw onto. When None (standalone), a figure sized to the
             matrix is created and returned unchanged. When given, the heatmap is
             drawn onto ``ax`` and the parent figure is returned; figure sizing and
@@ -91,7 +101,9 @@ def plot_heatmap(
                     annot_data.loc[tf, col] = ""
                 else:
                     stars = col_stars.get(str(tf), "")
-                    annot_data.loc[tf, col] = f"{val:.2f}{stars}"
+                    annot_data.loc[tf, col] = (
+                        f"{val:.2f}{stars}" if annotate_values else stars
+                    )
         annot_arg = annot_data
         fmt_arg = ""
 
@@ -105,7 +117,8 @@ def plot_heatmap(
         fmt=fmt_arg,
         linewidths=0.5,
         linecolor="white",
-        cbar_kws={"label": cbar_label},
+        cbar=add_colorbar,
+        cbar_kws={"label": cbar_label} if add_colorbar else None,
         ax=ax,
     )
     if separator_after_column is not None and 0 < separator_after_column < n_runs:

@@ -14,15 +14,38 @@ Run directly::
 
 import json
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 import matplotlib.pyplot as plt
+import numpy as np
 
+from analysis.mutations.analyze_mutations import (
+    calculate_net_nucleotide_change,
+    plot_net_nucleotide_change,
+)
 from analysis.overview.simple_result_stats import (
     draw_visualize_start_vs_max_fitness_by_mutations,
     hist_half_max_mutations,
     show_average_pareto_front,
 )
+from workflows.evo_alg_pooled_plots.tf_comparison.tf_comparison_calc import (
+    TF_COLUMN,
+    build_matrix,
+    order_tfs_by_group_contrast,
+    paired_tf_significance,
+    single_run_tf_significance,
+)
+from workflows.evo_alg_pooled_plots.tf_comparison.tf_comparison_plot import (
+    plot_heatmap,
+    q_to_stars,
+)
+from workflows.mutation_distance_analysis.mutation_distance_analysis import (
+    _to_proportions,
+    compute_random_distances,
+    compute_real_distances,
+    plot_difference,
+)
+from workflows.mutation_distribution_analysis.mutation_pool import MutationPool
 from workflows.paper_plots.style import (
     DOUBLE_COLUMN_MM,
     figure_size_inches,
@@ -42,6 +65,11 @@ _UNUSED_FORMAT = "svg"
 # Neutral grey for the Pareto markers and histogram bars (more subdued than the
 # default matplotlib blue for print).
 _NEUTRAL_COLOR = "0.35"
+
+# Bar transparency. Matches ``hist_half_max_mutations`` (alpha=0.7 in
+# simple_result_stats.py) so fig3's bars blend to the same lighter grey as fig2's
+# histograms (0.35 over white at alpha 0.7 ≈ 0.55).
+_BAR_ALPHA = 0.7
 
 # Scatter marker area (points^2); small enough to keep the dense minimization
 # panel readable without losing the sparse maximization panel.
@@ -226,5 +254,345 @@ def fig2() -> None:
         plt.close(fig)
 
 
+# --- Figure 3: mutation signatures (net change, distances) + TF contrast -----
+
+# The two maximization runs compared in the left 2x2 grid (net nucleotide change
+# and mutation-distance difference), top row then bottom row.
+_FIG3_RUNS = [
+    {
+        "species_label": "A. thaliana",
+        "mutated_sequences_json": (
+            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+            "paper_runs/single_mutation/ara_msr_max_single/"
+            "all_mutated_sequences_ara_msr_max_single_gen1999.json"
+        ),
+    },
+    {
+        "species_label": "Z. mays",
+        "mutated_sequences_json": (
+            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+            "paper_runs/single_mutation/zea_msr_max_single/"
+            "all_mutated_sequences_zea_msr_max_single_gen1999.json"
+        ),
+    },
+]
+
+# Panel E — the four-run TF-comparison directories (display order: the two
+# maximization runs then the two minimization runs). These mirror
+# ``minmax_comparison.py`` so panel E matches that standalone figure's data,
+# ordering and cell-significance stars.
+_ARA_MAX_DIR = (
+    "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+    "paper_runs/single_mutation/ara_msr_max_single"
+)
+_GOF_DIR = (
+    "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+    "GOF_LOF/GOF/GOF_single"
+)
+_ARA_MIN_DIR = (
+    "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+    "paper_runs/single_mutation/ara_msr_min_single"
+)
+_LOF_DIR = (
+    "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+    "GOF_LOF/LOF/LOF_single"
+)
+_FIG3_TF_RUNS: List[Tuple[str, str]] = [
+    (_ARA_MAX_DIR, "ara max"),
+    (_GOF_DIR, "GOF"),
+    (_ARA_MIN_DIR, "ara min"),
+    (_LOF_DIR, "LOF"),
+]
+# Left group = maximization runs, right group = minimization runs. Ordering
+# (order_tfs_by_group_contrast) and the vertical divider both use this split.
+_FIG3_TF_LEFT_COLUMNS = ["ara max", "GOF"]
+_FIG3_TF_RIGHT_COLUMNS = ["ara min", "LOF"]
+# The single runs (no paired partner) that get an independent intra-run test for
+# their cell stars; the ara pair reuses the q_a / q_b from the paired analysis.
+_FIG3_TF_SINGLE_RUNS: List[Tuple[str, str]] = [(_GOF_DIR, "GOF"), (_LOF_DIR, "LOF")]
+
+# Crop the mutation-distance difference panels to short distances: the signal is
+# concentrated near zero and the long tail is flat and uninformative.
+_DISTANCE_MAX = 30
+# Random-baseline replicates per gene and RNG seed for the distance null.
+_DISTANCE_REPLICATES_PER_GENE = 10
+_DISTANCE_SEED = 42
+# Keep only TFs whose paired ara max-vs-min contrast reaches the *** tier; the
+# cutoff matches ``q_to_stars`` (q < 0.001). Every selected TF then carries three
+# stars, so the redundant row-label stars are dropped.
+_THREE_STAR_ALPHA = 0.001
+# Panel E group/run dividers: soft grey, thin (the default black/2.0 reads harsh).
+_SEPARATOR_COLOR = "0.45"
+_SEPARATOR_WIDTH = 1.0
+# Downward shift (in cell-height units) to centre the high-sitting asterisks.
+_STAR_VERTICAL_NUDGE = 0.12
+
+
+def _distance_difference_proportions(
+    mutated_sequences_json: str,
+) -> Tuple[Dict[int, float], Dict[int, float]]:
+    """Compute real and random inter-mutation distance proportions for one run.
+
+    Builds a :class:`MutationPool` in memory from the run's summarized-mutations
+    JSON (no cached pool file is needed), then returns the normalized real and
+    random-baseline distance distributions ready for :func:`plot_difference`.
+
+    Args:
+        mutated_sequences_json: Path to an ``all_mutated_sequences_*.json`` file.
+
+    Returns:
+        ``(real_proportions, random_proportions)`` as ``{distance: proportion}``
+        mappings.
+    """
+    pool = MutationPool.from_summarized_json(mutated_sequences_json)
+    real_distances = compute_real_distances(pool)
+    rng = np.random.default_rng(_DISTANCE_SEED)
+    random_distances = compute_random_distances(
+        pool, _DISTANCE_REPLICATES_PER_GENE, rng
+    )
+    return _to_proportions(real_distances), _to_proportions(random_distances)
+
+
+def _significant_tf_cell_stars(
+    significance: "Any",
+) -> Dict[str, Dict[str, str]]:
+    """Build the intra-run cell-significance stars for panel E's four runs.
+
+    Mirrors ``minmax_comparison.py``: the ara pair reuses the ``q_a`` / ``q_b``
+    columns already produced by the paired analysis, while the single runs
+    (GOF, LOF) are each tested independently via
+    :func:`single_run_tf_significance`.
+
+    Args:
+        significance: The paired ara max-vs-min significance frame (with the
+            default ``q_a`` / ``q_b`` per-run columns).
+
+    Returns:
+        Mapping of run label to ``{tf: stars}`` for the numeric cell annotations.
+    """
+    cell_stars: Dict[str, Dict[str, str]] = {
+        "ara max": dict(zip(significance[TF_COLUMN], significance["q_a"].map(q_to_stars))),
+        "ara min": dict(zip(significance[TF_COLUMN], significance["q_b"].map(q_to_stars))),
+    }
+    for run_dir, label in _FIG3_TF_SINGLE_RUNS:
+        intra = single_run_tf_significance(run_dir)
+        cell_stars[label] = dict(zip(intra[TF_COLUMN], intra["q_intra"].map(q_to_stars)))
+    return cell_stars
+
+
+def _draw_significant_tf_heatmap(ax: plt.Axes, colorbar_ax: plt.Axes) -> None:
+    """Draw panel E: the three-star ara max-vs-min TFs across all four runs.
+
+    Runs the paired ara max/min contrast and keeps only the TFs reaching the
+    *** significance tier (:data:`_THREE_STAR_ALPHA`). The four-run per-gene diff
+    matrix is ordered exactly as in ``minmax_comparison.py``
+    (:func:`order_tfs_by_group_contrast`), which places the max-favoured TFs
+    above the min-favoured ones. Subtle grey dividers separate the maximization
+    from the minimization runs (vertical) and the two TF blocks (horizontal,
+    where the ordering score changes sign). Intra-run significance stars annotate
+    the cells; row labels carry no stars — every selected TF is *** by
+    construction. The heatmap's colour bar is drawn into ``colorbar_ax`` so it
+    can sit in a dedicated thin column next to the (narrow) heatmap.
+
+    Args:
+        ax: Axes to draw the heatmap onto.
+        colorbar_ax: Thin axes to hold the shared colour bar.
+    """
+    significance = paired_tf_significance(_ARA_MAX_DIR, _ARA_MIN_DIR)
+    three_star_tfs = set(
+        significance.loc[
+            significance["q_contrast"] < _THREE_STAR_ALPHA, TF_COLUMN
+        ]
+    )
+
+    matrix = order_tfs_by_group_contrast(
+        build_matrix(_FIG3_TF_RUNS, normalization="per_gene"),
+        _FIG3_TF_LEFT_COLUMNS,
+        _FIG3_TF_RIGHT_COLUMNS,
+    )
+    matrix = matrix.loc[[tf for tf in matrix.index if tf in three_star_tfs]]
+
+    plot_heatmap(
+        matrix,
+        annotate=True,
+        cell_stars=_significant_tf_cell_stars(significance),
+        separator_after_column=None,
+        annotate_values=False,
+        add_colorbar=False,
+        ax=ax,
+    )
+    ax.figure.colorbar(ax.collections[0], cax=colorbar_ax, label="diff_calc / gene")
+
+    # Force every TF label to show: in this shorter axes seaborn's default "auto"
+    # y-ticks would otherwise thin the labels to every other TF.
+    n_rows, n_columns = matrix.shape
+    ax.set_yticks(np.arange(n_rows) + 0.5)
+    ax.set_yticklabels(matrix.index, rotation=0)
+
+    # Asterisk glyphs sit high in their text box, so seaborn's va="center" leaves
+    # them above the cell centre; nudge each annotation down to centre it.
+    for annotation in ax.texts:
+        text_x, text_y = annotation.get_position()
+        annotation.set_position((text_x, text_y + _STAR_VERTICAL_NUDGE))
+
+    # Subtle grey dividers: vertical between the max and min run groups,
+    # horizontal where the ordering score (max-group minus min-group mean)
+    # changes sign (max-favoured TFs above, min-favoured below).
+    ax.axvline(
+        len(_FIG3_TF_LEFT_COLUMNS),
+        color=_SEPARATOR_COLOR,
+        linewidth=_SEPARATOR_WIDTH,
+    )
+    left_mean = matrix[_FIG3_TF_LEFT_COLUMNS].mean(axis=1).fillna(0.0)
+    right_mean = matrix[_FIG3_TF_RIGHT_COLUMNS].mean(axis=1).fillna(0.0)
+    n_more_in_max = int(((left_mean - right_mean) > 0).sum())
+    if 0 < n_more_in_max < n_rows:
+        ax.axhline(
+            n_more_in_max,
+            color=_SEPARATOR_COLOR,
+            linewidth=_SEPARATOR_WIDTH,
+        )
+
+
+def _color_bars_neutral(ax: plt.Axes) -> None:
+    """Paint all of an axes' bars a single neutral grey.
+
+    The bar panels carry no colour meaning (sign is already read from the zero
+    line), so a uniform grey keeps colour reserved for the heatmap (panel E).
+
+    Args:
+        ax: Axes whose bar patches should be recoloured.
+    """
+    for bar in ax.patches:
+        bar.set_color(_NEUTRAL_COLOR)
+        bar.set_alpha(_BAR_ALPHA)
+
+
+def _populate_fig3(fig: plt.Figure) -> None:
+    """Draw all five panels of figure 3 onto ``fig``.
+
+    Nested layout. A short top strip holds the two net-nucleotide-change panels
+    (A: ara, B: zea) at equal width. A taller bottom region holds, on the left,
+    the mutation-distance difference panels stacked vertically (C: ara, D: zea)
+    and, on the right, the significant-TF heatmap (E) with a dedicated thin
+    colour-bar column beside it. Nesting lets A/B span the full width equally
+    while E stays narrow. Must be called inside a :func:`publication_style`
+    context.
+
+    Args:
+        fig: An (empty) figure to populate.
+    """
+    # Two equal-width columns. Left column stacks A over the C/D distance panels;
+    # right column stacks B over the E heatmap. Every cell is split into a wide
+    # main sub-column plus a thin colour-bar sub-column (only filled under E), so
+    # all four main panels share one width and stay aligned: A over C/D on the
+    # left, B over E on the right. The top strip (A, B) is short; the bottom row
+    # (C/D, E) takes most of the height so the TF labels in E stay readable.
+    outer = fig.add_gridspec(
+        nrows=2, ncols=2, height_ratios=[1.0, 2.0], hspace=0.2, wspace=0.22
+    )
+
+    def _split_for_colorbar(cell):
+        """Split a cell into a wide main column and a thin colour-bar column."""
+        return cell.subgridspec(nrows=1, ncols=2, width_ratios=[1.0, 0.045], wspace=0.05)
+
+    top_cells = [_split_for_colorbar(outer[0, column]) for column in range(2)]
+    bottom_left = _split_for_colorbar(outer[1, 0])
+    bottom_right = _split_for_colorbar(outer[1, 1])
+    # C and D stacked with almost no gap so both panels sit tall and tight.
+    distance_grid = bottom_left[0, 0].subgridspec(nrows=2, ncols=1, hspace=0.12)
+
+    net_change_axes = []
+    net_change_labels = {}
+    for column_index, (run, letter) in enumerate(zip(_FIG3_RUNS, ["A", "B"])):
+        net_change_ax = fig.add_subplot(top_cells[column_index][0, 0])
+        net_change = calculate_net_nucleotide_change(run["mutated_sequences_json"])
+        plot_net_nucleotide_change(
+            net_change,
+            _UNUSED_NAME,
+            _UNUSED_FORMAT,
+            titles=False,
+            ax=net_change_ax,
+        )
+        _color_bars_neutral(net_change_ax)
+        net_change_ax.axhline(0, color="black", linewidth=0.8)
+        net_change_ax.set_title(run["species_label"], fontstyle="italic")
+        net_change_labels[letter] = panel_label(net_change_ax, letter)
+        net_change_axes.append(net_change_ax)
+
+    distance_axes = []
+    for row_index, (run, letter) in enumerate(zip(_FIG3_RUNS, ["C", "D"])):
+        distance_ax = fig.add_subplot(distance_grid[row_index, 0])
+        real_proportions, random_proportions = _distance_difference_proportions(
+            run["mutated_sequences_json"]
+        )
+        plot_difference(
+            real_proportions,
+            random_proportions,
+            _UNUSED_NAME,
+            OUTPUT_DIR,
+            max_distance=_DISTANCE_MAX,
+            ax=distance_ax,
+        )
+        distance_ax.set_title(run["species_label"], fontstyle="italic")
+        _color_bars_neutral(distance_ax)
+        # No colour meaning left to explain, so drop the legend entirely.
+        existing_legend = distance_ax.get_legend()
+        if existing_legend is not None:
+            existing_legend.remove()
+        # Only the bottom panel (D) carries the shared x-axis label.
+        if row_index == 0:
+            distance_ax.set_xlabel("")
+        panel_label(distance_ax, letter)
+        distance_axes.append(distance_ax)
+
+    heatmap_ax = fig.add_subplot(bottom_right[0, 0])
+    colorbar_ax = fig.add_subplot(bottom_right[0, 1])
+    _draw_significant_tf_heatmap(heatmap_ax, colorbar_ax)
+    heatmap_label = panel_label(heatmap_ax, "E")
+
+    # Make the two runs directly comparable within each left-panel type.
+    sync_axis_limits(net_change_axes, sync_x=False, sync_y=True)
+    sync_axis_limits(distance_axes)
+
+    # E's long TF row labels shrink the heatmap axes far to the right, so its
+    # panel letter (anchored in axes fraction) lands right of B's. Re-anchor it
+    # in figure coordinates to B's letter x, keeping it just above E's own top,
+    # so the two right-column letters line up. Requires a draw so the constrained
+    # layout has resolved the final axes positions.
+    fig.canvas.draw()
+    b_axes_position = net_change_labels["B"].axes.get_position()
+    # -0.08 and +0.02 mirror panel_label's default x and (y - 1) offsets.
+    b_label_x = b_axes_position.x0 - 0.08 * b_axes_position.width
+    heatmap_position = heatmap_ax.get_position()
+    heatmap_label.set_transform(fig.transFigure)
+    heatmap_label.set_position(
+        (b_label_x, heatmap_position.y1 + 0.02 * heatmap_position.height)
+    )
+
+
+def fig3() -> None:
+    """Compose figure 3: mutation signatures plus the significant-TF contrast.
+
+    Panels A/B are the net nucleotide change (A, C, G, T bar plots) for the ara
+    and zea maximization runs; panels C/D are the per-distance difference between
+    the real and random-baseline inter-mutation distance distributions for the
+    same runs (shared limits within each row). Panel E is the four-run per-gene
+    TF diff heatmap restricted to the TFs whose ara max-vs-min paired contrast
+    reaches the *** tier, ordered by group contrast so the max-favoured TFs sit
+    above the min-favoured ones. All panels share one red=positive /
+    blue=negative diverging colour scale.
+    """
+    with publication_style():
+        fig = plt.figure(
+            figsize=figure_size_inches(DOUBLE_COLUMN_MM, 220.0), layout="constrained"
+        )
+        _populate_fig3(fig)
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        save_publication_figure(fig, os.path.join(OUTPUT_DIR, "fig3_composed.svg"))
+        plt.close(fig)
+
+
 if __name__ == "__main__":
-    fig2()
+    # fig2()
+    fig3()

@@ -187,6 +187,9 @@ def save_publication_figure(
             f"Unsupported file extension in {path}. Use .svg for publications."
         )
     fig.savefig(path, dpi=dpi, bbox_inches="tight", transparent=transparent)
+    # replace .svg at the end with .png for simpler agent inspection and google docs integration
+    png_path = path[:-4] + ".png"
+    fig.savefig(png_path, dpi=dpi, bbox_inches="tight", transparent=transparent)
 
 
 def sync_axis_limits(
