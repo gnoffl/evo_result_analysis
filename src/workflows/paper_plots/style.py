@@ -116,7 +116,7 @@ def publication_style(extra_rc: Optional[dict] = None) -> Iterator[None]:
     rc = dict(PUBLICATION_RC)
     if extra_rc:
         rc.update(extra_rc)
-    with plt.style.context(["default", rc]):
+    with plt.style.context(["default", rc]):    #type: ignore
         yield
 
 

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
-from workflows.figure_composition import compose_figures, _PX_PER_INCH, _SVG_NS
+from workflows.figure_composition_svg import compose_figures, _PX_PER_INCH, _SVG_NS
 
 # ---------------------------------------------------------------------------
 # helpers

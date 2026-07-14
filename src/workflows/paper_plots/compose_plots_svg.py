@@ -37,7 +37,7 @@ One wide top + two narrow bottom:
 
 import os
 
-from workflows.figure_composition import compose_figures
+from workflows.figure_composition_svg import compose_figures
 
 # ---------------------------------------------------------------------------
 # Edit here: paths to your existing PDFs and their positions in the figure
