@@ -17,7 +17,7 @@ from analysis.mutations.analyze_mutations import (
     plot_hist_half_max_mutations_stacked, plot_mutations_location, plot_hist_mutation_conservation,
     calculate_mutation_distances_single_gene, calculate_mutation_distances, plot_mutation_distances,
     load_mutation_data, analyze_mutation_distances, get_random_mutation_distributions, analyze_range_single_gene,
-    plot_dist_hist,
+    plot_dist_hist, calculate_net_nucleotide_change, plot_net_nucleotide_change,
 )
 from analysis.mutations.summarize_mutations import MutatedSequence
 import numpy as np
@@ -645,6 +645,47 @@ class TestAnalyzeMutations(unittest.TestCase):
         
         self.assertEqual(distances, expected_distances)
         self.assertIsInstance(distances, Counter)
+
+    def test_calculate_net_nucleotide_change(self):
+        """Test calculating total net nucleotide change from max-fitness sequences."""
+        net_change = calculate_net_nucleotide_change(self.mutation_file)
+
+        # gene1 max-fitness sequence (fitness 0.8): 0A->T, 1A->G, 5A->C
+        # gene2 max-fitness sequence (fitness 0.7): 0T->C, 1T->G
+        # Net change: A: -3, C: +2, G: +2, T: -1
+        expected_net_change = {"A": -3, "C": 2, "G": 2, "T": -1}
+        self.assertEqual(net_change, expected_net_change)
+
+        # Every mutation removes one base and introduces another, so the
+        # total net change across all nucleotides must sum to zero.
+        self.assertEqual(sum(net_change.values()), 0)
+
+    def test_plot_net_nucleotide_change(self):
+        """Test plotting net nucleotide change as a standalone figure."""
+        net_change = {"A": -3, "C": 2, "G": 2, "T": -1}
+
+        plot_net_nucleotide_change(
+            net_change, "test", output_format="pdf", output_folder=self.temp_dir
+        )
+
+        expected_file = os.path.join(self.temp_dir, "net_nucleotide_change_test.pdf")
+        self.assertTrue(os.path.exists(expected_file))
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_plot_net_nucleotide_change_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        net_change = {"A": -3, "C": 2, "G": 2, "T": -1}
+        fig, ax = plt.subplots()
+        try:
+            plot_net_nucleotide_change(
+                net_change, "test", output_format="pdf", ax=ax
+            )
+            self.assertGreater(len(ax.patches), 0)  # bars were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
 
 class TestAnalyzeMutationsIntegration(unittest.TestCase):
     """Integration tests using more complex test data."""

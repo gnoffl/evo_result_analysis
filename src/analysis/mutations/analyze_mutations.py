@@ -184,8 +184,8 @@ def plot_dict_as_stacked_bars(data_dict: Dict, title: str, xlabel: str, ylabel: 
     # plot mutations from from_dict as stacked histogram
     # for each mutation number, a stacked bar should appear showing the different mutations in different colors
     own_figure = ax is None
-    if not own_figure and (file_path is None or not file_path):
-        raise ValueError("file_path must be provided when ax is None (standalone mode).") 
+    if own_figure and (file_path is None or not file_path):
+        raise ValueError("file_path must be provided when ax is None (standalone mode).")
 
     x_labels = sorted(data_dict.keys())
     bottom_line = np.zeros(len(x_labels))
@@ -532,6 +532,66 @@ def plot_dist_hist(name, output_folder, distances, counts, output_format: str, r
 
 
 
+def calculate_net_nucleotide_change(mutation_data_path: str) -> Dict[str, int]:
+    """Calculate the total net change introduced for each nucleotide.
+
+    For each gene, the mutations of the final generation's max-fitness
+    sequence are used. Every mutation removes its reference base and
+    introduces its mutant base, so the net change for a nucleotide is the
+    number of times it was introduced minus the number of times it was
+    removed, summed over all genes.
+
+    Args:
+        mutation_data_path (str): Path to the mutation data JSON file.
+
+    Returns:
+        Dict[str, int]: Net change count for each of "A", "C", "G", "T".
+    """
+    with open(mutation_data_path, 'r') as f:
+        mutation_data = json.load(f)
+    net_change = {"A": 0, "C": 0, "G": 0, "T": 0}
+    for gene, data in tqdm(mutation_data.items(), desc="Processing genes"):
+        generation_mutations = MutationsGene.from_dict(data)
+        generations = sorted([int(gen) for gen in generation_mutations.generation_dict.keys()])
+        final_generation = generations[-1]
+        min_fit, max_fit = generation_mutations.get_init_and_optimal_fitness_generation(final_generation)
+        max_seq = generation_mutations.get_equal_or_next_closest_fitness(final_generation, max_fit)
+        for position, ref_base, mut_base in max_seq.mutations:
+            net_change[mut_base] += 1
+            net_change[ref_base] -= 1
+    return net_change
+
+
+def plot_net_nucleotide_change(net_change: Dict[str, int], name: str, output_format: str, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None) -> None:
+    """Plot the total net nucleotide change as a simple bar plot.
+
+    Args:
+        net_change (Dict[str, int]): Net change count for each of "A", "C", "G", "T".
+        name (str): Name to distinguish the output file.
+        output_format (str): File format for the saved figure (e.g. "png", "pdf").
+        output_folder (str): Path to the output folder for saving results. Defaults to ".".
+        titles (bool): Whether to draw the plot title.
+        ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
+            figure is created and saved to ``output_folder``; when given, the
+            plot is drawn onto ``ax`` and nothing is saved.
+    """
+    nucleotides = ["A", "C", "G", "T"]
+    counts = [net_change[nucleotide] for nucleotide in nucleotides]
+    bar_colors = [COLORS[nucleotide] for nucleotide in nucleotides]
+
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots(figsize=(6, 5))
+    ax.bar(nucleotides, counts, color=bar_colors)
+    ax.set_xlabel('Nucleotide')
+    ax.set_ylabel('Net Change in Count')
+    if titles:
+        ax.set_title(f'Net Nucleotide Change for {name}')
+    if own_figure:
+        plt.savefig(os.path.join(output_folder, f"net_nucleotide_change_{name}.{output_format}"), dpi=300, bbox_inches='tight')
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Analyze mutations from evolution results and generate visualizations')
     parser.add_argument('--mutation_data', '-m', help='Path to the mutation data JSON file', required=True)
@@ -549,6 +609,7 @@ def parse_args():
     parser.add_argument('--plot_rolling_only', action='store_true', help='Generate only rolling window plots for mutation locations')
     parser.add_argument("--plot_mutation_conservation", action='store_true', help='Calculate conservation statistics for mutations in each gene')
     parser.add_argument("--plot_mutation_distances", action='store_true', help='Calculate mutation distances for mutations in each gene')
+    parser.add_argument("--plot_net_nucleotide_change", action='store_true', help='Plot total net change introduced per nucleotide (A, C, G, T)')
     parser.add_argument('--all', action='store_true', help='Run all analysis steps')
     parser.add_argument('--no_titles', action='store_false', dest='titles', help='Omit titles from all generated figures')
     
@@ -581,8 +642,9 @@ def main():
     run_mutations_location = args.plot_mutations_location or args.plot_stacked_only or args.plot_rolling_only or args.all
     run_mutation_conservation = args.plot_mutation_conservation or args.all
     run_mutation_distances = args.plot_mutation_distances or args.all
+    run_net_nucleotide_change = args.plot_net_nucleotide_change or args.all
 
-    if not (run_half_max_stacked or run_mutations_location or run_mutation_conservation or run_mutation_distances):
+    if not (run_half_max_stacked or run_mutations_location or run_mutation_conservation or run_mutation_distances or run_net_nucleotide_change):
         raise ValueError("Currently no analysis is selected for execution, so nothing is done. Use --all to run all available analyses or use -h to get an overview of available analyses.")
     
     # Create output folder if it doesn't exist
@@ -640,6 +702,16 @@ def main():
             print_status("Failed to plot mutation conservation", "ERROR")
             print(f"  Error details: {e}")
     
+    if run_net_nucleotide_change:
+        try:
+            print_subsection("Plotting Net Nucleotide Change")
+            net_change = calculate_net_nucleotide_change(mutation_data_path=args.mutation_data)
+            plot_net_nucleotide_change(net_change=net_change, name=args.name, output_format=args.output_format, output_folder=args.output_folder, titles=args.titles)
+            print_status("Net nucleotide change plot completed", "SUCCESS")
+        except Exception as e:
+            print_status("Failed to plot net nucleotide change", "ERROR")
+            print(f"  Error details: {e}")
+
     print_section_header("ANALYSIS COMPLETE", "=")
     print_status(f"Finished at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print_status("All selected analyses completed successfully", "SUCCESS")
