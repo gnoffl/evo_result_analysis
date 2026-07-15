@@ -871,6 +871,36 @@ class TestComputeOverlayCorrelationData(unittest.TestCase):
         self.assertTrue(all(np.isnan(value) for value in highlight_fit))
         self.assertTrue(all(np.isfinite(value) for value in all_fit))
 
+    def _make_binding_df(self) -> pd.DataFrame:
+        # Two highlight-window rows differing only in binding status.
+        return pd.DataFrame(
+            [
+                {"prediction_mutated": 0.2, "enrichment": 2.0, "group_overlap_start": 900, "differences": 2, "starr_reference": False, "gene": "g1", "starr_binding_status": "binding"},
+                {"prediction_mutated": 0.3, "enrichment": 3.0, "group_overlap_start": 950, "differences": 3, "starr_reference": False, "gene": "g2", "starr_binding_status": "non_binding"},
+            ]
+        )
+
+    def test_color_by_binding_keeps_binding_status_column(self):
+        df = self._make_binding_df()
+
+        _, highlight_points, _, _ = overlap_analysis.compute_overlay_correlation_data(
+            df, "prediction_mutated", "enrichment", window_center=928, color_by_binding=True
+        )
+
+        self.assertIn("starr_binding_status", highlight_points.columns)
+        self.assertEqual(
+            set(highlight_points["starr_binding_status"]), {"binding", "non_binding"}
+        )
+
+    def test_default_drops_binding_status_column(self):
+        df = self._make_binding_df()
+
+        _, highlight_points, _, _ = overlap_analysis.compute_overlay_correlation_data(
+            df, "prediction_mutated", "enrichment", window_center=928
+        )
+
+        self.assertNotIn("starr_binding_status", highlight_points.columns)
+
 
 if __name__ == "__main__":
     unittest.main()

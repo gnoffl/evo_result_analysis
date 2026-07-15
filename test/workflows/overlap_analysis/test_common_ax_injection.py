@@ -131,6 +131,28 @@ class TestCommonAxInjection(unittest.TestCase):
         finally:
             plt.close(fig)
 
+    @patch("matplotlib.figure.Figure.savefig")
+    def test_plot_overlay_highlight_color_by_binding_with_ax(self, mock_savefig):
+        fig, ax = plt.subplots()
+        try:
+            data = self._correlation_df()
+            # Both statuses fall inside the highlight window [900, 1100).
+            data["starr_binding_status"] = [
+                "binding",
+                "non_binding",
+                "binding",
+                "non_binding",
+                "binding",
+            ]
+            plot_overlay_highlight_correlation(
+                data, window_center=1000, color_by_binding=True, ax=ax
+            )
+            # Background scatter + one scatter per binding status drawn.
+            self.assertGreaterEqual(len(ax.collections), 3)
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
 
 if __name__ == "__main__":
     unittest.main()

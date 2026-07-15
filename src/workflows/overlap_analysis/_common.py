@@ -65,6 +65,14 @@ HIGHLIGHT_WINDOW_CENTER = 928
 # strong red for the highlighted window drawn on top.
 OVERLAY_ALL_COLOR = "#9e9e9e"
 OVERLAY_HIGHLIGHT_COLOR = "#d62728"
+# Colors for the binding-status-resolved overlay variant: the highlight-window
+# points are split into binding vs non-binding instead of a single color.
+# Reference entries carry ``starr_binding_status == "binding"`` (see
+# :func:`load_starrseq_data`), so they fall into the binding group.
+BINDING_STATUS_COLORS = {
+    "binding": "#2ca02c",
+    "non_binding": "#d62728",
+}
 BUCKET_COLOR_PALETTE = [
     "#1f77b4",
     "#ff7f0e",
@@ -199,6 +207,7 @@ def _deduplicate_bucket_rows(
     y_col: str,
     include_differences: bool,
     delta: bool,
+    include_binding_status: bool = False,
 ) -> pd.DataFrame:
     dedup_columns = [x_col, y_col]
     if include_differences and "differences" in bucket_df.columns:
@@ -207,6 +216,11 @@ def _deduplicate_bucket_rows(
         dedup_columns.append("starr_reference")
     if "gene" in bucket_df.columns:
         dedup_columns.append("gene")
+    # Keep the binding-status column only when the caller needs it for coloring;
+    # by default it is excluded so point counts in the existing plots are
+    # unaffected.
+    if include_binding_status and "starr_binding_status" in bucket_df.columns:
+        dedup_columns.append("starr_binding_status")
     dedup = bucket_df[dedup_columns].drop_duplicates().dropna(subset=[x_col, y_col])    #type:ignore
     if delta:
         dedup = dedup[dedup["starr_reference"] == False]
@@ -495,6 +509,7 @@ def compute_overlay_correlation_data(
     window_center: int,
     window_size: int = BUCKET_SIZE,
     include_differences: bool = True,
+    color_by_binding: bool = False,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Tuple[float, float, float, float], Tuple[float, float, float, float]]:
     """Build deduplicated full-data and highlight-window point sets with linear fits.
 
@@ -513,6 +528,10 @@ def compute_overlay_correlation_data(
             fixed-window ``x_pos`` value (e.g. 928).
         window_size: Width of the highlight window in base pairs.
         include_differences: Whether to keep ``differences`` as a dedup key.
+        color_by_binding: When ``True``, keep ``starr_binding_status`` as a dedup
+            key for the highlight-window points so they can be colored by binding
+            status downstream. The full-data points are deduplicated unchanged so
+            their count and layout match the single-color overlay.
 
     Returns:
         Tuple ``(all_points, highlight_points, all_fit, highlight_fit)`` where
@@ -530,7 +549,12 @@ def compute_overlay_correlation_data(
 
     all_points = _deduplicate_bucket_rows(valid_df, x_col, y_col, include_differences, delta=False)
     highlight_points = _deduplicate_bucket_rows(
-        valid_df.loc[in_window], x_col, y_col, include_differences, delta=False
+        valid_df.loc[in_window],
+        x_col,
+        y_col,
+        include_differences,
+        delta=False,
+        include_binding_status=color_by_binding,
     )
 
     all_fit = _fit_linear_model(all_points[x_col], all_points[y_col])
@@ -551,13 +575,17 @@ def _plot_overlay_correlation(
     include_differences: bool = True,
     window_size: int = BUCKET_SIZE,
     subset_label: str = "",
+    color_by_binding: bool = False,
     ax: Optional[plt.Axes] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Tuple[float, float, float, float], Tuple[float, float, float, float]]:
     """Scatter the full dataset in one color with a single highlight window on top.
 
     Draws every point in :data:`OVERLAY_ALL_COLOR` with its linear fit, then
     overlays the points whose ``group_overlap_start`` falls in the highlight
-    window in :data:`OVERLAY_HIGHLIGHT_COLOR` with their own linear fit.
+    window with their own linear fit. By default the highlight points are drawn
+    in a single :data:`OVERLAY_HIGHLIGHT_COLOR`; when ``color_by_binding`` is set
+    they are instead split into binding vs non-binding groups (see
+    :data:`BINDING_STATUS_COLORS`) while the background stays grey.
 
     Args:
         prediction_df: Analysis-ready dataframe.
@@ -573,6 +601,9 @@ def _plot_overlay_correlation(
         include_differences: Whether to keep ``differences`` as a dedup key.
         window_size: Width of the highlight window in base pairs.
         subset_label: Optional subset suffix applied to folder, title and file.
+        color_by_binding: When ``True``, color the highlight-window points by
+            ``starr_binding_status`` instead of a single color. The combined
+            highlight-window fit line is kept unchanged for comparability.
 
     Returns:
         The tuple from :func:`compute_overlay_correlation_data`.
@@ -583,7 +614,7 @@ def _plot_overlay_correlation(
     effective_save = save_name.replace(".png", f"_{subset_label}.png") if subset_label else save_name
 
     all_points, highlight_points, all_fit, highlight_fit = compute_overlay_correlation_data(
-        prediction_df, x_col, y_col, window_center, window_size, include_differences
+        prediction_df, x_col, y_col, window_center, window_size, include_differences, color_by_binding
     )
 
     window_start = window_center - window_size // 2
@@ -612,17 +643,34 @@ def _plot_overlay_correlation(
             zorder=2,
         )
 
-    ax.scatter(
-        highlight_points[x_col],
-        highlight_points[y_col],
-        color=OVERLAY_HIGHLIGHT_COLOR,
-        alpha=0.85,
-        s=55,
-        edgecolors="white",
-        linewidths=0.3,
-        zorder=3,
-        label=f"{window_start}-{window_end - 1} (n={len(highlight_points)})",
-    )
+    if color_by_binding and "starr_binding_status" in highlight_points.columns:
+        for binding_status, status_color in BINDING_STATUS_COLORS.items():
+            status_points = highlight_points[highlight_points["starr_binding_status"] == binding_status]
+            if status_points.empty:
+                continue
+            ax.scatter(
+                status_points[x_col],
+                status_points[y_col],
+                color=status_color,
+                alpha=0.85,
+                s=55,
+                edgecolors="white",
+                linewidths=0.3,
+                zorder=3,
+                label=f"{binding_status} (n={len(status_points)})",
+            )
+    else:
+        ax.scatter(
+            highlight_points[x_col],
+            highlight_points[y_col],
+            color=OVERLAY_HIGHLIGHT_COLOR,
+            alpha=0.85,
+            s=55,
+            edgecolors="white",
+            linewidths=0.3,
+            zorder=3,
+            label=f"{window_start}-{window_end - 1} (n={len(highlight_points)})",
+        )
     highlight_slope, highlight_intercept, _, _ = highlight_fit
     if not highlight_points.empty and np.isfinite(highlight_slope) and np.isfinite(highlight_intercept):
         line_x = np.linspace(highlight_points[x_col].min(), highlight_points[x_col].max(), 100)
@@ -634,12 +682,13 @@ def _plot_overlay_correlation(
             zorder=4,
         )
 
+    legend_title = "Binding status" if color_by_binding else "Overlap window"
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
     ax.set_title(effective_title)
-    ax.legend(title="Overlap window", loc="best")
+    ax.legend(title=legend_title, loc="best")
     if own_figure:
-        ax.legend(title="Overlap window", fontsize=14, loc="best")
+        ax.legend(title=legend_title, fontsize=14, loc="best")
         fig.savefig(
             os.path.join(_get_analysis_output_dir(effective_analysis), effective_save),
             bbox_inches="tight",
@@ -653,35 +702,47 @@ def plot_overlay_highlight_correlation(
     prediction_df: pd.DataFrame,
     window_center: int = HIGHLIGHT_WINDOW_CENTER,
     subset_label: str = "",
+    color_by_binding: bool = False,
     ax: Optional[plt.Axes] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Tuple[float, float, float, float], Tuple[float, float, float, float]]:
     """Plot deepCRE vs STARR-seq enrichment with the highest-correlation window overlaid.
 
     The full dataset is drawn in one color with its linear fit; the points in the
     highlight window (the highest-correlation window from the fixed-window
-    positional analysis) are drawn on top in a second color with their own fit.
+    positional analysis) are drawn on top with their own fit. By default the
+    highlight points share a single color; when ``color_by_binding`` is set they
+    are split by binding status and written to a separate ``_by_binding`` file.
 
     Args:
         prediction_df: Analysis-ready dataframe.
         window_center: Center position of the highlight window (fixed-window
             ``x_pos``); defaults to :data:`HIGHLIGHT_WINDOW_CENTER`.
         subset_label: Optional subset suffix applied to folder, title and file.
+        color_by_binding: When ``True``, color the highlight-window points by
+            ``starr_binding_status`` and write a separate ``_by_binding`` file.
 
     Returns:
         The tuple from :func:`compute_overlay_correlation_data`.
     """
+    if color_by_binding:
+        save_name = "deepcre_starrseq_correlation_highlight_window_by_binding.png"
+        title = "deepCRE vs STARR-seq, highlight window colored by binding status"
+    else:
+        save_name = "deepcre_starrseq_correlation_highlight_window.png"
+        title = "deepCRE vs STARR-seq with highest-correlation window highlighted"
     return _plot_overlay_correlation(
         prediction_df,
         "prediction_mutated",
         "enrichment",
         window_center,
-        "deepcre_starrseq_correlation_highlight_window.png",
-        "deepCRE vs STARR-seq with highest-correlation window highlighted",
+        save_name,
+        title,
         "deepCRE Prediction",
         "STARR-seq Enrichment",
         "deepcre_starrseq",
         include_differences=True,
         subset_label=subset_label,
+        color_by_binding=color_by_binding,
         ax=ax,
     )
 
@@ -1264,7 +1325,22 @@ def run_correlation_analysis(enrichment_df: pd.DataFrame) -> None:
         position_series = [(enrichment_df, "all", POSITION_SERIES_COLORS["all"])]
     plot_correlation_over_positions_fixed_window(position_series)
     plot_correlation_over_positions_fixed_number_elements(position_series)
-    plot_overlay_highlight_correlation(enrichment_df)
+    # Highlight-window overlay: the full dataset plus, when conditions are
+    # present, the light and dark condition subsets. Each subset also gets a
+    # binding-status-colored variant written to a separate file.
+    if has_conditions:
+        overlay_subsets = [
+            ("", enrichment_df),
+            ("light", enrichment_df[enrichment_df["condition"].str.lower() == "light"]),
+            ("dark", enrichment_df[enrichment_df["condition"].str.lower() == "dark"]),
+        ]
+    else:
+        overlay_subsets = [("", enrichment_df)]
+    for overlay_subset_label, overlay_subset_df in overlay_subsets:
+        plot_overlay_highlight_correlation(overlay_subset_df, subset_label=overlay_subset_label)
+        plot_overlay_highlight_correlation(
+            overlay_subset_df, subset_label=overlay_subset_label, color_by_binding=True
+        )
     subsets = [
         ("", enrichment_df),
         ("reference", enrichment_df[enrichment_df["starr_reference"] == True]),

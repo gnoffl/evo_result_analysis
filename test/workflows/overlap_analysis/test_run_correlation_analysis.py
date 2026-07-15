@@ -49,8 +49,24 @@ class TestRunCorrelationAnalysis(unittest.TestCase):
         # Assert: position-series plots run once over the condition-split series.
         mock_pos_window.assert_called_once()
         mock_pos_elems.assert_called_once()
-        # The overlay plot runs once, on the full dataset only.
-        mock_overlay.assert_called_once()
+        # The overlay plot runs for all + light + dark, each in a single-color
+        # and a binding-status-colored variant: 3 subsets x 2 variants.
+        self.assertEqual(mock_overlay.call_count, 6)
+        overlay_calls = {
+            (call.kwargs.get("subset_label"), call.kwargs.get("color_by_binding", False))
+            for call in mock_overlay.call_args_list
+        }
+        self.assertEqual(
+            overlay_calls,
+            {
+                ("", False),
+                ("", True),
+                ("light", False),
+                ("light", True),
+                ("dark", False),
+                ("dark", True),
+            },
+        )
         self.assertEqual(len(mock_pos_window.call_args[0][0]), 3)  # all, light, dark
 
         # Seven subsets: "", reference, synthetic, binding, non_binding, light, dark.
@@ -77,7 +93,7 @@ class TestRunCorrelationAnalysis(unittest.TestCase):
                 patch.object(overlap_analysis, "plot_mutation_starrseq_correlation", return_value=[]), \
                 patch.object(overlap_analysis, "plot_mutation_deepcre_correlation", return_value=[]), \
                 patch.object(overlap_analysis, "plot_individual_bucket_views"), \
-                patch.object(overlap_analysis, "plot_overlay_highlight_correlation"), \
+                patch.object(overlap_analysis, "plot_overlay_highlight_correlation") as mock_overlay, \
                 patch.object(overlap_analysis, "plot_correlation_over_positions_fixed_window") as mock_pos_window, \
                 patch.object(overlap_analysis, "plot_correlation_over_positions_fixed_number_elements"), \
                 patch.object(overlap_analysis, "save_bucket_statistics"):
@@ -87,6 +103,12 @@ class TestRunCorrelationAnalysis(unittest.TestCase):
         # Assert: no light/dark subsets, and the position series is unsplit.
         self.assertEqual(mock_deepcre.call_count, 5)  # "", reference, synthetic, binding, non_binding
         self.assertEqual(len(mock_pos_window.call_args[0][0]), 1)  # all only
+        # Overlay only for the full dataset: single-color + binding-status variant.
+        self.assertEqual(mock_overlay.call_count, 2)
+        overlay_subset_labels = {
+            call.kwargs.get("subset_label") for call in mock_overlay.call_args_list
+        }
+        self.assertEqual(overlay_subset_labels, {""})
 
 
 if __name__ == "__main__":
