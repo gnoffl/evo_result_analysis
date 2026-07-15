@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 from analysis.mutations.analyze_mutations import (
     calculate_net_nucleotide_change,
@@ -46,6 +47,19 @@ from workflows.mutation_distance_analysis.mutation_distance_analysis import (
     plot_difference,
 )
 from workflows.mutation_distribution_analysis.mutation_pool import MutationPool
+from workflows.overlap_analysis._common import (
+    HIGHLIGHT_WINDOW_CENTER,
+    POSITION_SERIES_COLORS,
+    compute_correlation_by_position,
+    plot_overlay_highlight_correlation,
+    simply_plot_multi,
+)
+from workflows.overlap_analysis.starrseq_deepcre_correlation_bHLH import (
+    prepare_bhlh_enrichment_df,
+)
+from workflows.overlap_analysis.starrseq_deepcre_correlation_WRKY import (
+    prepare_wrky_enrichment_df,
+)
 from workflows.paper_plots.style import (
     DOUBLE_COLUMN_MM,
     figure_size_inches,
@@ -593,6 +607,219 @@ def fig3() -> None:
         plt.close(fig)
 
 
+# --- Figure 6: STARR-seq x deepCRE positional correlation --------------------
+
+# Publication marker/line weights for the position-series panels (A, B). The
+# standalone plots use s=30 / linewidth=3, far too heavy for a compact panel.
+_POSITION_SCATTER_SIZE = 4.0
+_POSITION_SCATTER_ALPHA = 0.12
+_POSITION_LINE_WIDTH = 1.4
+# Overlay-scatter marker areas for panel C (standalone uses 35 / 55).
+_OVERLAY_ALL_SIZE = 6.0
+_OVERLAY_HIGHLIGHT_SIZE = 12.0
+# Highlight-window connector drawn on A and B: a thin dashed vertical line at the
+# fixed-window center that panel C zooms into (the peak-correlation window). Kept
+# black (not the panel-C highlight red) so the figure is not overloaded with
+# colour.
+_HIGHLIGHT_MARKER_COLOR = "black"
+_HIGHLIGHT_MARKER_WIDTH = 1.0
+
+
+def _build_fig6_combined_df() -> pd.DataFrame:
+    """Run the WRKY + bHLH deepCRE prediction pipelines and pool the results.
+
+    Mirrors ``starrseq_deepcre_correlation_combined.py``: each TF's analysis-ready
+    dataframe is built independently (own reference windows and mapping, so genes
+    shared between the two TF sets are never double-counted) and the two are row
+    concatenated. Both dataframes come out of the identical downstream pipeline
+    with the same columns.
+
+    This runs the full deepCRE prediction pipeline (loads the TF model and scans
+    the reference windows) for both TFs, so it is the slow part of :func:`fig6`;
+    there is no cached point-level dataframe to load instead.
+
+    Returns:
+        The pooled analysis-ready dataframe for
+        :func:`plot_overlay_highlight_correlation` and
+        :func:`compute_correlation_by_position`.
+    """
+    wrky_df = prepare_wrky_enrichment_df()
+    bhlh_df = prepare_bhlh_enrichment_df()
+    return pd.concat([wrky_df, bhlh_df], ignore_index=True)
+
+
+def _fig6_position_series(
+    combined_df: pd.DataFrame,
+) -> List[Tuple[pd.DataFrame, str, str]]:
+    """Split the pooled dataframe into the all/light/dark position-series inputs.
+
+    Matches ``run_correlation_analysis``: the pooled dataframe plus its light and
+    dark ``condition`` subsets, each with its :data:`POSITION_SERIES_COLORS`
+    colour, ready for :func:`compute_correlation_by_position`.
+
+    Args:
+        combined_df: The pooled analysis-ready dataframe.
+
+    Returns:
+        ``[(all, "all", grey), (light, "light", gold), (dark, "dark", blue)]``.
+    """
+    condition = combined_df["condition"].str.lower()
+    return [
+        (combined_df, "all", POSITION_SERIES_COLORS["all"]),
+        (combined_df[condition == "light"].copy(), "light", POSITION_SERIES_COLORS["light"]),
+        (combined_df[condition == "dark"].copy(), "dark", POSITION_SERIES_COLORS["dark"]),
+    ]
+
+
+def _populate_fig6(fig: plt.Figure, combined_df: pd.DataFrame) -> None:
+    """Draw all three panels of figure 6 onto ``fig``.
+
+    Layout is a 2x2 grid whose bottom row spans both columns: panel A (Spearman
+    correlation by overlap position) and panel B (p-value of that correlation,
+    log y) sit side by side on top, and panel C (the deepCRE-vs-STARR-seq scatter
+    with the peak-correlation window highlighted) spans the full width beneath
+    them. A and B each mark the highlighted window's center with a thin dashed
+    vertical line so the reader sees which window panel C zooms into. Between the
+    A/B row and panel C, a full-width strip holds both legends side by side (the
+    all/light/dark conditions shared by A/B on the left, panel C's overlap-window
+    key on the right). Must be called inside a :func:`publication_style` context.
+
+    Args:
+        fig: An (empty) figure to populate.
+        combined_df: The pooled analysis-ready dataframe from
+            :func:`_build_fig6_combined_df`.
+    """
+    # A/B row on top, then a thin strip holding both legends side by side, then
+    # the full-width panel C.
+    grid = fig.add_gridspec(nrows=3, ncols=2, height_ratios=[1.0, 0.18, 1.4])
+    correlation_ax = fig.add_subplot(grid[0, 0])
+    pvalue_ax = fig.add_subplot(grid[0, 1])
+    legend_ax = fig.add_subplot(grid[1, :])
+    legend_ax.axis("off")
+    overlay_ax = fig.add_subplot(grid[2, :])
+
+    named_dfs = _fig6_position_series(combined_df)
+    corr_series, _, pval_series, _ = compute_correlation_by_position(named_dfs)
+
+    simply_plot_multi(
+        corr_series,
+        "Overlap start position",
+        "Spearman correlation",
+        _UNUSED_NAME,
+        _UNUSED_NAME,
+        _UNUSED_NAME,
+        ax=correlation_ax,
+        scatter_size=_POSITION_SCATTER_SIZE,
+        scatter_alpha=_POSITION_SCATTER_ALPHA,
+        line_width=_POSITION_LINE_WIDTH,
+    )
+    simply_plot_multi(
+        pval_series,
+        "Overlap start position",
+        "P-value (Spearman)",
+        _UNUSED_NAME,
+        _UNUSED_NAME,
+        _UNUSED_NAME,
+        log=True,
+        ax=pvalue_ax,
+        scatter_size=_POSITION_SCATTER_SIZE,
+        scatter_alpha=_POSITION_SCATTER_ALPHA,
+        line_width=_POSITION_LINE_WIDTH,
+    )
+
+    # Capture the shared all/light/dark handles from A and drop the per-panel
+    # legends both A and B auto-created; the combined strip legend is built below.
+    shared_handles, shared_labels = correlation_ax.get_legend_handles_labels()
+    for ax in (correlation_ax, pvalue_ax):
+        panel_legend = ax.get_legend()
+        if panel_legend is not None:
+            panel_legend.remove()
+
+    plot_overlay_highlight_correlation(combined_df, ax=overlay_ax)
+    overlay_scatters = overlay_ax.collections
+    if len(overlay_scatters) >= 1:
+        overlay_scatters[0].set_sizes([_OVERLAY_ALL_SIZE])
+    if len(overlay_scatters) >= 2:
+        overlay_scatters[1].set_sizes([_OVERLAY_HIGHLIGHT_SIZE])
+    # Extract panel C's overlap-window key so it can join the shared strip; drop
+    # the in-panel legend the overlay plot auto-created.
+    overlay_handles, overlay_labels = overlay_ax.get_legend_handles_labels()
+    overlay_legend = overlay_ax.get_legend()
+    if overlay_legend is not None:
+        overlay_legend.remove()
+
+    # Both legends live in the strip between the A/B row and panel C, offset
+    # horizontally so they do not overlap: conditions on the left, C's
+    # overlap-window key on the right (swatches enlarged; the markers are tiny).
+    conditions_legend = legend_ax.legend(
+        shared_handles,
+        shared_labels,
+        loc="center",
+        bbox_to_anchor=(0.28, 0.5),
+        ncol=len(shared_labels),
+        frameon=False,
+        title="STARR-seq condition",
+    )
+    legend_ax.add_artist(conditions_legend)
+    legend_ax.legend(
+        overlay_handles,
+        overlay_labels,
+        loc="center",
+        bbox_to_anchor=(0.74, 0.5),
+        ncol=len(overlay_labels),
+        frameon=False,
+        title="Overlap window",
+        markerscale=2.2,
+    )
+
+    # Strip the long standalone titles; the axis labels and panel letters carry
+    # the meaning in a multi-panel figure.
+    for ax in (correlation_ax, pvalue_ax, overlay_ax):
+        ax.set_title("")
+
+    # Connect the top panels to panel C: the peak-correlation window C highlights
+    # is the fixed window plotted at x = HIGHLIGHT_WINDOW_CENTER on A and B.
+    for ax in (correlation_ax, pvalue_ax):
+        ax.axvline(
+            HIGHLIGHT_WINDOW_CENTER,
+            color=_HIGHLIGHT_MARKER_COLOR,
+            linewidth=_HIGHLIGHT_MARKER_WIDTH,
+            linestyle="--",
+            zorder=0,
+        )
+
+    # Both top panels share the same overlap-position x-axis; harmonise it.
+    sync_axis_limits([correlation_ax, pvalue_ax], sync_y=False)
+
+    for ax, letter in ((correlation_ax, "A"), (pvalue_ax, "B"), (overlay_ax, "C")):
+        panel_label(ax, letter)
+
+
+def fig6() -> None:
+    """Compose figure 6: STARR-seq x deepCRE positional correlation (pooled).
+
+    Panels A and B summarise the fixed-window positional analysis of the pooled
+    WRKY + bHLH dataset: the Spearman correlation between deepCRE predictions and
+    STARR-seq enrichment as a function of overlap start position (A) and the
+    p-value of that correlation on a log axis (B), each overlaying the ``all``,
+    ``light`` and ``dark`` STARR-seq conditions. Panel C is the point-level
+    deepCRE-vs-STARR-seq scatter with the peak-correlation window (marked by the
+    dashed line on A/B) highlighted on top of the full dataset.
+
+    The pooled dataframe is rebuilt from scratch on every call (both deepCRE
+    prediction pipelines run); there is no cached point-level dataframe.
+    """
+    with publication_style():
+        fig = plt.figure(
+            figsize=figure_size_inches(DOUBLE_COLUMN_MM, 170.0), layout="constrained"
+        )
+        _populate_fig6(fig, _build_fig6_combined_df())
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        save_publication_figure(fig, os.path.join(OUTPUT_DIR, "fig6_composed.svg"))
+        plt.close(fig)
+
+
 if __name__ == "__main__":
     # fig2()
-    fig3()
+    # fig3()
+    fig6()

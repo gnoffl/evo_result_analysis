@@ -987,6 +987,9 @@ def simply_plot_multi(
     log: bool = False,
     rolling_window: int = ROLLING_WINDOW_SIZE,
     ax: Optional[plt.Axes] = None,
+    scatter_size: float = 30.0,
+    scatter_alpha: float = 0.15,
+    line_width: float = 3.0,
 ) -> None:
     """Plot multiple series of position-correlation data on a single figure.
 
@@ -1002,6 +1005,12 @@ def simply_plot_multi(
         ax: Axes to draw onto. When None, a standalone figure is created and
             saved (unchanged behaviour); when given, the plot is drawn onto
             ``ax`` and nothing is saved.
+        scatter_size: Marker area (points^2) for the raw per-window points.
+            Defaults to the standalone value (30).
+        scatter_alpha: Opacity of the raw per-window points. Defaults to the
+            standalone value (0.15).
+        line_width: Width of the rolling-mean line. Defaults to the standalone
+            value (3); pass a smaller value for compact publication panels.
     """
     own_figure = ax is None
     if own_figure:
@@ -1009,13 +1018,13 @@ def simply_plot_multi(
     for x_vals, y_vals, label, color in series:
         x_arr = np.array(x_vals)
         y_arr = np.array(y_vals)
-        ax.scatter(x_arr, y_arr, color=color, alpha=0.15, s=30, zorder=1)
+        ax.scatter(x_arr, y_arr, color=color, alpha=scatter_alpha, s=scatter_size, zorder=1)
         if len(x_arr) >= rolling_window:
             x_rolling = np.convolve(x_arr, np.ones(rolling_window) / rolling_window, mode="valid")
             y_rolling = np.convolve(y_arr, np.ones(rolling_window) / rolling_window, mode="valid")
-            ax.plot(x_rolling, y_rolling, color=color, linestyle="-", linewidth=3, label=label, zorder=2)
+            ax.plot(x_rolling, y_rolling, color=color, linestyle="-", linewidth=line_width, label=label, zorder=2)
         else:
-            ax.plot(x_arr, y_arr, color=color, linestyle="-", linewidth=3, label=label, zorder=2)
+            ax.plot(x_arr, y_arr, color=color, linestyle="-", linewidth=line_width, label=label, zorder=2)
     ax.set_xlabel(x_axis_name)
     ax.set_ylabel(y_axis_name)
     ax.set_title(title)
@@ -1033,27 +1042,32 @@ def simply_plot_multi(
 _PositionSeries = List[Tuple[List, List, str, str]]
 
 
-def _compute_and_save_correlation_by_position(
+def compute_correlation_by_position(
     named_dfs: List[Tuple[pd.DataFrame, str, str]],
-    subfolder: str,
-) -> Tuple[_PositionSeries, _PositionSeries, _PositionSeries]:
-    """Compute per-bucket fit metrics, save them as CSV, and return plot-ready series.
+) -> Tuple[_PositionSeries, _PositionSeries, _PositionSeries, pd.DataFrame]:
+    """Compute per-fixed-window fit metrics and return plot-ready series (no I/O).
 
     For each (dataframe, label, color) entry, iterates over unique
-    ``group_overlap_start`` values, fits a linear model on each 200 bp bucket
-    (skipping buckets with ≤10 points), and collects position midpoints,
-    Spearman correlations, slopes, and p-values.  Results are written to
-    ``<subfolder>/correlation_by_position_data.csv`` with raw values and
-    centered rolling-mean columns (window = ROLLING_WINDOW_SIZE).
+    ``group_overlap_start`` values, fits a linear model on each 200 bp window
+    (skipping windows with <= MIN_POINTS_PER_FIXED_WINDOW points), and collects
+    position midpoints, Spearman correlations, slopes, and p-values.
+
+    This is the pure computation shared by the standalone plotting entry point
+    (:func:`plot_correlation_over_positions_fixed_window`) and the publication
+    composition, so neither has to re-derive the per-window fits. It performs no
+    file I/O; :func:`_compute_and_save_correlation_by_position` wraps it to also
+    persist the tidy per-position CSV.
 
     Args:
         named_dfs: List of (dataframe, label, color) tuples, one per subset.
-        subfolder: Output subdirectory under CORRELATION_OUTPUT_ROOT.
 
     Returns:
-        List of (x_pos, metric_values, label, color) tuples ready for
-        ``simply_plot_multi``, one per metric per label, interleaved as
-        corr_series, slope_series, pval_series in groups of three.
+        ``(corr_series, slope_series, pval_series, tidy_df)`` where each
+        ``*_series`` is a list of ``(x_pos, metric_values, label, color)`` tuples
+        ready for :func:`simply_plot_multi` (one per label), and ``tidy_df`` is
+        the concatenated per-position frame with raw values plus centered
+        rolling-mean columns (window = ROLLING_WINDOW_SIZE) and a ``label``
+        column.
     """
     corr_series, slope_series, pval_series = [], [], []
     all_label_dfs: List[pd.DataFrame] = []
@@ -1092,9 +1106,34 @@ def _compute_and_save_correlation_by_position(
         label_df["label"] = label
         all_label_dfs.append(label_df)
 
+    tidy_df = pd.concat(all_label_dfs, ignore_index=True)
+    return corr_series, slope_series, pval_series, tidy_df
+
+
+def _compute_and_save_correlation_by_position(
+    named_dfs: List[Tuple[pd.DataFrame, str, str]],
+    subfolder: str,
+) -> Tuple[_PositionSeries, _PositionSeries, _PositionSeries]:
+    """Compute per-window fit metrics, save them as CSV, and return plot series.
+
+    Thin persistence wrapper over :func:`compute_correlation_by_position`: writes
+    the tidy per-position frame to ``<subfolder>/correlation_by_position_data.csv``
+    and returns the three plot-ready series.
+
+    Args:
+        named_dfs: List of (dataframe, label, color) tuples, one per subset.
+        subfolder: Output subdirectory under CORRELATION_OUTPUT_ROOT.
+
+    Returns:
+        ``(corr_series, slope_series, pval_series)`` ready for
+        :func:`simply_plot_multi`.
+    """
+    corr_series, slope_series, pval_series, tidy_df = compute_correlation_by_position(
+        named_dfs
+    )
     output_folder = os.path.join(CORRELATION_OUTPUT_ROOT, subfolder)
     os.makedirs(output_folder, exist_ok=True)
-    pd.concat(all_label_dfs, ignore_index=True).to_csv(
+    tidy_df.to_csv(
         os.path.join(output_folder, "correlation_by_position_data.csv"), index=False
     )
     return corr_series, slope_series, pval_series
