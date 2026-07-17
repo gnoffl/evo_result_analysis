@@ -39,6 +39,8 @@ src/workflows/overlap_analysis/binding_vs_nonbinding/plots/*
 !src/workflows/overlap_analysis/correct_construct/pPSntF_enhLib_35Spr.fa
 !src/workflows/overlap_analysis/correct_construct/barcode1.fa
 !src/workflows/overlap_analysis/correct_construct/barcode2.fa
+src/workflows/one_off_visualizations/plots/*
+src/workflows/evo_alg_pooled_plots/example_gene_pareto/plots/*
 
 
 
