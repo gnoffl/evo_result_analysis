@@ -18,6 +18,7 @@ from analysis.mutations.analyze_mutations import (
     calculate_mutation_distances_single_gene, calculate_mutation_distances, plot_mutation_distances,
     load_mutation_data, analyze_mutation_distances, get_random_mutation_distributions, analyze_range_single_gene,
     plot_dist_hist, calculate_net_nucleotide_change, plot_net_nucleotide_change,
+    calculate_positional_nucleotide_change,
 )
 from analysis.mutations.summarize_mutations import MutatedSequence
 import numpy as np
@@ -685,6 +686,49 @@ class TestAnalyzeMutations(unittest.TestCase):
             mock_savefig.assert_not_called()
         finally:
             plt.close(fig)
+
+    def test_calculate_positional_nucleotide_change(self):
+        """Test per-position from/to/net-change counting from max-fitness sequences."""
+        from_dict, to_dict, diff_dict = calculate_positional_nucleotide_change(
+            self.mutation_file
+        )
+
+        # gene1 max seq (0.8): 0A->T, 1A->G, 5A->C; gene2 max seq (0.7): 0T->C, 1T->G
+        self.assertEqual(from_dict, {0: {"A": 1, "T": 1}, 1: {"A": 1, "T": 1}, 5: {"A": 1}})
+        self.assertEqual(to_dict, {0: {"T": 1, "C": 1}, 1: {"G": 2}, 5: {"C": 1}})
+        self.assertEqual(
+            diff_dict,
+            {
+                0: {"A": -1, "C": 1, "G": 0, "T": 0},
+                1: {"A": -1, "C": 0, "G": 2, "T": -1},
+                5: {"A": -1, "C": 1, "G": 0, "T": 0},
+            },
+        )
+        # Net change at every position must sum to zero (each mutation is a swap).
+        for position_counts in diff_dict.values():
+            self.assertEqual(sum(position_counts.values()), 0)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_make_line_plot_rolling_window_plot_sum(self, mock_savefig):
+        """plot_sum toggles the black Sum line: 5 lines when True, 4 when False."""
+        import matplotlib.pyplot as plt
+        test_data = {i: {"A": 1, "C": 1, "G": 1, "T": 1} for i in range(100)}
+
+        fig_with, ax_with = plt.subplots()
+        fig_without, ax_without = plt.subplots()
+        try:
+            make_line_plot_rolling_window(
+                test_data, "test", output_format="pdf", ax=ax_with, plot_sum=True
+            )
+            make_line_plot_rolling_window(
+                test_data, "test", output_format="pdf", ax=ax_without, plot_sum=False
+            )
+            self.assertEqual(len(ax_with.lines), 5)  # A, C, G, T, Sum
+            self.assertEqual(len(ax_without.lines), 4)  # A, C, G, T only
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig_with)
+            plt.close(fig_without)
 
 
 class TestAnalyzeMutationsIntegration(unittest.TestCase):

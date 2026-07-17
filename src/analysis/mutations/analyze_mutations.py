@@ -212,7 +212,7 @@ def plot_dict_as_stacked_bars(data_dict: Dict, title: str, xlabel: str, ylabel: 
     if own_figure:
         plt.savefig(file_path, dpi=300, bbox_inches='tight')
 
-def make_line_plot_rolling_window(data_dict: Dict, name: str, output_format: str, window_size: int = 11, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None):
+def make_line_plot_rolling_window(data_dict: Dict, name: str, output_format: str, window_size: int = 11, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None, plot_sum: bool = True):
     """Create a rolling window line plot of mutations.
 
     Args:
@@ -224,6 +224,10 @@ def make_line_plot_rolling_window(data_dict: Dict, name: str, output_format: str
         ax (Optional[plt.Axes]): Axes to draw onto. When None, a standalone
             figure is created and saved (unchanged behaviour); when given, the
             plot is drawn onto ``ax`` and nothing is saved.
+        plot_sum (bool): Whether to draw the black "Sum" line (total over all
+            nucleotides). Defaults to True. For a net-change ("diff") input the
+            sum is identically zero and carries no information, so callers pass
+            False to plot only the four nucleotide lines.
     """
     SEQUENCE_LENGTH = 3020
     PADDING = 20
@@ -237,13 +241,14 @@ def make_line_plot_rolling_window(data_dict: Dict, name: str, output_format: str
         counts = np.array([data_dict.get(x, {}).get(letter, 0) for x in range(SEQUENCE_LENGTH)])
         rolling_mean = np.convolve(counts, np.ones(window_size)/window_size, mode='valid')
         results[letter] = rolling_mean
-    sum_over_all_letters = np.sum([results[letter] for letter in results.keys()], axis=0)
-    results["Sum"] = sum_over_all_letters
+    valid_length = len(results["A"])
+    if plot_sum:
+        results["Sum"] = np.sum([results[letter] for letter in ["A", "C", "G", "T"]], axis=0)
     cutoff = window_size / 2 - 0.5
-    indexes = np.arange(len(sum_over_all_letters)) + cutoff
+    indexes = np.arange(valid_length) + cutoff
     # cut out the area in the middle of the array that is not valid
-    start = math.ceil((len(results["Sum"]) - PADDING) // 2 - cutoff)
-    end = math.ceil((len(results["Sum"]) + PADDING) // 2 + cutoff)
+    start = math.ceil((valid_length - PADDING) // 2 - cutoff)
+    end = math.ceil((valid_length + PADDING) // 2 + cutoff)
     results = {letter: np.concatenate((values[:start], np.array([np.nan]* (end - start)), values[end:])) for letter, values in results.items()}
 
     if name.endswith("_to"):
@@ -334,25 +339,8 @@ def plot_mutations_location(mutation_data_path: str, name: str, output_format: s
     """
     if not plot_stacked and not plot_rolling:
         raise ValueError("At least one of plot_stacked or plot_rolling must be True.")
-    from_dict, to_dict = {}, {}
-    with open(mutation_data_path, 'r') as f:
-        mutation_data = json.load(f)
-    for gene, data in tqdm(mutation_data.items(), desc="Processing genes"):
-        generation_mutations = MutationsGene.from_dict(data)
-        generations = sorted([int(gen) for gen in generation_mutations.generation_dict.keys()])
-        final_generation = generations[-1]
-        min_fit, max_fit = generation_mutations.get_init_and_optimal_fitness_generation(final_generation)
-        max_seq = generation_mutations.get_equal_or_next_closest_fitness(final_generation, max_fit)
-        for position, ref_base, mut_base in max_seq.mutations:
-            mut_dict_from = from_dict.setdefault(position, {})
-            mut_dict_from[ref_base] = mut_dict_from.get(ref_base, 0) + 1
-            mut_dict_to = to_dict.setdefault(position, {})
-            mut_dict_to[mut_base] = mut_dict_to.get(mut_base, 0) + 1
+    from_dict, to_dict, diff_dict = calculate_positional_nucleotide_change(mutation_data_path)
 
-    diff_dict = {
-        position: {base: to_dict[position].get(base, 0) - from_dict[position].get(base, 0) for base in ["A", "C", "G", "T"]} for position in from_dict.keys()
-    }
-    
     if plot_stacked:
         plot_dict_as_stacked_bars(from_dict,
                                   title=f'Histogram of Mutations Location for {name} (From)',
@@ -376,7 +364,49 @@ def plot_mutations_location(mutation_data_path: str, name: str, output_format: s
     if plot_rolling:
         make_line_plot_rolling_window(from_dict, f"{name}_from", output_format=output_format, window_size=window_size, output_folder=output_folder, titles=titles)
         make_line_plot_rolling_window(to_dict, f"{name}_to", output_format=output_format, window_size=window_size, output_folder=output_folder, titles=titles)
-        make_line_plot_rolling_window(diff_dict, f"{name}_diff", output_format=output_format, window_size=window_size, output_folder=output_folder, titles=titles)
+        # The net-change ("diff") sum is identically zero, so drop the Sum line.
+        make_line_plot_rolling_window(diff_dict, f"{name}_diff", output_format=output_format, window_size=window_size, output_folder=output_folder, titles=titles, plot_sum=False)
+
+
+def calculate_positional_nucleotide_change(
+    mutation_data_path: str,
+) -> Tuple[Dict[int, Dict[str, int]], Dict[int, Dict[str, int]], Dict[int, Dict[str, int]]]:
+    """Count per-position nucleotide changes across all genes.
+
+    For each gene the final generation's max-fitness sequence is used. Every
+    mutation removes its reference base at a position and introduces its mutant
+    base there. The three returned mappings are keyed by sequence position:
+
+    - ``from_dict``: how often each base was removed at that position,
+    - ``to_dict``: how often each base was introduced at that position,
+    - ``diff_dict``: the net change (introduced minus removed) for A, C, G, T.
+
+    Args:
+        mutation_data_path (str): Path to the mutation data JSON file.
+
+    Returns:
+        Tuple of ``(from_dict, to_dict, diff_dict)``.
+    """
+    from_dict: Dict[int, Dict[str, int]] = {}
+    to_dict: Dict[int, Dict[str, int]] = {}
+    with open(mutation_data_path, 'r') as f:
+        mutation_data = json.load(f)
+    for gene, data in tqdm(mutation_data.items(), desc="Processing genes"):
+        generation_mutations = MutationsGene.from_dict(data)
+        generations = sorted([int(gen) for gen in generation_mutations.generation_dict.keys()])
+        final_generation = generations[-1]
+        min_fit, max_fit = generation_mutations.get_init_and_optimal_fitness_generation(final_generation)
+        max_seq = generation_mutations.get_equal_or_next_closest_fitness(final_generation, max_fit)
+        for position, ref_base, mut_base in max_seq.mutations:
+            mut_dict_from = from_dict.setdefault(position, {})
+            mut_dict_from[ref_base] = mut_dict_from.get(ref_base, 0) + 1
+            mut_dict_to = to_dict.setdefault(position, {})
+            mut_dict_to[mut_base] = mut_dict_to.get(mut_base, 0) + 1
+
+    diff_dict = {
+        position: {base: to_dict[position].get(base, 0) - from_dict[position].get(base, 0) for base in ["A", "C", "G", "T"]} for position in from_dict.keys()
+    }
+    return from_dict, to_dict, diff_dict
 
 
 def plot_hist_mutation_conservation(mutation_data_path: str, name: str, output_format: str, generation: int = 1999, mutable_positions: int = 3000, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None) -> None:

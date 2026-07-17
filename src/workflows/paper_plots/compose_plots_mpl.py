@@ -19,9 +19,13 @@ from typing import Any, Dict, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.lines import Line2D
 
 from analysis.mutations.analyze_mutations import (
+    COLORS,
     calculate_net_nucleotide_change,
+    calculate_positional_nucleotide_change,
+    make_line_plot_rolling_window,
     plot_net_nucleotide_change,
 )
 from analysis.overview.simple_result_stats import (
@@ -483,60 +487,94 @@ def _color_bars_neutral(ax: plt.Axes) -> None:
 
 
 def _populate_fig3(fig: plt.Figure) -> None:
-    """Draw all five panels of figure 3 onto ``fig``.
+    """Draw all seven panels of figure 3 onto ``fig``.
 
-    Nested layout. A short top strip holds the two net-nucleotide-change panels
-    (A: ara, B: zea) at equal width. A taller bottom region holds, on the left,
-    the mutation-distance difference panels stacked vertically (C: ara, D: zea)
-    and, on the right, the significant-TF heatmap (E) with a dedicated thin
-    colour-bar column beside it. Nesting lets A/B span the full width equally
-    while E stays narrow. Must be called inside a :func:`publication_style`
+    Layout is one flat 4-column x 5-row grid (no nested outer halves). Row 0 holds
+    the two rolling-mean line panels (A: ara, B: zea), each spanning two columns;
+    row 1 is a short strip holding the shared A/C/G/T legend; rows 2-4 have equal
+    height. The two net-nucleotide-change bar plots (C: ara, D: zea) sit
+    one-per-column in the left two columns of row 2; the two mutation-distance
+    difference panels (E: ara, F: zea) each span the left two columns on rows 3
+    and 4; the significant-TF heatmap (G) spans the right two columns across
+    rows 2-4, with a dedicated thin colour-bar column split off inside it. The
+    line and bar plots share one A/C/G/T nucleotide colour scheme, explained by
+    the single legend in row 1. Must be called inside a :func:`publication_style`
     context.
 
     Args:
         fig: An (empty) figure to populate.
     """
-    # Two equal-width columns. Left column stacks A over the C/D distance panels;
-    # right column stacks B over the E heatmap. Every cell is split into a wide
-    # main sub-column plus a thin colour-bar sub-column (only filled under E), so
-    # all four main panels share one width and stay aligned: A over C/D on the
-    # left, B over E on the right. The top strip (A, B) is short; the bottom row
-    # (C/D, E) takes most of the height so the TF labels in E stay readable.
-    outer = fig.add_gridspec(
-        nrows=2, ncols=2, height_ratios=[1.0, 2.0], hspace=0.2, wspace=0.22
+    # Flat grid: row 0 the line panels, row 1 the (short) shared legend spanning
+    # all columns, rows 2-4 equal height. Columns are equal width; A/B and E/F
+    # span two columns each.
+    grid = fig.add_gridspec(
+        nrows=5, ncols=4, height_ratios=[1.0, 0.2, 1.0, 1.0, 1.0]
     )
 
-    def _split_for_colorbar(cell):
-        """Split a cell into a wide main column and a thin colour-bar column."""
-        return cell.subgridspec(nrows=1, ncols=2, width_ratios=[1.0, 0.045], wspace=0.05)
+    legend_ax = fig.add_subplot(grid[1, :])
+    legend_ax.axis("off")
 
-    top_cells = [_split_for_colorbar(outer[0, column]) for column in range(2)]
-    bottom_left = _split_for_colorbar(outer[1, 0])
-    bottom_right = _split_for_colorbar(outer[1, 1])
-    # C and D stacked with almost no gap so both panels sit tall and tight.
-    distance_grid = bottom_left[0, 0].subgridspec(nrows=2, ncols=1, hspace=0.12)
+    # Heatmap spans the right two columns of rows 2-4; split off a thin colour-bar
+    # column beside its (label-narrowed) body.
+    heatmap_cells = grid[2:5, 2:4].subgridspec(
+        nrows=1, ncols=2, width_ratios=[1.0, 0.045], wspace=0.05
+    )
 
-    net_change_axes = []
-    net_change_labels = {}
+    # --- A, B: net-change rolling-mean line plots (row 0, two columns each) ----
+    line_axes = []
+    line_cells = [grid[0, 0:2], grid[0, 2:4]]
     for column_index, (run, letter) in enumerate(zip(_FIG3_RUNS, ["A", "B"])):
-        net_change_ax = fig.add_subplot(top_cells[column_index][0, 0])
+        line_ax = fig.add_subplot(line_cells[column_index])
+        _, _, net_change_by_position = calculate_positional_nucleotide_change(
+            run["mutated_sequences_json"]
+        )
+        make_line_plot_rolling_window(
+            net_change_by_position,
+            f"{_UNUSED_NAME}_diff",
+            _UNUSED_FORMAT,
+            titles=False,
+            ax=line_ax,
+            plot_sum=False,
+        )
+        # The shared figure legend replaces the per-panel one.
+        panel_legend = line_ax.get_legend()
+        if panel_legend is not None:
+            panel_legend.remove()
+        line_ax.set_title(run["species_label"], fontstyle="italic")
+        # A and B share the y-axis label: keep it on A only.
+        if column_index == 1:
+            line_ax.set_ylabel("")
+        panel_label(line_ax, letter)
+        line_axes.append(line_ax)
+
+    # --- C, D: net-nucleotide-change bar plots (row 2, one per left column) ---
+    bar_axes = []
+    bar_cells = [grid[2, 0], grid[2, 1]]
+    for column_index, (run, letter) in enumerate(zip(_FIG3_RUNS, ["C", "D"])):
+        bar_ax = fig.add_subplot(bar_cells[column_index])
         net_change = calculate_net_nucleotide_change(run["mutated_sequences_json"])
+        # plot_net_nucleotide_change already colours the bars by A/C/G/T, matching
+        # the line plots, so no neutral recolouring here.
         plot_net_nucleotide_change(
             net_change,
             _UNUSED_NAME,
             _UNUSED_FORMAT,
             titles=False,
-            ax=net_change_ax,
+            ax=bar_ax,
         )
-        _color_bars_neutral(net_change_ax)
-        net_change_ax.axhline(0, color="black", linewidth=0.8)
-        net_change_ax.set_title(run["species_label"], fontstyle="italic")
-        net_change_labels[letter] = panel_label(net_change_ax, letter)
-        net_change_axes.append(net_change_ax)
+        bar_ax.axhline(0, color="black", linewidth=0.8)
+        bar_ax.set_title(run["species_label"], fontstyle="italic")
+        # C and D share the y-axis label: keep it on C only.
+        if column_index == 1:
+            bar_ax.set_ylabel("")
+        panel_label(bar_ax, letter)
+        bar_axes.append(bar_ax)
 
+    # --- E, F: mutation-distance difference panels (rows 3-4, left columns) ---
     distance_axes = []
-    for row_index, (run, letter) in enumerate(zip(_FIG3_RUNS, ["C", "D"])):
-        distance_ax = fig.add_subplot(distance_grid[row_index, 0])
+    distance_cells = [grid[3, 0:2], grid[4, 0:2]]
+    for row_index, (run, letter) in enumerate(zip(_FIG3_RUNS, ["E", "F"])):
+        distance_ax = fig.add_subplot(distance_cells[row_index])
         real_proportions, random_proportions = _distance_difference_proportions(
             run["mutated_sequences_json"]
         )
@@ -554,28 +592,43 @@ def _populate_fig3(fig: plt.Figure) -> None:
         existing_legend = distance_ax.get_legend()
         if existing_legend is not None:
             existing_legend.remove()
-        # Only the bottom panel (D) carries the shared x-axis label.
+        # E and F share the x-axis label: keep it on F (the bottom panel) only.
         if row_index == 0:
             distance_ax.set_xlabel("")
         panel_label(distance_ax, letter)
         distance_axes.append(distance_ax)
 
-    heatmap_ax = fig.add_subplot(bottom_right[0, 0])
-    colorbar_ax = fig.add_subplot(bottom_right[0, 1])
+    # --- G: significant-TF heatmap (right two columns, spans rows 2-4) --------
+    heatmap_ax = fig.add_subplot(heatmap_cells[0, 0])
+    colorbar_ax = fig.add_subplot(heatmap_cells[0, 1])
     _draw_significant_tf_heatmap(heatmap_ax, colorbar_ax)
-    heatmap_label = panel_label(heatmap_ax, "E")
+    heatmap_label = panel_label(heatmap_ax, "G")
 
-    # Make the two runs directly comparable within each left-panel type.
-    sync_axis_limits(net_change_axes, sync_x=False, sync_y=True)
+    # Make the two runs directly comparable within each panel type.
+    sync_axis_limits(line_axes, sync_x=False, sync_y=True)
+    sync_axis_limits(bar_axes, sync_x=False, sync_y=True)
     sync_axis_limits(distance_axes)
 
-    # E's long TF row labels shrink the heatmap axes far to the right, so its
-    # panel letter (anchored in axes fraction) lands right of B's. Re-anchor it
-    # in figure coordinates to B's letter x, keeping it just above E's own top,
-    # so the two right-column letters line up. Requires a draw so the constrained
-    # layout has resolved the final axes positions.
+    # One shared legend for the A/C/G/T nucleotide colours (line and bar plots),
+    # drawn in the reserved top row so no panel carries its own.
+    nucleotide_handles = [
+        Line2D([0], [0], color=COLORS[nucleotide], label=nucleotide)
+        for nucleotide in ["A", "C", "G", "T"]
+    ]
+    legend_ax.legend(
+        handles=nucleotide_handles,
+        loc="center",
+        ncol=4,
+        frameon=False,
+    )
+
+    # G's long TF row labels shrink the heatmap axes far to the right, so its
+    # panel letter (anchored in axes fraction) lands right of B's. Re-anchor it in
+    # figure coordinates to B's letter x, just above G's own top, so the two
+    # right-column letters line up. Requires a draw so the constrained layout has
+    # resolved the final axes positions.
     fig.canvas.draw()
-    b_axes_position = net_change_labels["B"].axes.get_position()
+    b_axes_position = line_axes[1].get_position()
     # -0.08 and +0.02 mirror panel_label's default x and (y - 1) offsets.
     b_label_x = b_axes_position.x0 - 0.08 * b_axes_position.width
     heatmap_position = heatmap_ax.get_position()
@@ -588,18 +641,19 @@ def _populate_fig3(fig: plt.Figure) -> None:
 def fig3() -> None:
     """Compose figure 3: mutation signatures plus the significant-TF contrast.
 
-    Panels A/B are the net nucleotide change (A, C, G, T bar plots) for the ara
-    and zea maximization runs; panels C/D are the per-distance difference between
-    the real and random-baseline inter-mutation distance distributions for the
-    same runs (shared limits within each row). Panel E is the four-run per-gene
-    TF diff heatmap restricted to the TFs whose ara max-vs-min paired contrast
-    reaches the *** tier, ordered by group contrast so the max-favoured TFs sit
-    above the min-favoured ones. All panels share one red=positive /
-    blue=negative diverging colour scale.
+    Panels A/B are the rolling-mean net nucleotide change along the sequence for
+    the ara and zea maximization runs; panels C/D are the total net nucleotide
+    change (A, C, G, T bar plots) for the same runs; panels E/F are the
+    per-distance difference between the real and random-baseline inter-mutation
+    distance distributions (shared limits). A/B and C/D share one A/C/G/T
+    nucleotide colour scheme with a single figure legend. Panel G is the four-run
+    per-gene TF diff heatmap restricted to the TFs whose ara max-vs-min paired
+    contrast reaches the *** tier, ordered by group contrast so the max-favoured
+    TFs sit above the min-favoured ones.
     """
     with publication_style():
         fig = plt.figure(
-            figsize=figure_size_inches(DOUBLE_COLUMN_MM, 220.0), layout="constrained"
+            figsize=figure_size_inches(DOUBLE_COLUMN_MM, 250.0), layout="constrained"
         )
         _populate_fig3(fig)
         os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -821,5 +875,5 @@ def fig6() -> None:
 
 if __name__ == "__main__":
     # fig2()
-    # fig3()
-    fig6()
+    fig3()
+    # fig6()
