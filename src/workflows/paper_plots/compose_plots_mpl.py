@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from matplotlib.lines import Line2D
 
 from analysis.mutations.analyze_mutations import (
@@ -52,6 +53,7 @@ from workflows.mutation_distance_analysis.mutation_distance_analysis import (
 )
 from workflows.mutation_distribution_analysis.mutation_pool import MutationPool
 from workflows.overlap_analysis._common import (
+    BINDING_STATUS_COLORS,
     HIGHLIGHT_WINDOW_CENTER,
     POSITION_SERIES_COLORS,
     compute_correlation_by_position,
@@ -677,29 +679,50 @@ _OVERLAY_HIGHLIGHT_SIZE = 12.0
 # colour.
 _HIGHLIGHT_MARKER_COLOR = "black"
 _HIGHLIGHT_MARKER_WIDTH = 1.0
+# Panel D: display order and pretty labels for the binding-status boxes. The
+# order mirrors panel C's colour legend (binding first, then non-binding).
+_BINDING_STATUS_ORDER = ["binding", "non_binding"]
+_BINDING_STATUS_LABELS = {"binding": "Binding", "non_binding": "Non-binding"}
+# fig6 grid geometry: two equal-width plot columns and four rows -- the A/B
+# panels, a thin full-width strip for their legend, the C/D panels, and a thin
+# full-width strip for their legend.
+_FIG6_HEIGHT_RATIOS = [1.0, 0.15, 1.4, 0.22]
+# Legend labels for panel C's two fit lines (drawn unlabelled by the overlay
+# plot): the fit through all points and the fit through the highlight window.
+_FIT_ALL_LABEL = "fit all data"
+_FIT_HIGHLIGHT_LABEL = "fit best fit data"
+# Panel C's highlight-window fit line is recoloured to black in the composition
+# (the standalone overlay plot draws it in a dark red) and pushed behind every
+# scatter point (all grey and highlight points sit at zorder >= 1) so it never
+# occludes the data.
+_HIGHLIGHT_FIT_COLOR = "black"
+_HIGHLIGHT_FIT_ZORDER = 0.5
 
 
-def _build_fig6_combined_df() -> pd.DataFrame:
-    """Run the WRKY + bHLH deepCRE prediction pipelines and pool the results.
+def _build_fig6_dataframes() -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Run the WRKY + bHLH deepCRE prediction pipelines once and pool the results.
 
     Mirrors ``starrseq_deepcre_correlation_combined.py``: each TF's analysis-ready
     dataframe is built independently (own reference windows and mapping, so genes
-    shared between the two TF sets are never double-counted) and the two are row
-    concatenated. Both dataframes come out of the identical downstream pipeline
-    with the same columns.
+    shared between the two TF sets are never double-counted). Panels A/B use the
+    row-concatenated pool of both TFs; panels C/D use the WRKY-only dataframe.
+    Both TF dataframes come out of the identical downstream pipeline with the same
+    columns.
 
     This runs the full deepCRE prediction pipeline (loads the TF model and scans
     the reference windows) for both TFs, so it is the slow part of :func:`fig6`;
-    there is no cached point-level dataframe to load instead.
+    there is no cached point-level dataframe to load instead. The WRKY pipeline is
+    run only once and reused for both the pool and the WRKY-only panels.
 
     Returns:
-        The pooled analysis-ready dataframe for
-        :func:`plot_overlay_highlight_correlation` and
-        :func:`compute_correlation_by_position`.
+        ``(combined_df, wrky_df)`` where ``combined_df`` is the pooled
+        WRKY + bHLH dataframe for panels A/B and ``wrky_df`` is the WRKY-only
+        dataframe for panels C/D.
     """
     wrky_df = prepare_wrky_enrichment_df()
     bhlh_df = prepare_bhlh_enrichment_df()
-    return pd.concat([wrky_df, bhlh_df], ignore_index=True)
+    combined_df = pd.concat([wrky_df, bhlh_df], ignore_index=True)
+    return combined_df, wrky_df
 
 
 def _fig6_position_series(
@@ -725,32 +748,107 @@ def _fig6_position_series(
     ]
 
 
-def _populate_fig6(fig: plt.Figure, combined_df: pd.DataFrame) -> None:
-    """Draw all three panels of figure 6 onto ``fig``.
+def _draw_binding_status_boxplot(
+    ax: plt.Axes, highlight_points: pd.DataFrame
+) -> None:
+    """Draw panel D: enrichment by binding status for the highlight-window points.
 
-    Layout is a 2x2 grid whose bottom row spans both columns: panel A (Spearman
-    correlation by overlap position) and panel B (p-value of that correlation,
-    log y) sit side by side on top, and panel C (the deepCRE-vs-STARR-seq scatter
-    with the peak-correlation window highlighted) spans the full width beneath
-    them. A and B each mark the highlighted window's center with a thin dashed
-    vertical line so the reader sees which window panel C zooms into. Between the
-    A/B row and panel C, a full-width strip holds both legends side by side (the
-    all/light/dark conditions shared by A/B on the left, panel C's overlap-window
-    key on the right). Must be called inside a :func:`publication_style` context.
+    Boxes the ``enrichment`` of the exact points panel C colours by binding status
+    (the peak-correlation highlight window of the WRKY dataset), split into the
+    binding and non-binding groups and coloured with the same
+    :data:`BINDING_STATUS_COLORS` as panel C so the two panels read as one. A
+    sample-size annotation sits above each box and a dashed zero line marks no
+    enrichment.
+
+    Args:
+        ax: Axes to draw the boxplot onto.
+        highlight_points: The deduplicated highlight-window points returned by
+            :func:`plot_overlay_highlight_correlation` with
+            ``color_by_binding=True``; must carry ``enrichment`` and
+            ``starr_binding_status`` columns.
+    """
+    present_order = [
+        status
+        for status in _BINDING_STATUS_ORDER
+        if (highlight_points["starr_binding_status"] == status).any()
+    ]
+    palette = {status: BINDING_STATUS_COLORS[status] for status in present_order}
+
+    # hue == x with legend off is the non-deprecated way to colour by category;
+    # saturation=1 keeps the box fills identical to panel C's point colours
+    # (seaborn otherwise desaturates them to 0.75).
+    sns.boxplot(
+        data=highlight_points,
+        x="starr_binding_status",
+        y="enrichment",
+        order=present_order,
+        hue="starr_binding_status",
+        hue_order=present_order,
+        palette=palette,
+        saturation=1.0,
+        legend=False,
+        ax=ax,
+    )
+    ax.set_xlabel("")
+    ax.set_ylabel("STARR-seq Enrichment")
+    # Set ticks before labels so matplotlib does not warn about a FixedFormatter
+    # without a matching FixedLocator.
+    ax.set_xticks(range(len(present_order)))
+    ax.set_xticklabels([_BINDING_STATUS_LABELS[status] for status in present_order])
+
+    # Sample size above each box (just under the top of the axes).
+    y_top = ax.get_ylim()[1]
+    for position, status in enumerate(present_order):
+        count = int((highlight_points["starr_binding_status"] == status).sum())
+        ax.text(
+            position,
+            y_top,
+            f"n={count}",
+            ha="center",
+            va="top",
+        )
+
+
+def _populate_fig6(
+    fig: plt.Figure, combined_df: pd.DataFrame, wrky_df: pd.DataFrame
+) -> None:
+    """Draw all four panels of figure 6 onto ``fig``.
+
+    Layout is a 4-column x 4-row grid. Row 0: panel A (Spearman correlation by
+    overlap position) and panel B (p-value of that correlation, log y) over the
+    pooled WRKY + bHLH dataset, two columns each. Row 1: a thin full-width strip
+    holding their all/light/dark condition legend. Row 2: panel C (the WRKY
+    deepCRE-vs-STARR-seq scatter with the peak-correlation window highlighted and
+    coloured by binding status) spanning three columns and panel D (a boxplot of
+    those highlight-window points' enrichment, binding vs non-binding) the last
+    column. Row 3: a thin full-width strip holding the all/binding/non-binding +
+    fit-line legend. A and B each mark the highlighted
+    window's center with a thin dashed vertical line so the reader sees which
+    window panels C/D zoom into. Panels C and D share the binding-status colours,
+    so one legend keys both. Must be called inside a :func:`publication_style`
+    context.
 
     Args:
         fig: An (empty) figure to populate.
-        combined_df: The pooled analysis-ready dataframe from
-            :func:`_build_fig6_combined_df`.
+        combined_df: The pooled WRKY + bHLH analysis-ready dataframe (panels A/B)
+            from :func:`_build_fig6_dataframes`.
+        wrky_df: The WRKY-only analysis-ready dataframe (panels C/D) from
+            :func:`_build_fig6_dataframes`.
     """
-    # A/B row on top, then a thin strip holding both legends side by side, then
-    # the full-width panel C.
-    grid = fig.add_gridspec(nrows=3, ncols=2, height_ratios=[1.0, 0.18, 1.4])
-    correlation_ax = fig.add_subplot(grid[0, 0])
-    pvalue_ax = fig.add_subplot(grid[0, 1])
-    legend_ax = fig.add_subplot(grid[1, :])
-    legend_ax.axis("off")
-    overlay_ax = fig.add_subplot(grid[2, :])
+    # Four equal-width columns: A and B take two columns each on the top row,
+    # while C spans three columns and D one on the panel row below; each panel row
+    # is followed by a thin full-width strip that holds that row's legend.
+    grid = fig.add_gridspec(
+        nrows=4, ncols=4, height_ratios=_FIG6_HEIGHT_RATIOS
+    )
+    correlation_ax = fig.add_subplot(grid[0, 0:2])
+    pvalue_ax = fig.add_subplot(grid[0, 2:4])
+    top_legend_ax = fig.add_subplot(grid[1, :])
+    top_legend_ax.axis("off")
+    overlay_ax = fig.add_subplot(grid[2, 0:3])
+    boxplot_ax = fig.add_subplot(grid[2, 3])
+    bottom_legend_ax = fig.add_subplot(grid[3, :])
+    bottom_legend_ax.axis("off")
 
     named_dfs = _fig6_position_series(combined_df)
     corr_series, _, pval_series, _ = compute_correlation_by_position(named_dfs)
@@ -789,40 +887,60 @@ def _populate_fig6(fig: plt.Figure, combined_df: pd.DataFrame) -> None:
         if panel_legend is not None:
             panel_legend.remove()
 
-    plot_overlay_highlight_correlation(combined_df, ax=overlay_ax)
+    # Panel C: WRKY-only overlay, highlight-window points coloured by binding
+    # status. The returned highlight points feed panel D so both panels show the
+    # exact same set of points.
+    _, highlight_points, _, _ = plot_overlay_highlight_correlation(
+        wrky_df, color_by_binding=True, ax=overlay_ax
+    )
     overlay_scatters = overlay_ax.collections
-    if len(overlay_scatters) >= 1:
-        overlay_scatters[0].set_sizes([_OVERLAY_ALL_SIZE])
-    if len(overlay_scatters) >= 2:
-        overlay_scatters[1].set_sizes([_OVERLAY_HIGHLIGHT_SIZE])
-    # Extract panel C's overlap-window key so it can join the shared strip; drop
-    # the in-panel legend the overlay plot auto-created.
+    # Collection 0 is the grey full-dataset background; the remaining collections
+    # are the binding/non-binding highlight groups, drawn larger.
+    for scatter_index, scatter in enumerate(overlay_scatters):
+        size = _OVERLAY_ALL_SIZE if scatter_index == 0 else _OVERLAY_HIGHLIGHT_SIZE
+        scatter.set_sizes([size])
+    # Recolour panel C's highlight-window fit line black (the overlay plot draws
+    # it in a dark red) and push it behind every scatter point so it no longer
+    # occludes the data; the all-data fit line stays grey. Done before reading the
+    # line handles so the legend proxy picks up the black colour. Line order is
+    # [all-data fit, highlight-window fit].
+    overlay_fit_lines = list(overlay_ax.get_lines())
+    if len(overlay_fit_lines) >= 2:
+        overlay_fit_lines[1].set_color(_HIGHLIGHT_FIT_COLOR)
+        overlay_fit_lines[1].set_zorder(_HIGHLIGHT_FIT_ZORDER)
+
+    # Extract panel C's all/binding/non-binding scatter key, append its two fit
+    # lines, and drop the in-panel legend the overlay plot auto-created.
     overlay_handles, overlay_labels = overlay_ax.get_legend_handles_labels()
     overlay_legend = overlay_ax.get_legend()
     if overlay_legend is not None:
         overlay_legend.remove()
+    fit_labels = [_FIT_ALL_LABEL, _FIT_HIGHLIGHT_LABEL]
+    overlay_handles = list(overlay_handles) + overlay_fit_lines[:2]
+    overlay_labels = list(overlay_labels) + fit_labels[: len(overlay_fit_lines[:2])]
 
-    # Both legends live in the strip between the A/B row and panel C, offset
-    # horizontally so they do not overlap: conditions on the left, C's
-    # overlap-window key on the right (swatches enlarged; the markers are tiny).
-    conditions_legend = legend_ax.legend(
+    # Panel D: enrichment boxplot of the same highlight-window points, split by
+    # binding status (shares panel C's colours).
+    _draw_binding_status_boxplot(boxplot_ax, highlight_points)
+
+    # Each panel row's legend sits in the thin full-width strip below it, laid
+    # out horizontally: the all/light/dark conditions under A/B, the
+    # binding-status + fit-line key under C/D.
+    top_legend_ax.legend(
         shared_handles,
         shared_labels,
         loc="center",
-        bbox_to_anchor=(0.28, 0.5),
         ncol=len(shared_labels),
         frameon=False,
         title="STARR-seq condition",
     )
-    legend_ax.add_artist(conditions_legend)
-    legend_ax.legend(
+    bottom_legend_ax.legend(
         overlay_handles,
         overlay_labels,
         loc="center",
-        bbox_to_anchor=(0.74, 0.5),
         ncol=len(overlay_labels),
         frameon=False,
-        title="Overlap window",
+        title="Binding status",
         markerscale=2.2,
     )
 
@@ -845,29 +963,37 @@ def _populate_fig6(fig: plt.Figure, combined_df: pd.DataFrame) -> None:
     # Both top panels share the same overlap-position x-axis; harmonise it.
     sync_axis_limits([correlation_ax, pvalue_ax], sync_y=False)
 
-    for ax, letter in ((correlation_ax, "A"), (pvalue_ax, "B"), (overlay_ax, "C")):
+    for ax, letter in (
+        (correlation_ax, "A"),
+        (pvalue_ax, "B"),
+        (overlay_ax, "C"),
+        (boxplot_ax, "D"),
+    ):
         panel_label(ax, letter)
 
 
 def fig6() -> None:
-    """Compose figure 6: STARR-seq x deepCRE positional correlation (pooled).
+    """Compose figure 6: STARR-seq x deepCRE positional correlation.
 
     Panels A and B summarise the fixed-window positional analysis of the pooled
     WRKY + bHLH dataset: the Spearman correlation between deepCRE predictions and
     STARR-seq enrichment as a function of overlap start position (A) and the
     p-value of that correlation on a log axis (B), each overlaying the ``all``,
-    ``light`` and ``dark`` STARR-seq conditions. Panel C is the point-level
-    deepCRE-vs-STARR-seq scatter with the peak-correlation window (marked by the
-    dashed line on A/B) highlighted on top of the full dataset.
+    ``light`` and ``dark`` STARR-seq conditions. Panel C is the WRKY-only
+    point-level deepCRE-vs-STARR-seq scatter with the peak-correlation window
+    (marked by the dashed line on A/B) highlighted on top of the full WRKY dataset
+    and coloured by binding status. Panel D boxes the enrichment of those exact
+    highlight-window points, split into binding vs non-binding.
 
-    The pooled dataframe is rebuilt from scratch on every call (both deepCRE
+    The dataframes are rebuilt from scratch on every call (both deepCRE
     prediction pipelines run); there is no cached point-level dataframe.
     """
     with publication_style():
         fig = plt.figure(
             figsize=figure_size_inches(DOUBLE_COLUMN_MM, 170.0), layout="constrained"
         )
-        _populate_fig6(fig, _build_fig6_combined_df())
+        combined_df, wrky_df = _build_fig6_dataframes()
+        _populate_fig6(fig, combined_df, wrky_df)
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         save_publication_figure(fig, os.path.join(OUTPUT_DIR, "fig6_composed.svg"))
         plt.close(fig)
@@ -875,5 +1001,5 @@ def fig6() -> None:
 
 if __name__ == "__main__":
     # fig2()
-    fig3()
-    # fig6()
+    # fig3()
+    fig6()
