@@ -195,7 +195,7 @@ def _barplot_figure(
     group_order: list,
     hue_order: list,
     ax: Optional[plt.Axes] = None,
-) -> Tuple[plt.Figure, plt.Axes]:
+) -> Tuple[plt.Figure, plt.Axes]:           #type: ignore
     """Create a single bar plot figure for one metric.
 
     Args:
