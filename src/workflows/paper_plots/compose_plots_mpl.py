@@ -52,6 +52,14 @@ from workflows.mutation_distance_analysis.mutation_distance_analysis import (
     compute_real_distances,
     plot_difference,
 )
+from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.region_mutation_breakdown import (
+    GOF_RUN_DIR,
+    GOF_VCF_DIR,
+    build_region_dataframe,
+    collect_unconstrained_region_counts,
+    collect_vcf_region_counts,
+    plot_region_breakdown,
+)
 from workflows.mutation_distribution_analysis.mutation_pool import MutationPool
 from workflows.overlap_analysis._common import (
     BINDING_STATUS_COLORS,
@@ -667,6 +675,237 @@ def fig3() -> None:
         plt.close(fig)
 
 
+# --- Figure 4: GOF/LOF single-mutation runs (fitness + half-max + regions) ---
+
+# The four runs shown one per row: two maximization (GOF) runs on top, two
+# minimization (LOF) runs below, each as unconstrained ("single") then natural
+# (constrained) variant. ``objective`` groups the scatter y-limit sharing (both
+# maximization panels share one y-range, both minimization panels another).
+_FIG4_RUNS: List[Dict[str, str]] = [
+    {
+        "row_label": "GOF",
+        "objective": "max",
+        "stats_json": (
+            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+            "GOF_LOF/GOF/GOF_single/stats_GOF_single.json"
+        ),
+    },
+    {
+        "row_label": "GOF (natural)",
+        "objective": "max",
+        "stats_json": (
+            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+            "GOF_LOF/GOF/GOF_single_natural/stats_GOF_single_natural.json"
+        ),
+    },
+    {
+        "row_label": "LOF",
+        "objective": "min",
+        "stats_json": (
+            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+            "GOF_LOF/LOF/LOF_single/stats_LOF_single.json"
+        ),
+    },
+    {
+        "row_label": "LOF (natural)",
+        "objective": "min",
+        "stats_json": (
+            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+            "GOF_LOF/LOF/LOF_single_natural/stats_LOF_single_natural.json"
+        ),
+    },
+]
+
+# Panel letters: two per run row (scatter, histogram), then the region-breakdown
+# panel and the two placeholder panels.
+_FIG4_RUN_LETTERS = [["A", "B"], ["C", "D"], ["E", "F"], ["G", "H"]]
+_FIG4_REGION_LETTER = "I"
+_FIG4_PLACEHOLDER_LETTERS = ["J", "K"]
+
+
+def _gof_region_dataframe() -> pd.DataFrame:
+    """Build the GOF-only tidy region-count frame for the breakdown panel.
+
+    Reuses the source-of-truth GOF directories (``GOF_VCF_DIR`` for the
+    constrained natural mutations, ``GOF_RUN_DIR`` for the unconstrained
+    reference positions) from the region-breakdown workflow. The LOF slots of
+    :func:`build_region_dataframe` are filled with empty frames because
+    :func:`plot_region_breakdown` keeps only the ``group == "GOF"`` rows, so LOF
+    is scanned and drawn nowhere in figure 4.
+
+    Returns:
+        Tidy DataFrame with columns ``gene``, ``group``, ``condition``,
+        ``region``, ``count`` holding only the GOF constrained and unconstrained
+        counts.
+    """
+    gof_vcf = collect_vcf_region_counts(GOF_VCF_DIR)
+    gof_unconstrained = collect_unconstrained_region_counts(GOF_RUN_DIR)
+    empty = pd.DataFrame(columns=["gene", "region", "count"])
+    return build_region_dataframe(gof_vcf, empty, gof_unconstrained, empty)
+
+
+def _populate_fig4(fig: plt.Figure) -> None:
+    """Draw figure 4 onto ``fig``: four run rows, region breakdown, placeholders.
+
+    Rows 0-3 are the four runs, one per row, each a start-vs-final-fitness scatter
+    (coloured by mutations at half max, magma, sharing one colorbar) and a
+    histogram of mutations at half max. Row 4 is the GOF possible-mutation region
+    breakdown spanning the full width; row 5 holds two placeholder panels for
+    later content. Must be called inside a :func:`publication_style` context.
+
+    Shared limits make the panels comparable: all four scatters share the x-axis
+    (start fitness); the two maximization (GOF) scatters share one y-range and the
+    two minimization (LOF) scatters another (fitness saturates near 1 for
+    maximization, near 0 for minimization); all four histograms share both x and y
+    limits.
+
+    Args:
+        fig: An (empty) figure to populate.
+    """
+    stats_per_run = [_load_stats(run["stats_json"]) for run in _FIG4_RUNS]
+    global_max_mutations = max(
+        stat["num_mutations_half_max_effect"]
+        for stats in stats_per_run
+        for stat in stats.values()
+        if "num_mutations_half_max_effect" in stat
+    )
+
+    # Columns: scatter | thin shared-colorbar column | histogram. The colorbar
+    # column keeps the two data columns equal width. Rows: four run rows, the
+    # region-breakdown row, then the placeholder row.
+    grid = fig.add_gridspec(
+        nrows=6,
+        ncols=3,
+        width_ratios=[1.0, 0.05, 1.0],
+        height_ratios=[1.0, 1.0, 1.0, 1.0, 1.3, 1.0],
+    )
+    colorbar_ax = fig.add_subplot(grid[0:4, 1])
+
+    scatter_axes_by_objective: Dict[str, List[plt.Axes]] = {"max": [], "min": []}
+    all_scatter_axes = []
+    hist_axes = []
+    scatter_mappable = None
+    last_run_index = len(_FIG4_RUNS) - 1
+
+    for row_index, (run, stats) in enumerate(zip(_FIG4_RUNS, stats_per_run)):
+        scatter_ax = fig.add_subplot(grid[row_index, 0])
+        hist_ax = fig.add_subplot(grid[row_index, 2])
+
+        scatter_mappable = draw_visualize_start_vs_max_fitness_by_mutations(
+            stats,
+            _UNUSED_NAME,
+            _UNUSED_FORMAT,
+            relative=False,
+            titles=False,
+            ax=scatter_ax,
+            add_colorbar=False,
+            vmin=0.0,
+            vmax=global_max_mutations,
+        )
+        scatter_mappable.set_sizes([_SCATTER_MARKER_SIZE])
+
+        hist_half_max_mutations(
+            stats,
+            _UNUSED_NAME,
+            _UNUSED_FORMAT,
+            titles=False,
+            ax=hist_ax,
+            color=_NEUTRAL_COLOR,
+        )
+        # Thin white separators between histogram bars for print crispness.
+        for bar in hist_ax.patches:
+            bar.set_edgecolor("white")
+            bar.set_linewidth(0.4)
+
+        for column_index, ax in enumerate((scatter_ax, hist_ax)):
+            panel_label(ax, _FIG4_RUN_LETTERS[row_index][column_index])
+
+        # Row identifier (which run) in the left margin.
+        scatter_ax.text(
+            -0.42,
+            0.5,
+            run["row_label"],
+            transform=scatter_ax.transAxes,
+            rotation=90,
+            ha="center",
+            va="center",
+            fontweight="bold",
+        )
+
+        # Keep tick numbers on every panel, but show the x-axis label only on the
+        # bottom run row (all run rows share the same x-axes).
+        if row_index != last_run_index:
+            scatter_ax.set_xlabel("")
+            hist_ax.set_xlabel("")
+
+        all_scatter_axes.append(scatter_ax)
+        scatter_axes_by_objective[run["objective"]].append(scatter_ax)
+        hist_axes.append(hist_ax)
+
+    # One shared colorbar for all four scatter panels (common normalisation).
+    fig.colorbar(
+        scatter_mappable, cax=colorbar_ax, label="Mutations at Half Max Effect"
+    )
+
+    # Shared limits: all scatters share x; each objective shares its scatter y;
+    # all histograms share x and y.
+    sync_axis_limits(all_scatter_axes, sync_x=True, sync_y=False)
+    for objective_axes in scatter_axes_by_objective.values():
+        sync_axis_limits(objective_axes, sync_x=False, sync_y=True)
+    sync_axis_limits(hist_axes)
+
+    # --- Region breakdown (row 4, full width) --------------------------------
+    region_ax = fig.add_subplot(grid[4, :])
+    plot_region_breakdown(
+        _gof_region_dataframe(),
+        "GOF",
+        show_legend=True,
+        show_title=False,
+        ax=region_ax,
+    )
+    panel_label(region_ax, _FIG4_REGION_LETTER)
+
+    # --- Placeholders (row 5) ------------------------------------------------
+    placeholder_cells = [grid[5, 0], grid[5, 2]]
+    for placeholder_index, cell in enumerate(placeholder_cells):
+        placeholder_ax = fig.add_subplot(cell)
+        placeholder_ax.text(
+            0.5,
+            0.5,
+            "placeholder",
+            transform=placeholder_ax.transAxes,
+            ha="center",
+            va="center",
+            color="0.6",
+            fontstyle="italic",
+        )
+        placeholder_ax.set_xticks([])
+        placeholder_ax.set_yticks([])
+        panel_label(placeholder_ax, _FIG4_PLACEHOLDER_LETTERS[placeholder_index])
+
+
+def fig4() -> None:
+    """Compose figure 4: GOF/LOF single-mutation fitness, half-max, regions.
+
+    Four runs one per row -- two maximization (GOF unconstrained, GOF natural) then
+    two minimization (LOF unconstrained, LOF natural) -- each showing a start-vs-
+    final-fitness scatter coloured by mutations at half max (shared magma colorbar)
+    and a histogram of mutations at half max. All scatters share the start-fitness
+    x-axis; the two GOF scatters share one y-range and the two LOF scatters another;
+    all four histograms share x and y limits. Below the runs, the GOF possible-
+    mutation region breakdown (constrained vs unconstrained, per genomic region) is
+    drawn full width, followed by two placeholder panels for later content.
+    """
+    with publication_style():
+        fig = plt.figure(
+            figsize=figure_size_inches(DOUBLE_COLUMN_MM, 260.0), layout="constrained"
+        )
+        _populate_fig4(fig)
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        save_publication_figure(fig, os.path.join(OUTPUT_DIR, "fig4_composed.svg"))
+        plt.close(fig)
+
+
 # --- Figure 6: STARR-seq x deepCRE positional correlation --------------------
 
 # Publication marker/line weights for the position-series panels (A, B). The
@@ -1091,4 +1330,5 @@ def fig6() -> None:
 if __name__ == "__main__":
     # fig2()
     # fig3()
-    fig6()
+    fig4()
+    # fig6()
