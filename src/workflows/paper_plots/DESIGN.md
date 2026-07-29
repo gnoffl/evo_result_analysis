@@ -188,6 +188,143 @@ Test note: `sync_axis_limits` is unit-tested (`test_style.py`); the new
 returned mappable, `error_style` band vs bars + invalid-value guard, `color`
 applied to Pareto markers and histogram bars).
 
+### 3b. Figure 4 scatter overlays — mean-start line + logit-linear fit
+
+**Date added:** 2026-07-24
+
+Figure 4's four start-vs-final-fitness scatter panels (A/C/E/G, drawn by
+`draw_visualize_start_vs_max_fitness_by_mutations`) each carry two overlays,
+added as backward-compatible params (defaults off, so standalone output is
+unchanged):
+
+- **`mean_start_line`** — a dashed medium-grey vertical line at the mean start
+  fitness of the plotted points, drawn behind the scatter (`zorder=0`). It marks
+  the average starting point of the runs so the reader can see, at a glance,
+  where the "typical" gene begins on the x-axis.
+- **`fit_line`** — a best-fit curve of final vs. start fitness.
+
+#### Why not a linear (or polynomial) fit?
+
+The response variable here, `final_fitness`, is a **deepCRE model output bounded
+to the open interval (0, 1)**. An ordinary straight-line (or polynomial) fit is
+unbounded: fitted or extrapolated values readily fall below 0 or above 1, which
+are impossible fitness values, and the straight line cannot represent the
+*saturation* that dominates this data (final fitness piles up against 1 for the
+maximization/GOF runs and against 0 for the minimization/LOF runs). A `1/x`-style
+curve (the first idea considered) saturates but is not naturally confined to
+(0, 1) and has no principled link to a bounded response.
+
+#### The logit-linear fit (`fit_logit_linear`)
+
+The model is a straight line on the **logit (log-odds) scale**, mapped back
+through the **logistic (sigmoid)** function so the fitted curve lives in (0, 1)
+by construction:
+
+```
+ŷ(x) = 1 / (1 + exp( -(slope * x + intercept) ))     equivalently
+logit(ŷ) = slope * x + intercept,   logit(y) = log( y / (1 - y) )
+```
+
+This is a sigmoid: monotonic, asymptoting to 0 as `x → -∞` and to 1 as
+`x → +∞`, and never leaving (0, 1). `slope > 0` gives an S-curve rising with
+start fitness (the GOF/maximization shape); the LOF/minimization panels get the
+mirror behaviour.
+
+**How the parameters are estimated (updated 2026-07-29).** The two parameters are
+fit by **nonlinear least squares on the original (0, 1) scale**
+(`scipy.optimize.curve_fit` against the sigmoid directly), i.e. minimising
+`Σ(y - ŷ)²`.
+
+This replaces the original implementation, which transformed the responses to
+logit space and fit a straight line there with `numpy.polyfit`. That approach was
+a *different estimator*, not a computational shortcut to the same one, and it had
+a criterion mismatch: it minimised squared error in **logit** space while the
+returned R² was measured in **original** space, so the parameters it returned
+were not the ones maximising the number reported next to them. The weighting is
+badly skewed too — a 0.98 → 0.99 shift is a logit change of ≈0.7 while a
+0.50 → 0.51 shift is only ≈0.04, so near-boundary points had roughly 17× the
+influence of mid-range ones on the fitted line. Fitting on the original scale
+makes the optimised objective and the reported R² the same quantity.
+
+**Clipping is now confined to the initial guess.** Because residuals are
+evaluated *through* the sigmoid, a response at exactly 0 or 1 is an ordinary data
+point (the curve approaches it asymptotically, residual stays finite) and needs
+no clipping — which also removes it as an extreme leverage point. The clip
+survives only to make the optimiser's starting point computable: `p0` comes from
+the cheap closed-form logit-space `polyfit`, whose transform is infinite at the
+endpoints. The parameter is therefore named **`initial_guess_epsilon`** (default
+`1e-6`) rather than `clip_epsilon`, and it provably **does not affect the fitted
+parameters** — only where the search starts (unit-tested by fitting the same data
+with `1e-2` and `1e-9` and asserting identical results).
+
+**Convergence fallback.** `curve_fit` is iterative and can fail. On
+`RuntimeError` the function falls back to the closed-form logit-space estimate
+(the old behaviour), so it always returns usable parameters — but it emits a
+`RuntimeWarning` saying so, and noting that the returned R² is then no longer the
+optimised criterion. This is deliberately a warning rather than a silent fallback
+or a `print`, so a degraded fit cannot slip into a published figure unnoticed and
+can be escalated to an error with `-W error::RuntimeWarning` if desired. With a
+good `p0` on a well-behaved 2-parameter sigmoid this path is not expected in
+practice. The
+returned parameter covariance is discarded, so the accompanying `OptimizeWarning`
+about unestimable covariance (raised on perfect/degenerate fits) is suppressed.
+
+**Reported fit quality.** `fit_logit_linear` returns `(slope, intercept,
+r_squared)`, where R² is `1 - SS_res/SS_tot` between the observed `y` and the
+fitted `ŷ`, on the original (0, 1) scale. ⚠️ The previously recorded values
+(GOF-natural R² ≈ 0.85, LOF-natural R² ≈ 0.46) were measured under the old
+logit-space estimator and are **stale** — R² should now be equal or better, since
+it is the quantity being optimised, but the numbers need re-measuring on the
+paper data. The two *unconstrained* runs (GOF/LOF `single`) saturate almost
+regardless of start fitness (final-fitness std ≈ 1e-4), so their fit still
+renders as a near-flat line at ≈1 / ≈0 — faithfully showing that the
+unconstrained runs hit the fitness ceiling/floor within the mutation budget.
+
+**Caveats (honest limitations).**
+
+- This is **least squares**, *not* a maximum-likelihood model for a bounded
+  response. It assumes roughly homoscedastic Gaussian noise in `y`, which cannot
+  hold exactly for a (0, 1)-bounded response (variance must shrink toward the
+  boundaries). It remains a *descriptive trend line* for the figure, and R² a
+  descriptive goodness-of-fit. If inference on the slope is ever needed (p-values,
+  CIs), **beta regression** (`statsmodels.BetaModel` with a logit link) is the
+  principled tool — it models that heteroscedasticity structurally. Not adopted
+  here because these are deterministic model outputs rather than noisy
+  proportions, and because it yields only a pseudo-R², not comparable to the R²
+  the other panels report.
+- **Only the response is transformed, not the predictor.** Start fitness is also
+  bounded in (0, 1), but boundedness is a *prediction* constraint, not a data
+  constraint: regression conditions on `x` and never predicts it, so no
+  out-of-range `x` can be produced. A logit-logit form
+  (`logit(final) = slope * logit(start) + intercept`, a log-odds power law) would
+  be *more interpretable* — `slope = 1, intercept = 0` is exactly "no change",
+  `slope < 1` means weak starters gain proportionally more — but that is a
+  question of functional form, deliberately kept separate from the estimator fix
+  above and not adopted.
+- The curve is drawn only across the observed range of start fitness
+  (`min`…`max`), not extrapolated, so the panel shows the trend where there is
+  data.
+
+#### Implementation & tests
+
+`fit_logit_linear` lives in `simple_result_stats.py` (reusable, unit-tested);
+the scatter function gains `mean_start_line`, `fit_line`,
+`mean_start_line_color`, `fit_line_color`. `compose_plots_mpl.py`'s
+`_populate_fig4` passes them for all four panels
+(`_MEAN_START_LINE_COLOR = "0.5"`, `_FIT_LINE_COLOR = "black"`).
+
+Tests (`test_simple_result_stats.py`): `fit_logit_linear` recovers known sigmoid
+parameters from noiseless data (R² = 1), stays within (0, 1) even when
+extrapolated, keeps exact-0/1 responses finite, drops non-finite input points,
+and rejects fewer than two points. Three tests cover the 2026-07-29 estimator
+change specifically: `initial_guess_epsilon` of `1e-2` vs `1e-9` yields identical
+parameters (proving the clip no longer touches the fit), the returned parameters
+give a strictly lower original-scale RSS than the logit-space `polyfit` they
+replace, and a patched `curve_fit` raising `RuntimeError` falls back to the
+closed-form estimate *and* emits the `RuntimeWarning` (asserted via
+`assertWarns`). The scatter function draws the mean line at the correct x,
+draws a bounded fit curve, and draws neither overlay by default.
+
 ### 4. `figure_composition.py`
 
 Unchanged in behavior; documented as a fallback for frozen raster panels only.

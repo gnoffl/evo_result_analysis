@@ -716,6 +716,12 @@ _FIG4_RUNS: List[Dict[str, str]] = [
     },
 ]
 
+# Scatter-panel overlays: a dashed medium-grey vertical line marking the mean
+# start fitness (drawn behind the points) and a black logit-linear best-fit curve
+# of final vs start fitness (bounded to (0, 1); see ``fit_logit_linear``).
+_MEAN_START_LINE_COLOR = "0.5"
+_FIT_LINE_COLOR = "black"
+
 # Panel letters: two per run row (scatter, histogram), then the region-breakdown
 # panel and the two placeholder panels.
 _FIG4_RUN_LETTERS = [["A", "B"], ["C", "D"], ["E", "F"], ["G", "H"]]
@@ -801,6 +807,10 @@ def _populate_fig4(fig: plt.Figure) -> None:
             add_colorbar=False,
             vmin=0.0,
             vmax=global_max_mutations,
+            mean_start_line=True,
+            fit_line=True,
+            mean_start_line_color=_MEAN_START_LINE_COLOR,
+            fit_line_color=_FIT_LINE_COLOR,
         )
         scatter_mappable.set_sizes([_SCATTER_MARKER_SIZE])
 
