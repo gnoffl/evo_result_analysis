@@ -3,7 +3,9 @@ import os
 import json
 import numpy as np
 import argparse
+import warnings
 from typing import Dict, Any, List, Optional, Tuple
+from scipy.optimize import OptimizeWarning, curve_fit
 from tqdm import tqdm
 from datetime import datetime
 
@@ -234,7 +236,121 @@ def visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]]
     draw_visualize_start_vs_max_fitness_by_mutations(stats, f"{name}_relative", relative=True, output_folder=output_folder, output_format=output_format, titles=titles)
 
 
-def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, relative: bool = False, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None, add_colorbar: bool = True, vmin: Optional[float] = None, vmax: Optional[float] = None):
+def _sigmoid(x_values: np.ndarray, slope: float, intercept: float) -> np.ndarray:
+    """Evaluate ``1 / (1 + exp(-(slope * x + intercept)))`` elementwise.
+
+    Args:
+        x_values: Predictor values.
+        slope: Slope of the line on the logit (log-odds) scale.
+        intercept: Intercept of the line on the logit scale.
+
+    Returns:
+        The logistic response, confined to (0, 1).
+    """
+    return 1.0 / (1.0 + np.exp(-(slope * np.asarray(x_values, dtype=float) + intercept)))
+
+
+def fit_logit_linear(
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    initial_guess_epsilon: float = 1e-6,
+) -> Tuple[float, float, float]:
+    """Fit ``y = sigmoid(slope * x + intercept)`` by nonlinear least squares.
+
+    The response ``y`` here is a deepCRE model output bounded to the open
+    interval (0, 1), so an ordinary straight-line fit is inappropriate: it is
+    unbounded and would predict fitness values below 0 or above 1. The logistic
+    (sigmoid) link keeps the fitted curve inside (0, 1) by construction, while
+    ``slope`` and ``intercept`` parametrise a straight line on the logit
+    (log-odds) scale.
+
+    The fit is performed by ``scipy.optimize.curve_fit``, which minimises the
+    squared residuals **on the original (0, 1) scale** — the same scale on which
+    the returned ``r_squared`` is measured. This deliberately differs from the
+    cheaper alternative of least squares on the logit-transformed responses: that
+    criterion weights errors near 0 and 1 far more heavily than errors mid-range
+    (a 0.98 -> 0.99 shift is a logit change of ~0.7, a 0.50 -> 0.51 shift only
+    ~0.04), so it optimises a different objective than the one reported.
+
+    Because the residuals are evaluated through the sigmoid, responses at exactly
+    0 or 1 are ordinary data points here (the curve simply approaches them
+    asymptotically) and need no clipping. Clipping is applied only when deriving
+    the *initial guess* from a closed-form logit-space ``polyfit``, whose
+    transform would be infinite at those endpoints; ``initial_guess_epsilon``
+    therefore has no influence on the fitted parameters, only on where the
+    optimiser starts. The same closed-form estimate is used as a fallback if the
+    iterative fit fails to converge.
+
+    Args:
+        x_values: Predictor values (here the start fitness).
+        y_values: Response values in [0, 1] (here the final fitness).
+        initial_guess_epsilon: Margin used to keep the logit transform finite
+            when computing the optimiser's starting point. Defaults to 1e-6.
+
+    Returns:
+        ``(slope, intercept, r_squared)`` where ``slope`` and ``intercept``
+        parametrise the line in logit space and ``r_squared`` is the coefficient
+        of determination measured on the original (0, 1) scale.
+
+    Raises:
+        ValueError: If fewer than two finite points are available to fit.
+
+    Warns:
+        RuntimeWarning: If the iterative fit fails to converge and the
+            closed-form logit-space estimate is returned instead.
+    """
+    x_values = np.asarray(x_values, dtype=float)
+    y_values = np.asarray(y_values, dtype=float)
+    finite_mask = np.isfinite(x_values) & np.isfinite(y_values)
+    x_values = x_values[finite_mask]
+    y_values = y_values[finite_mask]
+    if x_values.size < 2:
+        raise ValueError("Need at least two points to fit a logit-linear model.")
+
+    # Starting point only: the logit transform needs finite values, so endpoints
+    # are nudged inside (0, 1). The fit itself uses the unmodified y_values.
+    clipped_y = np.clip(y_values, initial_guess_epsilon, 1.0 - initial_guess_epsilon)
+    logit_y = np.log(clipped_y / (1.0 - clipped_y))
+    initial_slope, initial_intercept = np.polyfit(x_values, logit_y, 1)
+
+    try:
+        with warnings.catch_warnings():
+            # The parameter covariance is not used here, so a warning about it
+            # being unestimable (e.g. on a perfect or degenerate fit) is noise.
+            warnings.simplefilter("ignore", OptimizeWarning)
+            fit_result = curve_fit(
+                _sigmoid,
+                x_values,
+                y_values,
+                p0=(initial_slope, initial_intercept),
+                maxfev=10000,
+            )
+        slope, intercept = fit_result[0]
+    except RuntimeError as convergence_error:
+        # Optimiser did not converge; fall back to the closed-form logit fit.
+        warnings.warn(
+            "Nonlinear least-squares fit of the logit-linear model did not "
+            f"converge ({convergence_error}); falling back to the closed-form "
+            "logit-space estimate, which minimises squared error on the logit "
+            "scale rather than the original (0, 1) scale. The returned R^2 is "
+            "therefore not the optimised criterion for these parameters.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        slope, intercept = initial_slope, initial_intercept
+
+    predicted_y = _sigmoid(x_values, slope, intercept)
+    residual_sum_of_squares = float(np.sum((y_values - predicted_y) ** 2))
+    total_sum_of_squares = float(np.sum((y_values - y_values.mean()) ** 2))
+    r_squared = (
+        1.0 - residual_sum_of_squares / total_sum_of_squares
+        if total_sum_of_squares > 0
+        else float("nan")
+    )
+    return float(slope), float(intercept), r_squared
+
+
+def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, relative: bool = False, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None, add_colorbar: bool = True, vmin: Optional[float] = None, vmax: Optional[float] = None, mean_start_line: bool = False, fit_line: bool = False, mean_start_line_color: str = "0.5", fit_line_color: str = "black"):
     """create a scatter plot of the start fitness vs max fitness colored by mutations at half max fitness
 
     Args:
@@ -254,6 +370,15 @@ def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, 
             ``vmax``) to give several panels a common colour scale.
         vmax (Optional[float]): Upper bound of the colour normalisation. When
             None, matplotlib infers it from the data.
+        mean_start_line (bool): Whether to draw a dashed vertical line at the
+            mean start fitness of the plotted points. Defaults to False.
+        fit_line (bool): Whether to overlay a logit-linear best-fit curve of
+            final vs. start fitness (see :func:`fit_logit_linear`). Defaults to
+            False.
+        mean_start_line_color (str): Colour of the mean-start line. Defaults to
+            a medium grey.
+        fit_line_color (str): Colour of the logit-linear fit curve. Defaults to
+            black.
 
     Returns:
         matplotlib.collections.PathCollection: The scatter mappable, so callers
@@ -282,6 +407,26 @@ def draw_visualize_start_vs_max_fitness_by_mutations(stats: Dict[str, Dict[str, 
     # Create scatter plot with color mapped to mutations at half max fitness
     scatter = ax.scatter(start_fitness, max_fitness,
                          c=mutations_half_max, alpha=0.6, cmap='magma', vmin=vmin, vmax=vmax)
+
+    # Dashed vertical line at the mean start fitness, drawn behind the points.
+    if mean_start_line and len(start_fitness) > 0:
+        ax.axvline(
+            float(np.mean(start_fitness)),
+            color=mean_start_line_color,
+            linestyle='--',
+            linewidth=1.0,
+            zorder=0,
+        )
+
+    # Logit-linear best-fit curve (bounded to (0, 1) by construction), drawn as a
+    # smooth line over the range of observed start fitnesses.
+    if fit_line and len(start_fitness) >= 2:
+        start_fitness_array = np.asarray(start_fitness, dtype=float)
+        final_fitness_array = np.asarray(max_fitness, dtype=float)
+        slope, intercept, _ = fit_logit_linear(start_fitness_array, final_fitness_array)
+        fit_x = np.linspace(start_fitness_array.min(), start_fitness_array.max(), 200)
+        fit_y = _sigmoid(fit_x, slope, intercept)
+        ax.plot(fit_x, fit_y, color=fit_line_color, linewidth=1.2, zorder=3)
 
     ax.set_xlabel('Start Fitness')
     ax.set_ylabel('Final Fitness')

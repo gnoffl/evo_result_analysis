@@ -4,6 +4,7 @@ import os
 import json
 import shutil
 import sys
+import warnings
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for testing
 import numpy as np
@@ -16,7 +17,7 @@ from analysis.overview.simple_result_stats import (
     show_average_pareto_front, expand_pareto_front, normalize_front, calculate_loss_pareto_front,
     calculate_loss_over_generations_single_gene, calculate_loss_over_generations,
     plot_loss_over_generations, plot_half_max_mutations_vs_initial_fitness, hist_half_max_mutations,
-    deduplicate_pareto_front
+    deduplicate_pareto_front, fit_logit_linear
 )
 
 
@@ -1087,6 +1088,206 @@ class TestSimpleResultStats(unittest.TestCase):
             )
             self.assertGreater(len(ax.lines), 0)
             self.assertEqual(to_rgba(ax.lines[-1].get_color()), to_rgba("0.35"))
+        finally:
+            plt.close(fig)
+
+    def test_fit_logit_linear_recovers_known_parameters(self):
+        """Points generated from a sigmoid are fit back to its parameters."""
+        # Arrange: y = sigmoid(3*x - 1) sampled without noise.
+        true_slope, true_intercept = 3.0, -1.0
+        x_values = np.linspace(0.0, 1.0, 50)
+        y_values = 1.0 / (1.0 + np.exp(-(true_slope * x_values + true_intercept)))
+
+        # Act
+        slope, intercept, r_squared = fit_logit_linear(x_values, y_values)
+
+        # Assert: noiseless data recovers the parameters and R^2 == 1.
+        self.assertAlmostEqual(slope, true_slope, places=4)
+        self.assertAlmostEqual(intercept, true_intercept, places=4)
+        self.assertAlmostEqual(r_squared, 1.0, places=6)
+
+    def test_fit_logit_linear_prediction_stays_bounded(self):
+        """The fitted curve never leaves the (0, 1) interval."""
+        # Arrange
+        x_values = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+        y_values = np.array([0.01, 0.2, 0.5, 0.8, 0.99])
+
+        # Act
+        slope, intercept, _ = fit_logit_linear(x_values, y_values)
+        dense_x = np.linspace(-2.0, 3.0, 100)  # extrapolate well beyond the data
+        predicted_y = 1.0 / (1.0 + np.exp(-(slope * dense_x + intercept)))
+
+        # Assert
+        self.assertTrue(np.all(predicted_y > 0.0))
+        self.assertTrue(np.all(predicted_y < 1.0))
+
+    def test_fit_logit_linear_handles_exact_zero_and_one(self):
+        """Responses spanning exactly 0 and 1 still return finite parameters.
+
+        This data is degenerate for the nonlinear fit: the least-squares optimum
+        of a sigmoid through (0, 0), (0.5, 0.5) and (1, 1) is a step function, so
+        the true optimal slope is infinite and the optimiser cannot converge. The
+        closed-form fallback is expected to supply finite parameters instead.
+        """
+        # Arrange
+        x_values = np.array([0.0, 0.5, 1.0])
+        y_values = np.array([0.0, 0.5, 1.0])  # logit(0)/logit(1) are infinite
+
+        # Act
+        with self.assertWarns(RuntimeWarning):
+            slope, intercept, r_squared = fit_logit_linear(x_values, y_values)
+
+        # Assert
+        self.assertTrue(np.isfinite(slope))
+        self.assertTrue(np.isfinite(intercept))
+        self.assertTrue(np.isfinite(r_squared))
+
+    def test_fit_logit_linear_handles_endpoint_response_without_fallback(self):
+        """A single response at exactly 1.0 fits normally, with no clipping needed."""
+        # Arrange: unlike the degenerate case above, a finite optimum exists here.
+        x_values = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+        y_values = np.array([0.10, 0.30, 0.60, 0.90, 1.0])
+
+        # Act
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            slope, intercept, r_squared = fit_logit_linear(x_values, y_values)
+
+        # Assert
+        self.assertGreater(slope, 0.0)
+        self.assertTrue(np.isfinite(intercept))
+        self.assertGreater(r_squared, 0.9)
+
+    def test_fit_logit_linear_initial_guess_epsilon_does_not_change_fit(self):
+        """The clip only seeds the optimiser, so it must not move the parameters."""
+        # Arrange: includes an exact endpoint, where the clip is actually active.
+        x_values = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+        y_values = np.array([0.02, 0.2, 0.5, 0.85, 1.0])
+
+        # Act
+        loose = fit_logit_linear(x_values, y_values, initial_guess_epsilon=1e-2)
+        tight = fit_logit_linear(x_values, y_values, initial_guess_epsilon=1e-9)
+
+        # Assert: same optimum reached from very different starting points.
+        for loose_value, tight_value in zip(loose, tight):
+            self.assertAlmostEqual(loose_value, tight_value, places=5)
+
+    def test_fit_logit_linear_beats_logit_space_least_squares(self):
+        """The fit minimises squared error on the original scale, not in logit space."""
+        # Arrange: an endpoint response at 1.0 is where the two criteria diverge
+        # most, since its clipped logit is an extreme leverage point.
+        x_values = np.array([0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+        y_values = np.array([0.10, 0.25, 0.45, 0.70, 0.90, 1.0])
+
+        def residual_sum_of_squares(slope: float, intercept: float) -> float:
+            predicted = 1.0 / (1.0 + np.exp(-(slope * x_values + intercept)))
+            return float(np.sum((y_values - predicted) ** 2))
+
+        # Act: the fitted parameters vs. the plain logit-space polyfit they replace.
+        slope, intercept, _ = fit_logit_linear(x_values, y_values)
+        clipped_y = np.clip(y_values, 1e-6, 1.0 - 1e-6)
+        logit_slope, logit_intercept = np.polyfit(
+            x_values, np.log(clipped_y / (1.0 - clipped_y)), 1
+        )
+
+        # Assert
+        self.assertLess(
+            residual_sum_of_squares(slope, intercept),
+            residual_sum_of_squares(logit_slope, logit_intercept),
+        )
+
+    def test_fit_logit_linear_ignores_non_finite_points(self):
+        """NaN/inf inputs are dropped rather than poisoning the fit."""
+        # Arrange: noiseless sigmoid data with two unusable points appended.
+        true_slope, true_intercept = 2.0, -0.5
+        clean_x = np.linspace(0.0, 1.0, 20)
+        clean_y = 1.0 / (1.0 + np.exp(-(true_slope * clean_x + true_intercept)))
+        x_values = np.concatenate([clean_x, [np.nan, 0.5]])
+        y_values = np.concatenate([clean_y, [0.5, np.inf]])
+
+        # Act
+        slope, intercept, r_squared = fit_logit_linear(x_values, y_values)
+
+        # Assert
+        self.assertAlmostEqual(slope, true_slope, places=4)
+        self.assertAlmostEqual(intercept, true_intercept, places=4)
+        self.assertAlmostEqual(r_squared, 1.0, places=6)
+
+    @patch('analysis.overview.simple_result_stats.curve_fit')
+    def test_fit_logit_linear_falls_back_when_optimiser_fails(self, mock_curve_fit):
+        """A non-converging fit degrades to the closed-form logit-space estimate."""
+        # Arrange
+        mock_curve_fit.side_effect = RuntimeError("maxfev exceeded")
+        x_values = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+        y_values = np.array([0.05, 0.2, 0.5, 0.8, 0.95])
+        expected_slope, expected_intercept = np.polyfit(
+            x_values, np.log(y_values / (1.0 - y_values)), 1
+        )
+
+        # Act
+        with self.assertWarns(RuntimeWarning) as warning_context:
+            slope, intercept, r_squared = fit_logit_linear(x_values, y_values)
+
+        # Assert
+        self.assertAlmostEqual(slope, float(expected_slope), places=6)
+        self.assertAlmostEqual(intercept, float(expected_intercept), places=6)
+        self.assertTrue(np.isfinite(r_squared))
+        self.assertIn("did not", str(warning_context.warning))
+
+    def test_fit_logit_linear_too_few_points_raises(self):
+        """Fewer than two finite points cannot define a line."""
+        with self.assertRaises(ValueError):
+            fit_logit_linear(np.array([0.5]), np.array([0.5]))
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_draw_scatter_mean_start_line_drawn(self, mock_savefig):
+        """mean_start_line=True adds a vertical line at the mean start fitness."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            draw_visualize_start_vs_max_fitness_by_mutations(
+                self._SCATTER_STATS, "test", "png", relative=False, ax=ax,
+                add_colorbar=False, mean_start_line=True,
+            )
+            # One line for the mean-start marker; its x sits at the mean start.
+            self.assertEqual(len(ax.lines), 1)
+            expected_mean = np.mean([0.1, 0.2])
+            line_x = ax.lines[0].get_xdata()
+            self.assertAlmostEqual(float(line_x[0]), expected_mean, places=6)
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_draw_scatter_fit_line_drawn(self, mock_savefig):
+        """fit_line=True overlays a bounded fit curve as a plotted line."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            draw_visualize_start_vs_max_fitness_by_mutations(
+                self._SCATTER_STATS, "test", "png", relative=False, ax=ax,
+                add_colorbar=False, fit_line=True,
+            )
+            self.assertEqual(len(ax.lines), 1)  # the fit curve
+            fit_y = ax.lines[0].get_ydata()
+            self.assertTrue(np.all(fit_y > 0.0))
+            self.assertTrue(np.all(fit_y < 1.0))
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_draw_scatter_no_overlays_by_default(self, mock_savefig):
+        """With both overlays off (default), no extra lines are drawn."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            draw_visualize_start_vs_max_fitness_by_mutations(
+                self._SCATTER_STATS, "test", "png", relative=False, ax=ax,
+                add_colorbar=False,
+            )
+            self.assertEqual(len(ax.lines), 0)
+            mock_savefig.assert_not_called()
         finally:
             plt.close(fig)
 
