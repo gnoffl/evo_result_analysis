@@ -10,6 +10,8 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.container import BarContainer
 import pandas as pd
 
 from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.actual_mutation_region_breakdown import (
@@ -18,7 +20,10 @@ from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.actual_muta
     collect_actual_mutation_region_counts,
     load_most_mutated_individual,
     load_vcf_positions_by_gene,
+    build_pooled_ci_dataframe,
     plot_actual_mutation_allowance,
+    plot_pooled_allowance_bars,
+    pooled_percent_with_bootstrap_ci,
 )
 from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.region_mutation_breakdown import (
     REGION_ORDER,
@@ -331,6 +336,240 @@ class TestPlotActualMutationAllowanceWithAx(unittest.TestCase):
         try:
             plot_actual_mutation_allowance(self._data(), ax=ax)
             self.assertTrue(plt.fignum_exists(fig.number))
+        finally:
+            plt.close(fig)
+
+
+class TestPooledPercentWithBootstrapCi(unittest.TestCase):
+    """Behaviour of the pooled percentage and its cluster bootstrap interval."""
+
+    def test_pooled_percent_is_ratio_of_sums(self):
+        """A gene with one allowed-of-one does not count as much as a big gene."""
+        allowed = np.array([1, 0])
+        total = np.array([1, 9])
+
+        pooled, _, _ = pooled_percent_with_bootstrap_ci(allowed, total, n_resamples=200)
+
+        self.assertAlmostEqual(pooled, 10.0)  # 1/10, not the per-gene mean of 50%
+
+    def test_interval_brackets_the_estimate(self):
+        allowed = np.array([2, 5, 1, 8, 3])
+        total = np.array([10, 20, 5, 40, 15])
+
+        pooled, ci_low, ci_high = pooled_percent_with_bootstrap_ci(
+            allowed, total, n_resamples=100
+        )
+
+        self.assertLessEqual(ci_low, pooled)
+        self.assertGreaterEqual(ci_high, pooled)
+
+    def test_interval_stays_within_zero_and_hundred(self):
+        """Even an all-zero cell cannot produce a negative endpoint."""
+        allowed = np.array([0, 0, 0, 1])
+        total = np.array([3, 4, 5, 6])
+
+        _, ci_low, ci_high = pooled_percent_with_bootstrap_ci(
+            allowed, total, n_resamples=100
+        )
+
+        self.assertGreaterEqual(ci_low, 0.0)
+        self.assertLessEqual(ci_high, 100.0)
+
+    def test_zero_variation_gives_degenerate_interval(self):
+        allowed = np.array([5, 10])
+        total = np.array([10, 20])
+
+        pooled, ci_low, ci_high = pooled_percent_with_bootstrap_ci(
+            allowed, total, n_resamples=100
+        )
+
+        self.assertAlmostEqual(pooled, 50.0)
+        self.assertAlmostEqual(ci_low, 50.0)
+        self.assertAlmostEqual(ci_high, 50.0)
+
+    def test_same_seed_reproduces_interval(self):
+        allowed = np.array([1, 4, 0, 7])
+        total = np.array([8, 20, 3, 30])
+
+        first = pooled_percent_with_bootstrap_ci(allowed, total, n_resamples=100, seed=7)
+        second = pooled_percent_with_bootstrap_ci(
+            allowed, total, n_resamples=100, seed=7
+        )
+
+        self.assertEqual(first, second)
+
+    def test_all_zero_mutation_genes_give_nan(self):
+        result = pooled_percent_with_bootstrap_ci(
+            np.array([0, 0]), np.array([0, 0]), n_resamples=100
+        )
+
+        self.assertTrue(all(np.isnan(value) for value in result))
+
+    def test_empty_input_gives_nan(self):
+        result = pooled_percent_with_bootstrap_ci(
+            np.array([]), np.array([]), n_resamples=100
+        )
+
+        self.assertTrue(all(np.isnan(value) for value in result))
+
+    def test_mismatched_lengths_raise(self):
+        with self.assertRaises(ValueError):
+            pooled_percent_with_bootstrap_ci(np.array([1]), np.array([1, 2]))
+
+    def test_invalid_confidence_raises(self):
+        with self.assertRaises(ValueError):
+            pooled_percent_with_bootstrap_ci(
+                np.array([1]), np.array([2]), confidence=100.0
+            )
+
+
+class TestBuildPooledCiDataframe(unittest.TestCase):
+    """Behaviour of the per-cell pooling helper."""
+
+    def _data(self) -> pd.DataFrame:
+        """Two genes per group; the second has no mutations in any region."""
+        rows = []
+        for group in ("GOF", "LOF"):
+            for gene, (total, allowed) in zip(("g1", "g2"), ((10, 2), (0, 0))):
+                for region in REGION_ORDER:
+                    rows.append(
+                        {
+                            "gene": gene,
+                            "group": group,
+                            "region": region,
+                            "total_mutations": total,
+                            "allowed_mutations": allowed,
+                            "percent_allowed": 20.0 if total else float("nan"),
+                        }
+                    )
+        return pd.DataFrame(rows)
+
+    def test_one_row_per_group_and_region(self):
+        pooled = build_pooled_ci_dataframe(self._data(), n_resamples=100)
+
+        self.assertEqual(len(pooled), 2 * len(REGION_ORDER))
+        self.assertEqual(list(pooled["region"][: len(REGION_ORDER)]), REGION_ORDER)
+
+    def test_pooled_percent_per_cell(self):
+        pooled = build_pooled_ci_dataframe(self._data(), n_resamples=100)
+
+        self.assertTrue(
+            all(abs(percent - 20.0) < 1e-9 for percent in pooled["pooled_percent"])
+        )
+
+    def test_gene_counts_separate_mutated_from_resampled(self):
+        """Zero-mutation genes are resampled but not counted as contributing."""
+        pooled = build_pooled_ci_dataframe(self._data(), n_resamples=200)
+
+        self.assertTrue(all(pooled["n_genes"] == 1))
+        self.assertTrue(all(pooled["n_genes_total"] == 2))
+
+    def test_mutation_totals_are_summed(self):
+        pooled = build_pooled_ci_dataframe(self._data(), n_resamples=200)
+
+        self.assertTrue(all(pooled["total_mutations"] == 10))
+        self.assertTrue(all(pooled["allowed_mutations"] == 2))
+
+
+class TestPlotPooledAllowanceBars(unittest.TestCase):
+    """Behaviour of the pooled bar panel."""
+
+    def _data(self) -> pd.DataFrame:
+        rows = []
+        for group, (total, allowed) in (("GOF", (10, 2)), ("LOF", (20, 8))):
+            for gene in ("g1", "g2"):
+                for region in REGION_ORDER:
+                    rows.append(
+                        {
+                            "gene": gene,
+                            "group": group,
+                            "region": region,
+                            "total_mutations": total,
+                            "allowed_mutations": allowed,
+                            "percent_allowed": allowed / total * 100,
+                        }
+                    )
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _bars(ax: plt.Axes) -> list:
+        """Return the drawn bar rectangles, excluding error bars and swatches."""
+        return [
+            bar
+            for container in ax.containers
+            if isinstance(container, BarContainer)
+            for bar in container.patches
+        ]
+
+    def test_saves_figure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            plot_pooled_allowance_bars(
+                self._data(), output_dir, fmt="png", n_resamples=200
+            )
+            self.assertTrue((output_dir / "pooled_allowance_bars.png").exists())
+        plt.close("all")
+
+    def test_draws_one_bar_per_region_and_group(self):
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_bars(self._data(), ax=ax, n_resamples=200)
+            self.assertEqual(len(self._bars(ax)), 2 * len(REGION_ORDER))
+        finally:
+            plt.close(fig)
+
+    def test_bar_heights_are_pooled_percentages(self):
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_bars(self._data(), ax=ax, n_resamples=200)
+            heights = sorted({round(bar.get_height(), 6) for bar in self._bars(ax)})
+            self.assertEqual(heights, [20.0, 40.0])
+        finally:
+            plt.close(fig)
+
+    def test_y_axis_starts_at_zero(self):
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_bars(self._data(), ax=ax, n_resamples=200)
+            self.assertEqual(ax.get_ylim()[0], 0.0)
+        finally:
+            plt.close(fig)
+
+    def test_region_ticks_in_fixed_order(self):
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_bars(self._data(), ax=ax, n_resamples=200)
+            self.assertEqual(
+                [label.get_text() for label in ax.get_xticklabels()], REGION_ORDER
+            )
+        finally:
+            plt.close(fig)
+
+    @patch("matplotlib.pyplot.savefig")
+    def test_provided_ax_is_returned_and_not_saved(self, mock_savefig):
+        fig, ax = plt.subplots()
+        try:
+            returned_ax = plot_pooled_allowance_bars(
+                self._data(), ax=ax, n_resamples=200
+            )
+            self.assertIs(returned_ax, ax)
+            mock_savefig.assert_not_called()
+            self.assertTrue(plt.fignum_exists(fig.number))
+        finally:
+            plt.close(fig)
+
+    def test_legend_and_title_hidden_when_disabled(self):
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_bars(
+                self._data(),
+                ax=ax,
+                show_legend=False,
+                show_title=False,
+                n_resamples=200,
+            )
+            self.assertIsNone(ax.get_legend())
+            self.assertEqual(ax.get_title(), "")
         finally:
             plt.close(fig)
 
