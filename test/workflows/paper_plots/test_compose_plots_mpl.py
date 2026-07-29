@@ -6,6 +6,7 @@ model loads, reference-window scans) and are not unit-tested.
 """
 
 import unittest
+from unittest.mock import patch
 
 import matplotlib
 
@@ -14,7 +15,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from workflows.overlap_analysis._common import BINDING_STATUS_COLORS
-from workflows.paper_plots.compose_plots_mpl import _draw_binding_status_boxplot
+from workflows.paper_plots.compose_plots_mpl import (
+    GOF_UNCONSTRAINED_RUN_DIR,
+    GOF_VCF_DIR,
+    LOF_UNCONSTRAINED_RUN_DIR,
+    LOF_VCF_DIR,
+    _actual_mutation_allowance_dataframe,
+    _draw_binding_status_boxplot,
+    _move_legend_below,
+)
 
 
 class DrawBindingStatusBoxplotTest(unittest.TestCase):
@@ -104,6 +113,73 @@ class DrawBindingStatusBoxplotTest(unittest.TestCase):
             [label.get_text() for label in self.ax.get_xticklabels()],
             ["Binding"],
         )
+
+
+class ActualMutationAllowanceDataframeTest(unittest.TestCase):
+    """Behaviour of the figure-4 panel-J data assembly helper."""
+
+    def test_counts_both_gene_sets_from_their_own_run_and_vcf_dirs(self) -> None:
+        # Arrange: stub the scanning helpers so no run directory is touched.
+        gof_counts = pd.DataFrame({"gene": ["g1"], "region": ["promoter"]})
+        lof_counts = pd.DataFrame({"gene": ["g2"], "region": ["terminator"]})
+        combined = pd.DataFrame({"gene": ["g1", "g2"], "percent_allowed": [10.0, 20.0]})
+        module = "workflows.paper_plots.compose_plots_mpl"
+
+        with patch(f"{module}.load_vcf_positions_by_gene") as load_positions, patch(
+            f"{module}.collect_actual_mutation_region_counts"
+        ) as collect_counts, patch(f"{module}.build_group_dataframe") as build_frame:
+            load_positions.side_effect = lambda vcf_dir: {"positions": vcf_dir}
+            collect_counts.side_effect = [gof_counts, lof_counts]
+            build_frame.return_value = combined
+
+            # Act
+            result = _actual_mutation_allowance_dataframe()
+
+        # Assert: GOF then LOF, each with its own unconstrained run and VCF dir.
+        self.assertIs(result, combined)
+        self.assertEqual(
+            [call.args[0] for call in collect_counts.call_args_list],
+            [GOF_UNCONSTRAINED_RUN_DIR, LOF_UNCONSTRAINED_RUN_DIR],
+        )
+        self.assertEqual(
+            [call.args[0] for call in load_positions.call_args_list],
+            [GOF_VCF_DIR, LOF_VCF_DIR],
+        )
+        build_frame.assert_called_once_with(gof_counts, lof_counts)
+
+
+class MoveLegendBelowTest(unittest.TestCase):
+    """Behaviour of the bottom-row legend repositioning helper."""
+
+    def setUp(self) -> None:
+        self.figure, self.ax = plt.subplots()
+
+    def tearDown(self) -> None:
+        plt.close(self.figure)
+
+    def test_redraws_legend_below_axes_in_one_row(self) -> None:
+        # Arrange: two labelled artists and a titled inside-the-axes legend.
+        self.ax.plot([0, 1], [0, 1], label="first")
+        self.ax.plot([0, 1], [1, 0], label="second")
+        self.ax.legend(loc="upper right", title="Condition")
+
+        # Act
+        _move_legend_below(self.ax)
+
+        # Assert: one frameless untitled legend below the axes, all entries kept.
+        legend = self.ax.get_legend()
+        self.assertIsNotNone(legend)
+        self.assertEqual(legend.get_title().get_text(), "")
+        self.assertEqual(
+            [text.get_text() for text in legend.get_texts()], ["first", "second"]
+        )
+        self.assertFalse(legend.get_frame_on())
+        self.assertLess(legend.get_bbox_to_anchor().y1, 0)
+
+    def test_no_legend_is_left_alone(self) -> None:
+        # Act / Assert: no legend to move, and none created.
+        _move_legend_below(self.ax)
+        self.assertIsNone(self.ax.get_legend())
 
 
 if __name__ == "__main__":

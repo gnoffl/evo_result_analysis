@@ -52,6 +52,17 @@ from workflows.mutation_distance_analysis.mutation_distance_analysis import (
     compute_real_distances,
     plot_difference,
 )
+from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.actual_mutation_region_breakdown import (
+    GOF_UNCONSTRAINED_RUN_DIR,
+    LOF_UNCONSTRAINED_RUN_DIR,
+    build_group_dataframe,
+    collect_actual_mutation_region_counts,
+    load_vcf_positions_by_gene,
+    plot_pooled_allowance_bars,
+)
+from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.natural_unconstrained_mutation_vis import (
+    LOF_VCF_DIR,
+)
 from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.region_mutation_breakdown import (
     GOF_RUN_DIR,
     GOF_VCF_DIR,
@@ -722,11 +733,23 @@ _FIG4_RUNS: List[Dict[str, str]] = [
 _MEAN_START_LINE_COLOR = "0.5"
 _FIT_LINE_COLOR = "black"
 
-# Panel letters: two per run row (scatter, histogram), then the region-breakdown
-# panel and the two placeholder panels.
+# Panel letters: two per run row (scatter, histogram), then the two bottom-row
+# region panels (possible-mutation breakdown, natural-allowance breakdown).
 _FIG4_RUN_LETTERS = [["A", "B"], ["C", "D"], ["E", "F"], ["G", "H"]]
 _FIG4_REGION_LETTER = "I"
-_FIG4_PLACEHOLDER_LETTERS = ["J", "K"]
+_FIG4_ALLOWANCE_LETTER = "J"
+
+# Bottom-row bar colours, sampled from the same magma map as the scatter
+# colorbar so the whole figure stays in one colour family. Panel I takes the two
+# far-apart samples (dark purple vs orange) because its two bars are read against
+# each other; panel J takes the intermediate pair, so the two hue meanings
+# (condition vs gene set) stay distinguishable despite sitting side by side.
+_FIG4_CONDITION_COLORS = {"Constrained": "#3b0f70", "Unconstrained": "#f9795d"}
+_FIG4_GROUP_COLORS = {"GOF": "#ca3e72", "LOF": "#fec68a"}
+
+# Legends of the two bottom-row panels are drawn below their axes (just under the
+# x-label) instead of inside, where bars would overlap them.
+_FIG4_LEGEND_BELOW_ANCHOR = (0.5, -0.24)
 
 
 def _gof_region_dataframe() -> pd.DataFrame:
@@ -750,14 +773,65 @@ def _gof_region_dataframe() -> pd.DataFrame:
     return build_region_dataframe(gof_vcf, empty, gof_unconstrained, empty)
 
 
+def _actual_mutation_allowance_dataframe() -> pd.DataFrame:
+    """Build the per-gene percent-allowed frame for the allowance panel.
+
+    Diffs the most-mutated final individual of every gene in the two
+    *unconstrained* runs against its reference and checks each introduced
+    mutation's position against that gene's natural-variation VCF, binned by
+    genomic region. Both gene sets (GOF and LOF) are included, since the panel
+    contrasts them as hues.
+
+    Returns:
+        Tidy DataFrame from :func:`build_group_dataframe` with one row per gene
+        and region, including the ``percent_allowed`` column.
+    """
+    gof_counts = collect_actual_mutation_region_counts(
+        GOF_UNCONSTRAINED_RUN_DIR, load_vcf_positions_by_gene(GOF_VCF_DIR)
+    )
+    lof_counts = collect_actual_mutation_region_counts(
+        LOF_UNCONSTRAINED_RUN_DIR, load_vcf_positions_by_gene(LOF_VCF_DIR)
+    )
+    return build_group_dataframe(gof_counts, lof_counts)
+
+
+def _move_legend_below(ax: plt.Axes) -> None:
+    """Redraw an axes' existing legend as a horizontal legend below the axes.
+
+    The plotting functions place their legend inside the axes, where it overlaps
+    the bars in a compact panel. This re-creates it from the existing handles as
+    a single frameless, untitled row just under the x-label; the entry labels are
+    self-explanatory, so a legend title would only add clutter.
+
+    Args:
+        ax: Axes whose legend should be moved. Does nothing if it has no legend.
+    """
+    existing_legend = ax.get_legend()
+    if existing_legend is None:
+        return
+    handles, labels = ax.get_legend_handles_labels()
+    existing_legend.remove()
+    ax.legend(
+        handles=handles,
+        labels=labels,
+        loc="upper center",
+        bbox_to_anchor=_FIG4_LEGEND_BELOW_ANCHOR,
+        ncol=len(labels),
+        frameon=False,
+        fontsize=8,
+    )
+
+
 def _populate_fig4(fig: plt.Figure) -> None:
-    """Draw figure 4 onto ``fig``: four run rows, region breakdown, placeholders.
+    """Draw figure 4 onto ``fig``: four run rows plus two region-wise panels.
 
     Rows 0-3 are the four runs, one per row, each a start-vs-final-fitness scatter
     (coloured by mutations at half max, magma, sharing one colorbar) and a
-    histogram of mutations at half max. Row 4 is the GOF possible-mutation region
-    breakdown spanning the full width; row 5 holds two placeholder panels for
-    later content. Must be called inside a :func:`publication_style` context.
+    histogram of mutations at half max. Row 4 holds the two region-wise panels
+    side by side, each half width: the GOF possible-mutation breakdown (I) and the
+    per-region share of mutations actually introduced by the unconstrained runs
+    that sit at natural-variation positions (J). Both draw their legend below the
+    axes. Must be called inside a :func:`publication_style` context.
 
     Shared limits make the panels comparable: all four scatters share the x-axis
     (start fitness); the two maximization (GOF) scatters share one y-range and the
@@ -777,13 +851,13 @@ def _populate_fig4(fig: plt.Figure) -> None:
     )
 
     # Columns: scatter | thin shared-colorbar column | histogram. The colorbar
-    # column keeps the two data columns equal width. Rows: four run rows, the
-    # region-breakdown row, then the placeholder row.
+    # column keeps the two data columns equal width. Rows: four run rows, then the
+    # row holding the two half-width region panels.
     grid = fig.add_gridspec(
-        nrows=6,
+        nrows=5,
         ncols=3,
         width_ratios=[1.0, 0.05, 1.0],
-        height_ratios=[1.0, 1.0, 1.0, 1.0, 1.3, 1.0],
+        height_ratios=[1.0, 1.0, 1.0, 1.0, 1.3],
     )
     colorbar_ax = fig.add_subplot(grid[0:4, 1])
 
@@ -864,34 +938,33 @@ def _populate_fig4(fig: plt.Figure) -> None:
         sync_axis_limits(objective_axes, sync_x=False, sync_y=True)
     sync_axis_limits(hist_axes)
 
-    # --- Region breakdown (row 4, full width) --------------------------------
-    region_ax = fig.add_subplot(grid[4, :])
+    # --- Region panels (row 4, one half-width panel each) --------------------
+    region_ax = fig.add_subplot(grid[4, 0])
     plot_region_breakdown(
         _gof_region_dataframe(),
         "GOF",
         show_legend=True,
         show_title=False,
+        palette=_FIG4_CONDITION_COLORS,
         ax=region_ax,
     )
+    # The log scale is evident from the tick labels, so drop it from the label.
+    region_ax.set_ylabel("Possible mutations per gene")
     panel_label(region_ax, _FIG4_REGION_LETTER)
+    _move_legend_below(region_ax)
 
-    # --- Placeholders (row 5) ------------------------------------------------
-    placeholder_cells = [grid[5, 0], grid[5, 2]]
-    for placeholder_index, cell in enumerate(placeholder_cells):
-        placeholder_ax = fig.add_subplot(cell)
-        placeholder_ax.text(
-            0.5,
-            0.5,
-            "placeholder",
-            transform=placeholder_ax.transAxes,
-            ha="center",
-            va="center",
-            color="0.6",
-            fontstyle="italic",
-        )
-        placeholder_ax.set_xticks([])
-        placeholder_ax.set_yticks([])
-        panel_label(placeholder_ax, _FIG4_PLACEHOLDER_LETTERS[placeholder_index])
+    allowance_ax = fig.add_subplot(grid[4, 2])
+    plot_pooled_allowance_bars(
+        _actual_mutation_allowance_dataframe(),
+        show_legend=True,
+        show_title=False,
+        palette=_FIG4_GROUP_COLORS,
+        ax=allowance_ax,
+    )
+    # The standalone y-label is far too long for a half-width panel.
+    allowance_ax.set_ylabel("Mutations at natural positions (%)")
+    panel_label(allowance_ax, _FIG4_ALLOWANCE_LETTER)
+    _move_legend_below(allowance_ax)
 
 
 def fig4() -> None:
@@ -904,11 +977,14 @@ def fig4() -> None:
     x-axis; the two GOF scatters share one y-range and the two LOF scatters another;
     all four histograms share x and y limits. Below the runs, the GOF possible-
     mutation region breakdown (constrained vs unconstrained, per genomic region) is
-    drawn full width, followed by two placeholder panels for later content.
+    drawn as a half-width panel next to the per-region percentage of actually
+    introduced mutations that fall on natural-variation (VCF) positions, pooled per
+    region with gene-level bootstrap confidence intervals, for the GOF and LOF gene
+    sets.
     """
     with publication_style():
         fig = plt.figure(
-            figsize=figure_size_inches(DOUBLE_COLUMN_MM, 260.0), layout="constrained"
+            figsize=figure_size_inches(DOUBLE_COLUMN_MM, 235.0), layout="constrained"
         )
         _populate_fig4(fig)
         os.makedirs(OUTPUT_DIR, exist_ok=True)

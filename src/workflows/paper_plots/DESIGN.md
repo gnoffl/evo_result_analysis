@@ -325,6 +325,121 @@ closed-form estimate *and* emits the `RuntimeWarning` (asserted via
 `assertWarns`). The scatter function draws the mean line at the correct x,
 draws a bounded fit curve, and draws neither overlay by default.
 
+### 3c. Figure 4 bottom row — region panels I and J
+
+**Date added:** 2026-07-29
+
+Figure 4's gridspec is 5 rows: four run rows (A–H) plus a bottom row holding two
+half-width region panels, `grid[4, 0]` and `grid[4, 2]` (the thin middle column
+stays the shared colorbar strip). Figure height 235 mm.
+
+- **Panel I** — GOF possible-mutation region breakdown, constrained (VCF) vs
+  unconstrained, per genomic region, log y-axis
+  (`region_mutation_breakdown.plot_region_breakdown`). LOF is passed as empty
+  frames because `plot_region_breakdown` keeps only `group == "GOF"` rows.
+- **Panel J** — share of the mutations the unconstrained runs *actually*
+  introduced that sit on natural-variation (VCF) positions, per region, GOF vs
+  LOF (`actual_mutation_region_breakdown.plot_pooled_allowance_bars`).
+
+Shared bottom-row styling:
+
+- Colours sampled from the same **magma** map as the scatter colorbar, so the
+  bottom row reads as part of the figure. Panel I takes the two far-apart samples
+  (`#3b0f70` constrained / `#f9795d` unconstrained) because its bars are read
+  against each other; panel J takes the intermediate pair (`#ca3e72` GOF /
+  `#fec68a` LOF) so the two hue meanings stay distinguishable side by side.
+- Legends are moved out of the axes by `_move_legend_below`: frameless, untitled,
+  one row, anchored at `(0.5, -0.24)` just under the x-label. Inside-the-axes
+  legends overlapped the bars at panel size, and the entry labels are
+  self-explanatory without a title.
+- Panel I's y-label drops "(log scale)" and panel J's is shortened to
+  "Mutations at natural positions (%)" — both overridden in the composition only,
+  so the standalone plots keep their fuller labels.
+
+#### Why panel J is pooled, not a per-gene mean
+
+The first version plotted the **mean over genes of each gene's
+`percent_allowed`**, with SD whiskers. Two problems, both visible in the render:
+
+1. **Negative whiskers.** Per-gene percentages are strongly right-skewed — in the
+   GOF terminator the median gene has 2 mutations in that region, so its only
+   possible values are 0, 50, 100 %, and 73 % of genes sit at exactly 0. Mean ± SD
+   over that shape (mean 9.9, SD 22.9) reaches well below zero, which is not a
+   possible percentage.
+2. **Upward bias.** The unweighted mean lets a gene with 1-of-1 allowed count as
+   100 %, inflating the GOF promoter to 7.1 % against a pooled 4.1 %.
+
+Panel J therefore plots the **pooled percentage** — `Σ allowed / Σ total × 100`
+over the genes of that cell, the statistic `build_summary_dataframe` already
+recommended for exactly this reason.
+
+#### Why a cluster bootstrap and not a Wilson interval
+
+A pooled percentage is a ratio of sums, so there is no per-observation spread to
+take an SD of. The obvious interval is binomial (Wilson), but that assumes the
+numerator is a sum of **independent** Bernoulli trials, and mutations are
+**clustered within genes**: positions in one gene share its VCF density, region
+lengths and optimization trajectory. The effective sample size is the number of
+genes (30–104), not the number of mutations (thousands), so a Wilson interval on
+the mutation count comes out **too narrow** (anti-conservative).
+
+`pooled_percent_with_bootstrap_ci` instead resamples **whole genes** with
+replacement (percentile cluster bootstrap, `B = 10 000`, fixed seed), recomputing
+the full ratio for each resample. Within-gene dependence is preserved by never
+splitting a gene; every resampled value is itself a valid percentage, so the
+interval cannot leave [0, 100] — the negative-whisker problem is fixed
+structurally, not by clipping the axis. Genes with zero mutations are kept in the
+resampling pool (they contribute nothing to either sum but are part of the gene
+sample); resamples whose denominator comes out 0 are discarded before the
+percentiles are taken. Considered and not adopted: BCa (better coverage, ~3× the
+code, invisible at this bar size), beta-binomial/GLMM and cluster-robust SEs
+(more machinery than a bar chart needs; the route to take if a significance test
+is ever wanted).
+
+#### Values on the published panel
+
+| group | region | genes w/ mutations | mutations | pooled % | 95 % CI |
+|---|---|---|---|---|---|
+| GOF | promoter | 96 / 104 | 587 | 4.09 | 2.46–5.84 |
+| GOF | 5'-UTR | 104 / 104 | 5507 | 3.72 | 3.08–4.38 |
+| GOF | 3'-UTR | 104 / 104 | 1126 | 3.46 | 2.45–4.55 |
+| GOF | terminator | 30 / 104 | 90 | 8.89 | 4.55–15.00 |
+| LOF | promoter | 68 / 68 | 1063 | 4.80 | 3.12–6.64 |
+| LOF | 5'-UTR | 68 / 68 | 1739 | 4.66 | 3.77–5.59 |
+| LOF | 3'-UTR | 68 / 68 | 1852 | 4.05 | 3.00–5.15 |
+| LOF | terminator | 68 / 68 | 1466 | 6.07 | 4.29–8.21 |
+
+Two caveats for the caption. The tall GOF terminator bar rests on 30 genes and 90
+mutations and has by far the widest CI — the bootstrap is reporting honestly that
+this cell is weakly determined. And **all eight intervals overlap**, so the panel
+supports "roughly 3–9 % of introduced mutations coincide with natural variation,
+everywhere" and *not* any claim that a region or gene set differs from another; a
+gene-level permutation test would be needed for that. Pooling also weights genes
+by mutation count, so the per-gene spread is not visible in the panel.
+
+#### Implementation & tests
+
+New in `actual_mutation_region_breakdown.py`:
+`pooled_percent_with_bootstrap_ci` (estimator + interval),
+`build_pooled_ci_dataframe` (one row per group×region with `n_genes`,
+`n_genes_total`, mutation totals, pooled percent and CI bounds; per-cell seed
+offset `seed + cell_index`), and `plot_pooled_allowance_bars` (dodged `ax.bar`
+with asymmetric `yerr`, `ylim(bottom=0)`, same `palette`/`ax`/`show_legend`/
+`show_title` contract as the sibling plotters). `main()` additionally writes
+`actual_mutation_allowance_pooled_ci.csv`. The interim mean±SD bar function was
+removed; the original per-gene boxplot is unchanged.
+
+In `compose_plots_mpl.py`: `_actual_mutation_allowance_dataframe()` (scans both
+unconstrained runs against their VCF dirs) and `_move_legend_below(ax)`.
+
+Tests: `test_actual_mutation_region_breakdown.py` covers the estimator's
+ratio-of-sums behaviour, interval bracketing and [0, 100] bounds, zero-variation
+and all-zero/empty cells, seed reproducibility, both validation errors, the
+per-cell frame's gene counts and totals, and the plot's bar heights, tick order,
+zero-based y-axis and ax-injection. `test_compose_plots_mpl.py` covers
+`_actual_mutation_allowance_dataframe`'s run/VCF pairing and
+`_move_legend_below`'s untitled, frameless, below-axes legend.
+
 ### 4. `figure_composition.py`
 
 Unchanged in behavior; documented as a fallback for frozen raster panels only.

@@ -96,6 +96,55 @@ space, we run four tests on the per-gene position and mutation counts:
 Tests are run separately for the `positions` and `mutations` metrics. Results
 are printed to stdout and saved to `statistical_tests.csv`.
 
+## Natural allowance of the mutations actually introduced
+
+The VCF statistics above say how much natural variation was *available*.
+`actual_mutation_region_breakdown.py` asks the converse question: of the
+mutations the **unconstrained** runs actually introduced, how many landed on a
+position that natural variation also varies — i.e. how many a constrained run
+could have made too?
+
+Per gene, the most-mutated individual of the final pareto front (`front[0]`) is
+diffed against the reference; each mutation's 1-based position is checked against
+that gene's VCF (any alternative base counts) and binned by genomic region. Only
+the unconstrained runs (`*_single_mutation_*`) are read — the natural runs are
+VCF-constrained by construction and would trivially yield 100 %.
+
+Reported per gene set and region as a **pooled percentage** (`Σ allowed / Σ
+total`), with a **gene-level cluster bootstrap** 95 % CI (10 000 resamples of
+whole genes, fixed seed):
+
+| Group | Region | Genes w/ mutations | Mutations | Pooled % | 95 % CI |
+|---|---|---|---|---|---|
+| GOF | promoter | 96 / 104 | 587 | 4.09 | 2.46–5.84 |
+| GOF | 5'-UTR | 104 / 104 | 5507 | 3.72 | 3.08–4.38 |
+| GOF | 3'-UTR | 104 / 104 | 1126 | 3.46 | 2.45–4.55 |
+| GOF | terminator | 30 / 104 | 90 | 8.89 | 4.55–15.00 |
+| LOF | promoter | 68 / 68 | 1063 | 4.80 | 3.12–6.64 |
+| LOF | 5'-UTR | 68 / 68 | 1739 | 4.66 | 3.77–5.59 |
+| LOF | 3'-UTR | 68 / 68 | 1852 | 4.05 | 3.00–5.15 |
+| LOF | terminator | 68 / 68 | 1466 | 6.07 | 4.29–8.21 |
+
+**Interpretation.** Only about 3–9 % of the mutations the optimizer chose sit at
+positions where nature also varies, in every region and both gene sets. Given
+that the unconstrained runs have ~10³ possible positions per region against ~10¹–10²
+VCF positions (panel I / the region breakdown), this is roughly what random
+choice would give — the optimizer shows no preference for naturally variable
+positions. All eight intervals overlap, so no region or gene set can be claimed
+to differ; a gene-level permutation test would be required for that. The GOF
+terminator value rests on only 30 genes and 90 mutations, hence its wide interval.
+
+**Why pooled + bootstrap, not a per-gene mean ± SD.** Per-gene percentages are
+strongly right-skewed (many genes have 1–4 mutations in a region, so their
+percentage can only be 0/50/100 and most are 0): the unweighted mean is biased
+upward (7.1 % vs 4.1 % pooled for the GOF promoter) and mean ± SD extends below
+0 %, an impossible value. A binomial (Wilson) interval on the pooled count would
+be too narrow, because mutations are clustered within genes — the effective
+sample size is the number of genes, not of mutations. Resampling whole genes
+respects that clustering and keeps every endpoint inside [0, 100]. See
+`paper_plots/DESIGN.md` §3c for the full rationale; this analysis is panel J of
+figure 4.
+
 ## Files
 
 - `natural_unconstrained_comparison_significance.csv` — summary table (above)
@@ -109,3 +158,10 @@ are printed to stdout and saved to `statistical_tests.csv`.
   gene from the source VCF files
 - `statistical_tests.csv` — four statistical test results (Wilcoxon and
   Mann-Whitney U) for both positions and mutations metrics
+- `actual_mutation_region_breakdown.py` — per-region share of actually introduced
+  mutations sitting at natural-VCF positions; writes
+  `actual_mutation_allowance_per_gene.csv`,
+  `actual_mutation_allowance_summary.csv`,
+  `actual_mutation_allowance_pooled_ci.csv` (pooled percent + bootstrap CI),
+  `actual_mutation_allowance.png` (per-gene boxplot) and
+  `pooled_allowance_bars.png` (pooled bars, the figure-4 panel J version)
