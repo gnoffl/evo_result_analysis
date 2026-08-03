@@ -849,7 +849,25 @@ def distribution_half_max_mutations(stats_path: str) -> None:
         print(f"  {count}: {cum_percentage}%")
 
 
-def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None, color: Optional[str] = None) -> None:
+def _label_overflow_bin(ax: plt.Axes, max_mutations_shown: int, tick_step: int = 5) -> None:
+    """Limit the x-axis to the overflow bin and mark its tick as ">=".
+
+    Args:
+        ax: Axes holding the histogram.
+        max_mutations_shown: Position of the overflow bin, i.e. the last integer
+            still shown on its own.
+        tick_step: Spacing of the x-ticks below the overflow bin.
+    """
+    ax.set_xlim(-0.5, max_mutations_shown + 0.5)
+    tick_positions = list(range(0, max_mutations_shown, tick_step))
+    tick_positions.append(max_mutations_shown)
+    tick_labels = [str(position) for position in tick_positions[:-1]]
+    tick_labels.append(f"≥{max_mutations_shown}")
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels)
+
+
+def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_format: str, output_folder: str = ".", titles: bool = True, ax: Optional[plt.Axes] = None, color: Optional[str] = None, max_mutations_shown: Optional[int] = None) -> None:
     """Create a histogram of the number of mutations at half max effect.
 
     Args:
@@ -863,7 +881,20 @@ def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_
         color (Optional[str]): Bar colour. When None, matplotlib's default is
             used (unchanged behaviour); pass a neutral grey/black for a more
             subdued publication look.
+        max_mutations_shown (Optional[int]): Upper end of the x-axis. When None,
+            the axis spans the full data range (unchanged behaviour). When given,
+            genes above it are pooled into a final overflow bin, tick-labelled
+            ">=<value>", so a long thin tail does not squash the bulk of the
+            distribution while no gene is dropped from the plot.
+
+    Raises:
+        ValueError: If ``max_mutations_shown`` is not positive.
     """
+    if max_mutations_shown is not None and max_mutations_shown <= 0:
+        raise ValueError(
+            f"max_mutations_shown must be positive, got {max_mutations_shown}."
+        )
+
     half_max_mutations = []
 
     for stat in stats.values():
@@ -872,7 +903,14 @@ def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_
         else:
             print(f"Skipping gene {stat['origin_chromosome']}, no mutations at half max effect found.")
 
-    max_mutations = round(max(half_max_mutations)) if half_max_mutations else 0
+    if max_mutations_shown is None:
+        max_mutations = round(max(half_max_mutations)) if half_max_mutations else 0
+    else:
+        # Pool the tail into the last bin instead of cutting it off.
+        max_mutations = max_mutations_shown
+        half_max_mutations = [
+            min(value, max_mutations_shown) for value in half_max_mutations
+        ]
     bins = np.arange(0, max_mutations + 2) - 0.5  # to center bins on integers
 
     own_figure = ax is None
@@ -880,6 +918,8 @@ def hist_half_max_mutations(stats: Dict[str, Dict[str, Any]], name: str, output_
         plt.clf()
         fig, ax = plt.subplots(figsize=(8, 5))
     ax.hist(half_max_mutations, bins=bins, alpha=0.7, color=color) #type:ignore
+    if max_mutations_shown is not None:
+        _label_overflow_bin(ax, max_mutations_shown)  # type: ignore[arg-type]
     ax.set_xlabel('Mutations at Half Max Effect')
     ax.set_ylabel('Frequency')
     if titles:

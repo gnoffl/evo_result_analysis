@@ -7,6 +7,7 @@ import sys
 import warnings
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for testing
+import matplotlib.pyplot as plt
 import numpy as np
 from unittest.mock import patch, MagicMock
 from analysis.overview.simple_result_stats import (
@@ -820,6 +821,64 @@ class TestSimpleResultStats(unittest.TestCase):
         output_file = os.path.join(self.temp_dir, "hist_half_max_mutations_test_missing.png")
         self.assertTrue(os.path.exists(output_file))
     
+    def test_hist_half_max_mutations_pools_overflow_bin(self):
+        """Genes above max_mutations_shown are pooled into the last bin."""
+        # Arrange
+        counts = [2, 2, 5, 11, 40, 97]
+        stats = {
+            f"gene{index}": {'num_mutations_half_max_effect': count}
+            for index, count in enumerate(counts)
+        }
+        _, ax = plt.subplots()
+
+        # Act
+        hist_half_max_mutations(
+            stats, "test_overflow", output_folder=self.temp_dir,
+            output_format="png", ax=ax, max_mutations_shown=10,
+        )
+
+        # Assert: the two genes above 10 land in the bin centred on 10, and the
+        # genes below it keep their own bins.
+        bar_heights_by_center = {
+            round(bar.get_x() + bar.get_width() / 2): bar.get_height()
+            for bar in ax.patches
+        }
+        self.assertEqual(bar_heights_by_center[10], 3)
+        self.assertEqual(bar_heights_by_center[2], 2)
+        self.assertEqual(bar_heights_by_center[5], 1)
+        self.assertEqual(ax.get_xlim(), (-0.5, 10.5))
+        plt.close("all")
+
+    def test_hist_half_max_mutations_labels_overflow_tick(self):
+        """The overflow bin's tick is labelled with a >= sign."""
+        # Arrange
+        stats = {"gene1": {'num_mutations_half_max_effect': 3}}
+        _, ax = plt.subplots()
+
+        # Act
+        hist_half_max_mutations(
+            stats, "test_overflow_tick", output_folder=self.temp_dir,
+            output_format="png", ax=ax, max_mutations_shown=10,
+        )
+
+        # Assert
+        tick_labels = [label.get_text() for label in ax.get_xticklabels()]
+        self.assertEqual(tick_labels[-1], "≥10")
+        self.assertEqual(tick_labels[:-1], ["0", "5"])
+        plt.close("all")
+
+    def test_hist_half_max_mutations_rejects_non_positive_maximum(self):
+        """A non-positive max_mutations_shown is rejected."""
+        # Arrange
+        stats = {"gene1": {'num_mutations_half_max_effect': 3}}
+
+        # Act / Assert
+        with self.assertRaises(ValueError):
+            hist_half_max_mutations(
+                stats, "test_bad_max", output_folder=self.temp_dir,
+                output_format="png", max_mutations_shown=0,
+            )
+
     def test_hist_half_max_mutations_empty_data(self):
         """Test histogram with no valid data."""
         stats = {
