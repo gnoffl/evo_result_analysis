@@ -11,6 +11,7 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for testing
 import matplotlib.pyplot as plt
 from analysis.motives.deepcis_visualize import (
+    MUTATION_MARKER_COLOR,
     extract_plot_data,
     get_tf_columns,
     load_scan_results,
@@ -875,6 +876,91 @@ class TestPlotGeneTfAxInjection(unittest.TestCase):
             self.assertGreater(len(ax.lines), 0)
             self.assertIsNotNone(ax.get_xlabel())
             mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+
+class TestPlotGeneTfMutationMarkers(unittest.TestCase):
+    """Tests for the optional introduced-mutation markers."""
+
+    def setUp(self):
+        """Set up a minimal single-gene, single-TF scan DataFrame."""
+        self.gene_df = pd.DataFrame({
+            "gene": ["gene1", "gene1", "gene1", "gene1"],
+            "sequence_type": ["reference", "reference", "optimized", "optimized"],
+            "window_start": [0, 50, 0, 50],
+            "window_end": [250, 300, 250, 300],
+            "contains_padding": [False, False, False, False],
+            "tf_0": [0.1, 0.5, 0.2, 0.6],
+        })
+
+    def _legend_labels(self, ax):
+        """Return the labels of the axes' legend entries."""
+        legend = ax.get_legend()
+        return [] if legend is None else [t.get_text() for t in legend.get_texts()]
+
+    def test_draws_one_vertical_line_per_position_with_legend_entry(self):
+        # Arrange
+        fig, ax = plt.subplots()
+        try:
+            # Act
+            _plot_gene_tf(
+                self.gene_df,
+                "gene1",
+                "tf_0",
+                ax,
+                show_tss_tts=False,
+                mutation_positions=[100.0, 200.0],
+                mutation_marker_label="Introduced mutations (n=2)",
+            )
+
+            # Assert
+            marker_x_positions = sorted(
+                line.get_xdata()[0]
+                for line in ax.lines
+                if line.get_color() == MUTATION_MARKER_COLOR
+            )
+            self.assertEqual(marker_x_positions, [100.0, 200.0])
+            self.assertIn("Introduced mutations (n=2)", self._legend_labels(ax))
+        finally:
+            plt.close(fig)
+
+    def test_no_markers_and_no_legend_entry_by_default(self):
+        # Arrange
+        fig, ax = plt.subplots()
+        try:
+            # Act
+            _plot_gene_tf(self.gene_df, "gene1", "tf_0", ax, show_tss_tts=False)
+
+            # Assert
+            self.assertEqual(
+                [
+                    line
+                    for line in ax.lines
+                    if line.get_color() == MUTATION_MARKER_COLOR
+                ],
+                [],
+            )
+            self.assertNotIn("Introduced mutations", self._legend_labels(ax))
+        finally:
+            plt.close(fig)
+
+    def test_empty_position_list_draws_no_markers(self):
+        # Arrange
+        fig, ax = plt.subplots()
+        try:
+            # Act
+            _plot_gene_tf(
+                self.gene_df,
+                "gene1",
+                "tf_0",
+                ax,
+                show_tss_tts=False,
+                mutation_positions=[],
+            )
+
+            # Assert
+            self.assertNotIn("Introduced mutations", self._legend_labels(ax))
         finally:
             plt.close(fig)
 

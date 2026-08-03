@@ -4,7 +4,7 @@ import traceback
 import argparse
 import os
 import random
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -31,6 +31,12 @@ PEAK_REQUIRED_COLUMNS = {
     "peak_start",
     "peak_end",
 }
+
+# Style of the optional vertical markers at the positions of the mutations that
+# were actually introduced into the optimized sequence.
+MUTATION_MARKER_COLOR = "#d62728"
+MUTATION_MARKER_LINESTYLE = "-"
+MUTATION_MARKER_LINEWIDTH = 1.0
 
 
 def _resolve_peak_signal_types(
@@ -418,6 +424,7 @@ def _set_axis_properties(
     show_difference: bool,
     show_padding_marker: bool,
     show_tss_tts_marker: bool,
+    mutation_marker_label: Optional[str] = None,
 ) -> None:
     """Set axis limits, labels, title, and formatting.
 
@@ -428,6 +435,12 @@ def _set_axis_properties(
         gene: Gene name (for title).
         tf_col: TF column name (for title).
         include_title: Whether to include a title.
+        show_difference: Whether a difference curve is drawn (sets the y-range
+            and the y-label).
+        show_padding_marker: Whether to add a padding legend entry.
+        show_tss_tts_marker: Whether to add a TSS/TTS legend entry.
+        mutation_marker_label: Legend label for the introduced-mutation markers,
+            or None when no such markers were drawn.
     """
     # Set x-axis limits based on data range
     ax.set_xlim(x_min, x_max)
@@ -465,6 +478,17 @@ def _set_axis_properties(
         ordered_handles.append(_create_legend_proxy("TSS/TTS", "#2f4f4f", "--", 1.4))
         ordered_labels.append("TSS/TTS")
 
+    if mutation_marker_label is not None:
+        ordered_handles.append(
+            _create_legend_proxy(
+                mutation_marker_label,
+                MUTATION_MARKER_COLOR,
+                MUTATION_MARKER_LINESTYLE,
+                MUTATION_MARKER_LINEWIDTH,
+            )
+        )
+        ordered_labels.append(mutation_marker_label)
+
     if ordered_handles:
         ax.legend(ordered_handles, ordered_labels, loc="best")
     ax.grid(True, alpha=0.3)
@@ -485,6 +509,8 @@ def _plot_gene_tf(
     peak_df: Optional[pd.DataFrame] = None,
     show_difference: bool = True,
     difference_direction: str = "optimized_minus_reference",
+    mutation_positions: Optional[Sequence[float]] = None,
+    mutation_marker_label: str = "Introduced mutations",
 ) -> None:
     """Plot predictions for a single gene and TF family.
 
@@ -494,6 +520,21 @@ def _plot_gene_tf(
         tf_col: Name of the TF column to plot.
         ax: Matplotlib axes to plot on.
         include_title: Whether to include a title on the plot.
+        highlight_padding: Whether to mark the padded region's edges.
+        show_tss_tts: Whether to mark the TSS and TTS positions.
+        tss_position: X position of the TSS marker.
+        tts_position: X position of the TTS marker.
+        highlight_peaks: Whether to shade annotated peak regions.
+        peak_signal_types: Signal types whose peaks are shaded.
+        peak_df: Raw peak annotations; when given, exact peak bounds are shaded
+            instead of the merged in-peak windows.
+        show_difference: Whether to draw the difference curve.
+        difference_direction: Sign convention of the difference curve.
+        mutation_positions: X positions (same coordinate frame as the window
+            centers, i.e. 1-based) of the mutations actually introduced into the
+            optimized sequence. Each gets a thin vertical marker drawn behind the
+            curves. None or empty draws nothing.
+        mutation_marker_label: Legend label for those markers.
     """
     # Extract plot data using the transformation function
     ref_x, ref_y, mut_x, mut_y, diff_x, diff_y, x_min, x_max = extract_plot_data(
@@ -545,6 +586,16 @@ def _plot_gene_tf(
             )
         _add_peak_background(ax, peak_regions)
 
+    show_mutation_markers = False
+    if mutation_positions:
+        show_mutation_markers = _add_vertical_markers(
+            ax,
+            [(float(position), "Mutation") for position in mutation_positions],
+            color=MUTATION_MARKER_COLOR,
+            linestyle=MUTATION_MARKER_LINESTYLE,
+            linewidth=MUTATION_MARKER_LINEWIDTH,
+        )
+
     # Plot reference and mutated lines
     _plot_line(ax, ref_x, ref_y, "Reference", "black")
     _plot_line(ax, mut_x, mut_y, "Optimized", "blue")
@@ -566,6 +617,9 @@ def _plot_gene_tf(
         show_difference,
         show_padding_marker,
         show_tss_tts_marker,
+        mutation_marker_label=(
+            mutation_marker_label if show_mutation_markers else None
+        ),
     )
 
 
