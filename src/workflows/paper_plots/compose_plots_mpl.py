@@ -23,6 +23,7 @@ import seaborn as sns
 from matplotlib.lines import Line2D
 from scipy.stats import mannwhitneyu
 
+from analysis.motives.deepcis_visualize import _plot_gene_tf
 from analysis.mutations.analyze_mutations import (
     COLORS,
     calculate_net_nucleotide_change,
@@ -52,6 +53,11 @@ from workflows.mutation_distance_analysis.mutation_distance_analysis import (
     compute_real_distances,
     plot_difference,
 )
+from workflows.evo_alg_pooled_plots.example_gene_pareto.mutation_locations import (
+    FINAL_GENERATION,
+    GENE_RUN_DIR,
+    find_front_member,
+)
 from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.actual_mutation_region_breakdown import (
     GOF_UNCONSTRAINED_RUN_DIR,
     LOF_UNCONSTRAINED_RUN_DIR,
@@ -71,6 +77,7 @@ from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.region_muta
     collect_vcf_region_counts,
     plot_region_breakdown,
 )
+from analysis.mutations.summarize_mutations import MutationsGene
 from workflows.mutation_distribution_analysis.mutation_pool import MutationPool
 from workflows.overlap_analysis._common import (
     BINDING_STATUS_COLORS,
@@ -91,6 +98,7 @@ from workflows.overlap_analysis.starrseq_deepcre_correlation_WRKY import (
 )
 from workflows.paper_plots.style import (
     DOUBLE_COLUMN_MM,
+    broken_y_axes,
     figure_size_inches,
     panel_label,
     publication_style,
@@ -733,11 +741,78 @@ _FIG4_RUNS: List[Dict[str, str]] = [
 _MEAN_START_LINE_COLOR = "0.5"
 _FIT_LINE_COLOR = "black"
 
-# Panel letters: two per run row (scatter, histogram), then the two bottom-row
-# region panels (possible-mutation breakdown, natural-allowance breakdown).
+# Panel letters: two per run row (scatter, histogram), then the two region panels
+# (possible-mutation breakdown, natural-allowance breakdown), then the full-width
+# example-gene deepCIS track.
 _FIG4_RUN_LETTERS = [["A", "B"], ["C", "D"], ["E", "F"], ["G", "H"]]
+
+# Distance in points from the left spine of a scatter panel to its rotated run
+# label, chosen to clear the y-tick labels and the y-axis label.
+_FIG4_ROW_LABEL_OFFSET_POINTS = 42.0
+
+# Histogram panels (B/D/F/H): both axes are cropped, because a handful of extreme
+# genes otherwise leave the panels nearly empty.
+#
+# x: only 4 of the 345 genes need more than 30 mutations to reach half max (1 in
+# panel D, 3 in panel H). They are pooled into a ">=30" overflow bin rather than
+# dropped, so the bulk of the distribution gets the whole axis and no gene
+# disappears.
+#
+# y: the four panels must share one count axis to stay comparable, and panel B's
+# spike of 60 genes at 2 mutations set that axis on its own -- the tallest bar
+# anywhere else is 27. The axis is therefore broken: continuous over the range
+# every panel uses, then a gap over the empty stretch, resuming around panel B's
+# spike. Nothing falls into the gap (no bar in any panel has a count between 28
+# and 54), so the break hides no data.
+_FIG4_HIST_MAX_MUTATIONS = 30
+_FIG4_HIST_LOWER_YLIM = (0.0, 29.0)
+_FIG4_HIST_UPPER_YLIM = (55.0, 63.0)
+_FIG4_HIST_UPPER_YTICKS = (60,)
+_FIG4_HIST_HEIGHT_RATIOS = (0.7, 4.0)
+# The break should read as a cut in one axis, so the two halves sit as close as
+# the tick decorations allow. ``hspace=0`` removes the extra gridspec spacing,
+# but under ``layout="constrained"`` the two halves are still held apart by the
+# layout engine's ``h_pad`` (default ~0.042 in on each axes, i.e. ~2 mm of
+# whitespace across the cut), which made the split bar in panel B read as two
+# separate values. The pad is a figure-wide setting, so it is reduced on the
+# figure itself; the run rows keep their separation from their tick labels and
+# axis labels.
+_FIG4_HIST_BREAK_HSPACE = 0.0
+_FIG4_LAYOUT_H_PAD_INCHES = 0.01
 _FIG4_REGION_LETTER = "I"
 _FIG4_ALLOWANCE_LETTER = "J"
+_FIG4_DEEPCIS_LETTER = "K"
+
+# --- Panel K: deepCIS binding track of one example gene ----------------------
+#
+# The gene is one member of the constrained GOF run (``GENE_RUN_DIR``, the same
+# run and gene the mutation-location report covers); the track below is the
+# deepCIS window scan of its 5-mutation Pareto-front member, produced by
+# ``analysis_scripts/run_deepcis_peak_pipeline.sh`` with
+# ``--genes AT3G60640 --mutation-count 5``. Peaks are deliberately NOT shaded:
+# the panel's point is where the introduced mutations sit relative to the binding
+# signal, not which regions were peak-called.
+_FIG4_DEEPCIS_SCAN_CSV = (
+    "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/GOF_LOF/GOF/"
+    "deepdive_simons_gene/deepcis_scan/"
+    "deepcis_window_scan_deepdive_simons_gene_mut5.csv"
+)
+_FIG4_DEEPCIS_GENE = "3_AT3G60640_gene:22415750-22417548_260312_000750_357934"
+_FIG4_DEEPCIS_TF = "LOBAS2_tnt"
+
+# Mutation count of the Pareto-front member the scan above was run on. Must match
+# the ``--mutation-count`` used for the pipeline, since the positions marked in
+# the panel are read from that same front member.
+_FIG4_DEEPCIS_MUTATION_COUNT = 5
+
+# Line weights for the track. The standalone plot draws every curve solid at
+# linewidth 2, which is both too heavy for a compact panel and hides the
+# reference wherever the two sequences predict the same signal (the optimized
+# curve is drawn last). A thinner dashed optimized curve on top of a solid
+# reference keeps both readable where they coincide.
+_FIG4_DEEPCIS_REFERENCE_WIDTH = 1.2
+_FIG4_DEEPCIS_OPTIMIZED_WIDTH = 1.0
+_FIG4_DEEPCIS_OPTIMIZED_DASHES = (3, 2)
 
 # Bottom-row bar colours, sampled from the same magma map as the scatter
 # colorbar so the whole figure stays in one colour family. Panel I takes the two
@@ -795,6 +870,130 @@ def _actual_mutation_allowance_dataframe() -> pd.DataFrame:
     return build_group_dataframe(gof_counts, lof_counts)
 
 
+def _fig4_introduced_mutation_positions() -> List[float]:
+    """Read the marked mutation positions from the example gene's Pareto front.
+
+    The positions are taken from the front member the deepCIS scan was run on
+    (``_FIG4_DEEPCIS_MUTATION_COUNT`` mutations), so the panel can never drift
+    from the sequence it plots. ``MutatedSequence.mutations`` is 0-based while
+    the scan's window centers are 1-based (see ``deepcis_visualize.get_centers``),
+    so every position is shifted by one.
+
+    Returns:
+        Sorted 1-based positions of the introduced mutations.
+    """
+    gene = MutationsGene(
+        str(GENE_RUN_DIR),
+        final_generation=FINAL_GENERATION,
+        generation=FINAL_GENERATION,
+    )
+    member = find_front_member(
+        gene, _FIG4_DEEPCIS_MUTATION_COUNT, FINAL_GENERATION
+    )
+    return sorted(float(position + 1) for position, _, _ in member.mutations)
+
+
+def _restyle_fig4_deepcis_lines(ax: plt.Axes) -> None:
+    """Thin the track's curves and dash the optimized one.
+
+    Both sequences predict an identical signal over most of the window, and the
+    optimized curve is drawn last, so at the standalone line weight it hides the
+    reference entirely outside the few windows the mutations touch. Dashing it
+    lets the reference show through wherever the two coincide.
+
+    Args:
+        ax: Axes holding the track. Curves are matched by their legend label, so
+            unlabelled artists (the vertical markers) are left untouched.
+    """
+    for line in ax.get_lines():
+        if line.get_label() == "Reference":
+            line.set_linewidth(_FIG4_DEEPCIS_REFERENCE_WIDTH)
+        elif line.get_label() == "Optimized":
+            line.set_linewidth(_FIG4_DEEPCIS_OPTIMIZED_WIDTH)
+            line.set_dashes(_FIG4_DEEPCIS_OPTIMIZED_DASHES)
+
+
+def _legend_below_keeping_entries(ax: plt.Axes) -> None:
+    """Redraw an axes' existing legend as one row below the axes.
+
+    Calling ``ax.legend(...)`` afresh would rebuild the legend from the automatic
+    handles only and silently drop the proxy entries the plotting function added
+    for its vertical markers, so the handles already collected are reused.
+    Unlike :func:`_move_legend_below`, this keeps proxy entries; the two differ
+    only in where the handles come from.
+
+    Handles of curves still present on the axes are re-taken from the live
+    artists, so a curve restyled after the legend was first built (see
+    :func:`_restyle_fig4_deepcis_lines`) gets a matching swatch. Proxy entries,
+    which have no artist on the axes, are carried over unchanged.
+
+    Args:
+        ax: Axes whose legend should be moved. Does nothing if it has no legend.
+    """
+    existing_legend = ax.get_legend()
+    if existing_legend is None:
+        return
+    labels = [text.get_text() for text in existing_legend.get_texts()]
+    live_artists_by_label = {
+        line.get_label(): line
+        for line in ax.get_lines()
+        if not str(line.get_label()).startswith("_")
+    }
+    handles = [
+        live_artists_by_label.get(label, handle)
+        for handle, label in zip(existing_legend.legend_handles, labels)  # type: ignore
+    ]
+    existing_legend.remove()
+    ax.legend(
+        handles=handles,
+        labels=labels,
+        loc="upper center",
+        bbox_to_anchor=_FIG4_LEGEND_BELOW_ANCHOR,
+        ncol=len(labels),
+        frameon=False,
+    )
+
+
+def _draw_fig4_deepcis_track(ax: plt.Axes) -> None:
+    """Draw the example gene's reference-vs-optimized deepCIS track on ``ax``.
+
+    Reference and optimized binding predictions for one TF family are drawn over
+    the 3020 bp deepCRE extraction window, with the positions of the introduced
+    mutations marked. The difference curve is dropped: it would force the y-range
+    to (-1, 1) and halve the vertical resolution of a short full-width panel,
+    while the two curves already show the change.
+
+    Args:
+        ax: Axes to draw on.
+    """
+    scan_data = pd.read_csv(_FIG4_DEEPCIS_SCAN_CSV)
+    gene_data = scan_data[scan_data["gene"] == _FIG4_DEEPCIS_GENE]
+    if gene_data.empty:
+        raise ValueError(
+            f"Gene {_FIG4_DEEPCIS_GENE!r} not found in {_FIG4_DEEPCIS_SCAN_CSV}."
+        )
+
+    _plot_gene_tf(
+        gene_data,
+        _FIG4_DEEPCIS_GENE,
+        _FIG4_DEEPCIS_TF,
+        ax,
+        include_title=False,
+        highlight_peaks=False,
+        show_difference=False,
+        mutation_positions=_fig4_introduced_mutation_positions(),
+        mutation_marker_label=(
+            f"Introduced mutations (n={_FIG4_DEEPCIS_MUTATION_COUNT})"
+        ),
+    )
+    _restyle_fig4_deepcis_lines(ax)
+    ax.set_ylabel(f"{_FIG4_DEEPCIS_TF} binding score")
+    ax.set_xlabel("Position in extraction window (bp)")
+    # No grid, matching every other panel of this figure.
+    ax.grid(False)
+    _legend_below_keeping_entries(ax)
+
+
 def _move_legend_below(ax: plt.Axes) -> None:
     """Redraw an axes' existing legend as a horizontal legend below the axes.
 
@@ -823,15 +1022,19 @@ def _move_legend_below(ax: plt.Axes) -> None:
 
 
 def _populate_fig4(fig: plt.Figure) -> None:
-    """Draw figure 4 onto ``fig``: four run rows plus two region-wise panels.
+    """Draw figure 4 onto ``fig``: run rows, region panels, example-gene track.
 
-    Rows 0-3 are the four runs, one per row, each a start-vs-final-fitness scatter
-    (coloured by mutations at half max, magma, sharing one colorbar) and a
-    histogram of mutations at half max. Row 4 holds the two region-wise panels
-    side by side, each half width: the GOF possible-mutation breakdown (I) and the
-    per-region share of mutations actually introduced by the unconstrained runs
-    that sit at natural-variation positions (J). Both draw their legend below the
-    axes. Must be called inside a :func:`publication_style` context.
+    The figure splits top/bottom first, and each half owns its own grid so their
+    column geometry and spacing are independent. The top half is the four runs,
+    one row each, as a start-vs-final-fitness scatter (coloured by mutations at
+    half max, magma, sharing one colorbar in a thin middle column) next to a
+    histogram of mutations at half max. The bottom half is two rows of two
+    columns: the GOF possible-mutation breakdown (I) beside the per-region share
+    of mutations actually introduced by the unconstrained runs that sit at
+    natural-variation positions (J), then one panel spanning both columns (K),
+    the deepCIS binding track of a single example gene, reference vs its
+    5-mutation optimized variant, with the introduced mutation positions marked.
+    Must be called inside a :func:`publication_style` context.
 
     Shared limits make the panels comparable: all four scatters share the x-axis
     (start fitness); the two maximization (GOF) scatters share one y-range and the
@@ -842,6 +1045,13 @@ def _populate_fig4(fig: plt.Figure) -> None:
     Args:
         fig: An (empty) figure to populate.
     """
+    # Tighten the vertical padding the layout engine keeps between axes, so the
+    # broken-y histogram halves read as one cut axis (see
+    # ``_FIG4_LAYOUT_H_PAD_INCHES``).
+    layout_engine = fig.get_layout_engine()
+    if layout_engine is not None:
+        layout_engine.set(h_pad=_FIG4_LAYOUT_H_PAD_INCHES)
+
     stats_per_run = [_load_stats(run["stats_json"]) for run in _FIG4_RUNS]
     global_max_mutations = max(
         stat["num_mutations_half_max_effect"]
@@ -850,16 +1060,24 @@ def _populate_fig4(fig: plt.Figure) -> None:
         if "num_mutations_half_max_effect" in stat
     )
 
+    # Top half (four run rows) and bottom half (region panels + track) get their
+    # own sub-grid, so the thin colorbar column of the runs does not narrow the
+    # bottom panels and the two halves can be spaced independently.
+    outer_grid = fig.add_gridspec(nrows=2, ncols=1, height_ratios=[4.0, 2.4])
     # Columns: scatter | thin shared-colorbar column | histogram. The colorbar
-    # column keeps the two data columns equal width. Rows: four run rows, then the
-    # row holding the two half-width region panels.
-    grid = fig.add_gridspec(
-        nrows=5,
-        ncols=3,
-        width_ratios=[1.0, 0.05, 1.0],
-        height_ratios=[1.0, 1.0, 1.0, 1.0, 1.3],
+    # column keeps the two data columns equal width. ``wspace`` is extra padding
+    # on top of what tick and axis labels need, so a small value collapses the
+    # empty gap between a scatter and the colorbar while still leaving room for
+    # the colorbar label and the histogram's y-label.
+    run_grid = outer_grid[0].subgridspec(
+        nrows=4, ncols=3, width_ratios=[1.0, 0.05, 1.0], wspace=0.03
     )
-    colorbar_ax = fig.add_subplot(grid[0:4, 1])
+    # Row 0: the two half-width region panels; row 1: the full-width track. The
+    # extra vertical room in row 0 carries the legends drawn below those axes.
+    bottom_grid = outer_grid[1].subgridspec(
+        nrows=2, ncols=2, height_ratios=[1.3, 1.0], wspace=0.03
+    )
+    colorbar_ax = fig.add_subplot(run_grid[0:4, 1])
 
     scatter_axes_by_objective: Dict[str, List[plt.Axes]] = {"max": [], "min": []}
     all_scatter_axes = []
@@ -868,8 +1086,7 @@ def _populate_fig4(fig: plt.Figure) -> None:
     last_run_index = len(_FIG4_RUNS) - 1
 
     for row_index, (run, stats) in enumerate(zip(_FIG4_RUNS, stats_per_run)):
-        scatter_ax = fig.add_subplot(grid[row_index, 0])
-        hist_ax = fig.add_subplot(grid[row_index, 2])
+        scatter_ax = fig.add_subplot(run_grid[row_index, 0])
 
         scatter_mappable = draw_visualize_start_vs_max_fitness_by_mutations(
             stats,
@@ -888,28 +1105,48 @@ def _populate_fig4(fig: plt.Figure) -> None:
         )
         scatter_mappable.set_sizes([_SCATTER_MARKER_SIZE])
 
-        hist_half_max_mutations(
-            stats,
-            _UNUSED_NAME,
-            _UNUSED_FORMAT,
-            titles=False,
-            ax=hist_ax,
-            color=_NEUTRAL_COLOR,
+        # The histogram cell is split into a broken-y pair: the same histogram is
+        # drawn on both, each showing only its own slice of the count range.
+        hist_upper_ax, hist_lower_ax = broken_y_axes(
+            fig,
+            run_grid[row_index, 2],
+            lower_ylim=_FIG4_HIST_LOWER_YLIM,
+            upper_ylim=_FIG4_HIST_UPPER_YLIM,
+            height_ratios=_FIG4_HIST_HEIGHT_RATIOS,
+            hspace=_FIG4_HIST_BREAK_HSPACE,
         )
-        # Thin white separators between histogram bars for print crispness.
-        for bar in hist_ax.patches:
-            bar.set_edgecolor("white")
-            bar.set_linewidth(0.4)
+        for hist_ax in (hist_upper_ax, hist_lower_ax):
+            hist_half_max_mutations(
+                stats,
+                _UNUSED_NAME,
+                _UNUSED_FORMAT,
+                titles=False,
+                ax=hist_ax,
+                color=_NEUTRAL_COLOR,
+                max_mutations_shown=_FIG4_HIST_MAX_MUTATIONS,
+            )
+            # Thin white separators between histogram bars for print crispness.
+            for bar in hist_ax.patches:
+                bar.set_edgecolor("white")
+                bar.set_linewidth(0.4)
+        # Axis labels belong to the pair, not to each half: the upper strip only
+        # carries the outlier bar, so it keeps ticks but no labels.
+        hist_upper_ax.set_xlabel("")
+        hist_upper_ax.set_ylabel("")
+        hist_upper_ax.set_yticks(list(_FIG4_HIST_UPPER_YTICKS))
 
-        for column_index, ax in enumerate((scatter_ax, hist_ax)):
+        for column_index, ax in enumerate((scatter_ax, hist_upper_ax)):
             panel_label(ax, _FIG4_RUN_LETTERS[row_index][column_index])
 
-        # Row identifier (which run) in the left margin.
-        scatter_ax.text(
-            -0.42,
-            0.5,
+        # Row identifier (which run) in the left margin. Offset in points, not in
+        # axes fractions, so it stays just left of the y-label however wide the
+        # panel ends up.
+        scatter_ax.annotate(
             run["row_label"],
-            transform=scatter_ax.transAxes,
+            xy=(0.0, 0.5),
+            xycoords="axes fraction",
+            xytext=(-_FIG4_ROW_LABEL_OFFSET_POINTS, 0.0),
+            textcoords="offset points",
             rotation=90,
             ha="center",
             va="center",
@@ -920,26 +1157,27 @@ def _populate_fig4(fig: plt.Figure) -> None:
         # bottom run row (all run rows share the same x-axes).
         if row_index != last_run_index:
             scatter_ax.set_xlabel("")
-            hist_ax.set_xlabel("")
+            hist_lower_ax.set_xlabel("")
 
         all_scatter_axes.append(scatter_ax)
         scatter_axes_by_objective[run["objective"]].append(scatter_ax)
-        hist_axes.append(hist_ax)
+        hist_axes.append(hist_lower_ax)
 
     # One shared colorbar for all four scatter panels (common normalisation).
     fig.colorbar(
         scatter_mappable, cax=colorbar_ax, label="Mutations at Half Max Effect"
     )
 
-    # Shared limits: all scatters share x; each objective shares its scatter y;
-    # all histograms share x and y.
+    # Shared limits: all scatters share x; each objective shares its scatter y.
+    # The histograms share x by construction (same overflow bin) and their y is
+    # set explicitly by the break, so only x is harmonised here.
     sync_axis_limits(all_scatter_axes, sync_x=True, sync_y=False)
     for objective_axes in scatter_axes_by_objective.values():
         sync_axis_limits(objective_axes, sync_x=False, sync_y=True)
-    sync_axis_limits(hist_axes)
+    sync_axis_limits(hist_axes, sync_x=True, sync_y=False)
 
     # --- Region panels (row 4, one half-width panel each) --------------------
-    region_ax = fig.add_subplot(grid[4, 0])
+    region_ax = fig.add_subplot(bottom_grid[0, 0])
     plot_region_breakdown(
         _gof_region_dataframe(),
         "GOF",
@@ -953,7 +1191,7 @@ def _populate_fig4(fig: plt.Figure) -> None:
     panel_label(region_ax, _FIG4_REGION_LETTER)
     _move_legend_below(region_ax)
 
-    allowance_ax = fig.add_subplot(grid[4, 2])
+    allowance_ax = fig.add_subplot(bottom_grid[0, 1])
     plot_pooled_allowance_bars(
         _actual_mutation_allowance_dataframe(),
         show_legend=True,
@@ -965,6 +1203,14 @@ def _populate_fig4(fig: plt.Figure) -> None:
     allowance_ax.set_ylabel("Mutations at natural positions (%)")
     panel_label(allowance_ax, _FIG4_ALLOWANCE_LETTER)
     _move_legend_below(allowance_ax)
+
+    # --- Example-gene deepCIS track (bottom row, full width) -----------------
+    deepcis_ax = fig.add_subplot(bottom_grid[1, :])
+    _draw_fig4_deepcis_track(deepcis_ax)
+    # The full-width track leaves only a narrow left margin, all of it taken by
+    # the tall y-label, so its letter goes above the left spine instead of beside
+    # the label.
+    panel_label(deepcis_ax, _FIG4_DEEPCIS_LETTER, x=0.0, y=1.04)
 
 
 def fig4() -> None:
@@ -980,11 +1226,13 @@ def fig4() -> None:
     drawn as a half-width panel next to the per-region percentage of actually
     introduced mutations that fall on natural-variation (VCF) positions, pooled per
     region with gene-level bootstrap confidence intervals, for the GOF and LOF gene
-    sets.
+    sets. The bottom row is one full-width deepCIS binding track of a single example
+    gene from the constrained GOF run, contrasting the reference sequence with its
+    5-mutation Pareto-front variant and marking where those mutations sit.
     """
     with publication_style():
         fig = plt.figure(
-            figsize=figure_size_inches(DOUBLE_COLUMN_MM, 235.0), layout="constrained"
+            figsize=figure_size_inches(DOUBLE_COLUMN_MM, 280.0), layout="constrained"
         )
         _populate_fig4(fig)
         os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -1414,7 +1662,7 @@ def fig6() -> None:
 
 
 if __name__ == "__main__":
-    # fig2()
-    # fig3()
+    fig2()
+    fig3()
     fig4()
-    # fig6()
+    fig6()
