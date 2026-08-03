@@ -10,6 +10,7 @@ from workflows.evo_alg_pooled_plots.example_gene_pareto.example_gene_pareto impo
     extract_zero_mutation_points,
     load_mutation_prediction,
     order_front_files,
+    plot_final_front_mini,
     sample_gradient_colors,
 )
 
@@ -175,6 +176,27 @@ class TestExtractZeroMutationPoints(unittest.TestCase):
         # Assert
         self.assertEqual(zero_counts, [])
         self.assertEqual(zero_predictions, [])
+
+
+class TestPlotFinalFrontMini(unittest.TestCase):
+    """Tests for :func:`plot_final_front_mini`."""
+
+    def test_draws_scatter_with_axis_labels_but_no_title_or_legend(self) -> None:
+        # Arrange
+        mutation_counts = [0.0, 2.0, 5.0]
+        predictions = [0.2, 0.5, 0.9]
+
+        # Act
+        fig = plot_final_front_mini(mutation_counts, predictions)
+
+        # Assert
+        ax = fig.axes[0]
+        self.assertEqual(len(ax.collections), 1)
+        self.assertEqual(len(ax.collections[0].get_offsets()), 3)
+        self.assertNotEqual(ax.get_xlabel(), "")
+        self.assertNotEqual(ax.get_ylabel(), "")
+        self.assertEqual(ax.get_title(), "")
+        self.assertIsNone(ax.get_legend())
 
 
 if __name__ == "__main__":

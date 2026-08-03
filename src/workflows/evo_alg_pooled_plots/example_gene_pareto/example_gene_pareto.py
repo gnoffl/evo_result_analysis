@@ -28,6 +28,8 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
 
+from workflows.paper_plots.style import figure_size_inches, publication_style
+
 # --- Hardcoded configuration (one-off script) --------------------------------
 
 RUN_DIR = Path(
@@ -37,7 +39,7 @@ RUN_DIR = Path(
 )
 
 OUTPUT_DIR = Path(__file__).parent / "plots"
-OUTPUT_FORMAT = "png"
+OUTPUT_FORMAT = "svg"
 
 # Sequential colormap for the generation gradient (light = early, dark = late).
 GRADIENT_CMAP = "magma"
@@ -51,6 +53,12 @@ _GEN_PATTERN = re.compile(r"pareto_front_gen_(\d+)\.json$")
 
 # Fractional padding added around the data when computing axis limits.
 AXIS_MARGIN = 0.05
+
+# Colormap and shade used for the small final-front illustration figure.
+MINI_FRONT_CMAP = "Purples"
+MINI_FRONT_COLOR_SHADE = 0.85
+# Size of the small final-front illustration figure, in millimetres.
+MINI_FRONT_SIZE_MM = (45.0, 36.0)
 
 
 # --- Calculation -------------------------------------------------------------
@@ -280,6 +288,34 @@ def plot_fronts_up_to(
     return fig
 
 
+def plot_final_front_mini(
+    mutation_counts: list[float], predictions: list[float]
+) -> Figure:
+    """Draw a minimal scatter of the final Pareto front for use as an inset.
+
+    No legend or title is drawn, but axis labels/ticks are kept so the inset
+    remains readable on its own. The figure is small by design so it can be
+    embedded as an illustrative inset inside a larger composed figure. Uses the
+    shared publication stylesheet for fonts and line weights.
+
+    Args:
+        mutation_counts: Mutation counts of the final Pareto front.
+        predictions: deepCRE predictions of the final Pareto front (parallel
+            to ``mutation_counts``).
+
+    Returns:
+        The created matplotlib figure.
+    """
+    color = colormaps[MINI_FRONT_CMAP](MINI_FRONT_COLOR_SHADE)
+    with publication_style():
+        fig, ax = plt.subplots(figsize=figure_size_inches(*MINI_FRONT_SIZE_MM))
+        ax.scatter(mutation_counts, predictions, color=color, edgecolors="none")
+        ax.set_xlabel("Mutation count")
+        ax.set_ylabel("deepCRE prediction")
+        fig.tight_layout(pad=0.1)
+    return fig
+
+
 def save_figure(fig: Figure, filename: str) -> None:
     """Save a figure to ``OUTPUT_DIR/filename.OUTPUT_FORMAT``.
 
@@ -349,6 +385,20 @@ def main() -> None:
             slug = _frame_slug(frame_index, frame_label)
         save_figure(fig, slug)
         plt.close(fig)
+
+
+def load_final_front() -> tuple[list[float], list[float]]:
+    """Load the mutation counts and predictions of this gene's final Pareto front.
+
+    Used by :mod:`workflows.paper_plots.fig1_miniatures` to build a small inset
+    illustration from the same data source as the full incremental series above.
+
+    Returns:
+        A tuple ``(mutation_counts, predictions)`` for the final front.
+    """
+    file_names = [path.name for path in RUN_DIR.glob(FRONT_GLOB)]
+    final_file_name, _ = order_front_files(file_names)[-1]
+    return load_mutation_prediction(RUN_DIR / final_file_name)
 
 
 if __name__ == "__main__":
