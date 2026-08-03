@@ -1,7 +1,11 @@
 # Publication figure layer — design
 
-**Date:** 2026-07-13
-**Status:** approved, pending implementation plan
+**Date:** 2026-07-13 (design), last reviewed against the code 2026-08-03
+**Status:** implemented — the ax-injection refactor is complete (see
+"Implementation status"), and the composition scripts for figures 1–4 and 6 are in
+`compose_plots_mpl.py` / `fig1_miniatures.py`. Per-figure sections below are ordered
+by the date they were written (§3 fig2, §3b–3f fig4, §3g fig3, §3h fig6,
+§3i fig1), not by figure number.
 
 ## Problem
 
@@ -60,8 +64,10 @@ All new code lives in `src/workflows/paper_plots/`.
   pollutes global rcParams state. Target format: generic vector (≈180 mm
   double-column, ~7–8 pt text, sans-serif, vector PDF/SVG at high DPI); exact
   numbers tunable later once a journal is fixed.
-- **Width constants + helper** — `SINGLE_COLUMN_MM`, `DOUBLE_COLUMN_MM`,
-  `mm_to_inch()`, so figure/panel sizes are declared in real physical units.
+- **Width constants + helpers** — `SINGLE_COLUMN_MM` (85 mm), `DOUBLE_COLUMN_MM`
+  (180 mm), `mm_to_inch()` and `figure_size_inches(width_mm, height_mm)` (the form
+  every composition actually calls), so figure/panel sizes are declared in real
+  physical units.
 - **`panel_label(ax, "A")`** — one consistent way to stamp bold panel letters
   (replaces the scale-dependent letters `figure_composition.py` overlays).
 - **`save_publication_figure(fig, path)`** — enforces vector output + DPI in one
@@ -271,14 +277,34 @@ about unestimable covariance (raised on perfect/degenerate fits) is suppressed.
 
 **Reported fit quality.** `fit_logit_linear` returns `(slope, intercept,
 r_squared)`, where R² is `1 - SS_res/SS_tot` between the observed `y` and the
-fitted `ŷ`, on the original (0, 1) scale. ⚠️ The previously recorded values
-(GOF-natural R² ≈ 0.85, LOF-natural R² ≈ 0.46) were measured under the old
-logit-space estimator and are **stale** — R² should now be equal or better, since
-it is the quantity being optimised, but the numbers need re-measuring on the
-paper data. The two *unconstrained* runs (GOF/LOF `single`) saturate almost
-regardless of start fitness (final-fitness std ≈ 1e-4), so their fit still
-renders as a near-flat line at ≈1 / ≈0 — faithfully showing that the
-unconstrained runs hit the fitness ceiling/floor within the mutation budget.
+fitted `ŷ`, on the original (0, 1) scale.
+
+**Measured on the paper data (2026-08-03)**, using the same point selection as the
+panels (genes carrying `num_mutations_half_max_effect`), under the current
+original-scale estimator. No run hit the convergence fallback.
+
+| panel | run | n | slope | intercept | R² | final-fitness SD |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | GOF (unconstrained) | 105 | 4.53 | 8.77 | 0.063 | 1.4e-04 |
+| C | GOF (natural) | 104 | 8.20 | −1.46 | 0.857 | 2.19e-01 |
+| E | LOF (unconstrained) | 68 | 1.03 | −10.92 | 0.027 | 5.9e-05 |
+| G | LOF (natural) | 68 | 6.51 | −5.98 | 0.470 | 3.24e-01 |
+
+This supersedes the previously recorded GOF-natural ≈ 0.85 / LOF-natural ≈ 0.46,
+which had been measured under the old logit-space estimator. Notably the two
+constrained R² values barely moved (0.8567 and 0.4696): the estimator change was
+made because the optimised criterion and the reported number must be the same
+quantity, **not** because it improved the fit, and on this data it does not.
+
+⚠️ **The two unconstrained panels' R² is not interpretable as fit quality.** Those
+runs saturate almost regardless of start fitness (final-fitness SD ≈ 1e-4), so
+`SS_tot` is negligible and R² is a ratio of two near-zero quantities — 0.063 and
+0.027 mean "there is essentially no variance to explain", not "the sigmoid fits
+badly". The fit still renders as the intended near-flat line at ≈1 / ≈0, faithfully
+showing that the unconstrained runs hit the fitness ceiling/floor within the
+mutation budget. Only the constrained panels' R² should be quoted in the caption.
+Related: those panels' slope/intercept are correspondingly weakly determined (an
+almost-flat response pins down little), so they should not be interpreted either.
 
 **Caveats (honest limitations).**
 
@@ -329,9 +355,12 @@ draws a bounded fit curve, and draws neither overlay by default.
 
 **Date added:** 2026-07-29
 
-Figure 4's gridspec is 5 rows: four run rows (A–H) plus a bottom row holding two
-half-width region panels, `grid[4, 0]` and `grid[4, 2]` (the thin middle column
-stays the shared colorbar strip). Figure height 235 mm.
+Figure 4 splits top/bottom first (`outer_grid`, 2×1, height ratios 4.0 : 2.4) and
+gives each half its own sub-grid, so the two halves have independent column
+geometry and spacing (see §3e). `run_grid` is 4×3 (scatter | colorbar strip |
+histogram) for A–H; `bottom_grid` is 2×2: panels I and J side by side in row 0
+(the taller row, whose extra height carries the legends drawn below those axes),
+panel K spanning both columns in row 1 (see §3d). Figure height 280 mm.
 
 - **Panel I** — GOF possible-mutation region breakdown, constrained (VCF) vs
   unconstrained, per genomic region, log y-axis
@@ -440,6 +469,376 @@ zero-based y-axis and ax-injection. `test_compose_plots_mpl.py` covers
 `_actual_mutation_allowance_dataframe`'s run/VCF pairing and
 `_move_legend_below`'s untitled, frameless, below-axes legend.
 
+### 3d. Figure 4 panel K — example-gene deepCIS binding track
+
+**Date added:** 2026-07-29
+
+One full-width panel (`bottom_grid[1, :]`) showing what an optimization does to
+a single gene's predicted TF binding: the deepCIS window scan of
+`AT3G60640` (run dir `3_AT3G60640_gene:22415750-22417548_260312_000750_357934` in
+the constrained GOF run `GOF_single_natural_260311_122228_299093`), reference vs
+its **5-mutation** Pareto-front member, for TF family `LOBAS2_tnt`.
+
+Data source — the precomputed scan CSV, not a re-run of the model:
+
+```
+.../deepdive_simons_gene/deepcis_scan/deepcis_window_scan_deepdive_simons_gene_mut5.csv
+```
+
+produced by
+
+```
+analysis_scripts/run_deepcis_peak_pipeline.sh \
+  <GOF_single_natural_260311_122228_299093 run dir> deepdive_simons_gene \
+  <analysis out dir> --genes AT3G60640 --mutation-count 5
+```
+
+Design decisions:
+
+- **No peak highlighting.** The panel's claim is where the *introduced mutations*
+  sit relative to the binding signal, not which windows were peak-called, so
+  `highlight_peaks=False`.
+- **No difference curve** (`show_difference=False`). It would force the y-range to
+  (-1, 1) and halve the vertical resolution of a short full-width panel; the two
+  curves already show the change.
+- **Mutation positions are read from the same front member that was scanned**, not
+  hardcoded: `_fig4_introduced_mutation_positions()` loads the final Pareto front
+  via `MutationsGene`, picks the 5-mutation member with
+  `mutation_locations.find_front_member`, and shifts each 0-based
+  `MutatedSequence` position by +1 into the 1-based frame the scan's window
+  centers use (`deepcis_visualize.get_centers`). The panel therefore cannot drift
+  from the sequence it plots. Positions (1-based): 804, 937, 957, 1149, 1194 —
+  three in the promoter, two in the 5'-UTR.
+- **Line restyling** (`_restyle_fig4_deepcis_lines`). Both sequences predict an
+  identical signal over most of the window and the optimized curve is drawn last,
+  so at the standalone weight (solid, lw 2) the reference was invisible outside the
+  few windows the mutations touch — it read as "reference is zero in the 3'-UTR".
+  The reference is thinned to 1.2 and the optimized to 1.0 **dashed**, so both are
+  visible where they coincide.
+- **Legend below the axes**, via `_legend_below_keeping_entries` rather than
+  `_move_legend_below`: the vertical markers (TSS/TTS, introduced mutations) exist
+  only as proxy handles, which a fresh `ax.legend()` would drop. Handles of curves
+  still on the axes are re-taken from the live artists, so the restyled optimized
+  curve gets a dashed swatch. Grid off, matching every other panel.
+- **Panel letter above the left spine** (`x=0.0, y=1.04`) instead of in the left
+  margin like every other panel: at full width the margin holds only the tall
+  y-label, and a letter placed beside it collided with it.
+
+New in `deepcis_visualize.py` (backward compatible): `_plot_gene_tf` gains
+`mutation_positions` / `mutation_marker_label` (default None → nothing drawn, no
+legend entry), drawn as thin `MUTATION_MARKER_COLOR` (`#d62728`) axvlines behind
+the curves via the existing `_add_vertical_markers`, with a matching legend proxy
+threaded through `_set_axis_properties(mutation_marker_label=...)`.
+
+Tests: `test_deepcis_visualize.py` covers one marker per position with its legend
+entry, and no markers / no legend entry for the default and for an empty list.
+`test_compose_plots_mpl.py` covers the restyle, the proxy-preserving legend move,
+the 0→1-based position shift, and the track drawing both curves with markers,
+`ylim (0, 1)` and a `ValueError` when the gene is absent from the scan CSV.
+
+### 3e. Figure 4 geometry — nested grids to recover horizontal space
+
+**Date added:** 2026-07-29
+
+The first version used one flat 6×3 gridspec for the whole figure. Two sources of
+wasted horizontal space:
+
+1. **The colorbar column bled into the bottom row.** Panels I and J sat in columns
+   0 and 2 of the *same* grid as the run rows, so the thin colorbar strip and both
+   its gaps ate into their width even though nothing in the bottom row uses a
+   colorbar.
+2. **Symmetric, oversized column gaps.** With the default `wspace`, the gap
+   between a scatter and the colorbar was as wide as the gap between the colorbar
+   and the histogram — but the scatter side has no decorations to accommodate,
+   only the colorbar label and the histogram y-label do.
+
+Fix: split top/bottom first (`outer_grid`, 2×1) and give each half its own
+sub-grid via `SubplotSpec.subgridspec`, then set `wspace=0.03` on both. Under
+`layout="constrained"` `wspace` is *extra* padding on top of the space reserved
+for tick and axis labels, so a small value collapses the empty
+scatter-to-colorbar gap while the colorbar-label / y-label gap stays as wide as
+its decorations need. The bottom half, free of the colorbar column, gives I and J
+a true half-width each.
+
+The run-row identifiers ("GOF", "LOF (natural)", …) moved from
+`text(-0.42, 0.5, transform=transAxes)` to an `annotate` with a **point-based offset**
+(`_FIG4_ROW_LABEL_OFFSET_POINTS = 42`) from the left spine: an axes-fraction
+offset scales with panel width, so it drifted when the panels got wider.
+
+### 3f. Figure 4 panels B/D/F/H — cropped x, broken y
+
+**Date added:** 2026-07-29
+
+Both axes of the four half-max histograms were dominated by a handful of genes,
+leaving the panels nearly empty. The distribution of `num_mutations_half_max_effect`:
+
+| panel | n genes | max | genes > 30 | tallest bar |
+|---|---|---|---|---|
+| B GOF | 105 | 18 | 0 | 60 |
+| D GOF (natural) | 104 | 48 | 1 | 27 |
+| F LOF | 68 | 13 | 0 | 12 |
+| H LOF (natural) | 68 | 37 | 3 | 6 |
+
+**x — overflow bin at 30** (`hist_half_max_mutations(max_mutations_shown=30)`, a
+new backward-compatible param; `None` keeps the full data range). Only 4 of 345
+genes exceed 30 mutations, but they stretched the axis to 50. They are **pooled
+into a final bin tick-labelled `≥30`** rather than dropped, so the truncation is
+visible in the panel itself and no gene silently disappears — the pooled bin is
+plainly there in D and H.
+
+**y — broken axis** (`style.broken_y_axes`). The four panels must share one count
+axis to be comparable, and panel B's spike of 60 genes at 2 mutations set that
+axis alone: the tallest bar anywhere else is 27. The histogram cell is therefore
+split into a pair of stacked, x-sharing axes — lower `(0, 29)`, upper `(55, 63)`,
+height ratio 0.7 : 4 — and the *same* histogram is drawn on both, each showing
+only its slice of the range. **No bar in any panel has a count between 28 and 54**,
+so the gap hides no data. The upper strip keeps its `60` tick in all four panels
+(that is what makes them comparable) and drops its axis labels; the panel letter
+sits on the upper strip.
+
+Panel B's spike is the one bar that actually crosses the cut, so the gap between
+the axes splits it in two. Bridging the gap with a patch in the bar's colour (so
+the bar reads as continuous) was tried and **rejected**: the gap belongs to the
+axis break, and a bar drawn straight through it obscures that the axis was cut at
+all. The bar stays split.
+
+The *width* of that gap was still too large to read the two halves as one value.
+`hspace=0` on the sub-gridspec (`_FIG4_HIST_BREAK_HSPACE`) was already set, but
+under `layout="constrained"` gridspec `hspace` is only extra space on top of the
+layout engine's own `h_pad` (default ≈0.042 in on each axes, so ≈2 mm of
+whitespace across the cut) — plus the space reserved for the slanted marks
+themselves. Two fixes, both needed:
+
+- `broken_y_axes` calls `set_in_layout(False)` on the break marks: they straddle
+  the cut deliberately and must not be padded around.
+- `_populate_fig4` shrinks the layout engine's `h_pad` to
+  `_FIG4_LAYOUT_H_PAD_INCHES` (0.01 in). `h_pad` is figure-wide, so this tightens
+  every row slightly; the run rows keep their separation from their tick labels
+  and axis labels, so only the break visibly changes. A per-cell pad is not
+  available — `SubFigure` in matplotlib 3.7 has no own layout engine.
+
+`broken_y_axes` is generic and lives in `style.py`:
+
+- Validates that the two ranges are disjoint and ordered — overlapping ranges
+  would draw the same bars twice.
+- Sets `set_autoscaley_on(False)` on both axes, or the `ax.hist` call that follows
+  would autoscale the limits back to the full range and undo the break.
+- Draws the slanted break marks **only where a vertical spine is actually
+  visible**, so they do not float in mid-air on the right, where the publication
+  stylesheet hides the spine.
+
+Consequence for the composition: `sync_axis_limits(hist_axes)` now syncs **x
+only** — y is set explicitly by the break, and x is identical by construction
+anyway (same overflow bin).
+
+Why not the alternatives considered: a **log y-axis** keeps everything on one
+axes but makes bar heights non-proportional; **per-objective y sharing** would
+give F/H a tighter range but breaks GOF-vs-LOF comparison; **percent of genes**
+fixes the unequal-n comparability problem (105 vs 68) but not the emptiness
+(B 57 % vs H 9 %). Note the unequal-n caveat still stands for the raw counts as
+plotted.
+
+### 3g. Figure 3 — mutation signatures + the significant-TF contrast
+
+**Date added:** 2026-08-03 (documenting code committed 2026-07-2x, `9b50961`)
+
+`fig3()` / `_populate_fig3` compose seven panels at double-column width, 250 mm
+high, from the two **maximization** single-mutation runs (`ara_msr_max_single`,
+`zea_msr_max_single`, both read from their `all_mutated_sequences_*_gen1999.json`)
+plus a four-run TF contrast.
+
+Layout is **one flat 5×4 grid** (deliberately not the nested-halves construction
+figure 4 needed, §3e — here no column strip has to be kept out of another row):
+
+| row | contents |
+|---|---|
+| 0 | A (ara) and B (zea) rolling-mean net nucleotide change, two columns each |
+| 1 | thin (0.2) full-width strip holding the shared A/C/G/T legend |
+| 2 | C (ara) and D (zea) total net nucleotide change bars, one column each |
+| 3 | E — ara mutation-distance difference, left two columns |
+| 4 | F — zea mutation-distance difference, left two columns |
+| 2–4 | G — significant-TF heatmap, right two columns, with a `width_ratios=[1, 0.045]` sub-grid splitting off its colour-bar column |
+
+Design decisions:
+
+- **One shared A/C/G/T legend** in the row-1 strip; the per-panel legends that
+  `make_line_plot_rolling_window` and `plot_net_nucleotide_change` create are
+  removed. A/B and C/D use the same nucleotide colours (`COLORS`), so one key
+  serves four panels. `plot_sum=False` on the line panels — the per-nucleotide
+  traces are the signal, the sum only compresses them.
+- **Colour is reserved for the heatmap.** The distance panels' bars are repainted a
+  uniform neutral grey (`_color_bars_neutral`, `_NEUTRAL_COLOR` at
+  `_BAR_ALPHA`) and their legend dropped entirely: the sign of the
+  real-minus-random difference is already read off the zero line, so the original
+  colour carried no information. The net-change bars (C/D) keep their A/C/G/T
+  colours because there the colour *is* the category.
+- **Shared limits within a panel type** via `sync_axis_limits`: y for A/B and for
+  C/D (x is position/nucleotide, identical by construction), both x and y for E/F.
+  Duplicated axis labels are dropped — y-label on A and C only, x-label on F only.
+- **Species titles in italics** (`fontstyle="italic"`) since they are binomials.
+- **Distance panels cropped to `_DISTANCE_MAX = 30`**: the real-vs-random
+  difference is concentrated at short inter-mutation distances and the long tail is
+  flat. The random baseline is `_DISTANCE_REPLICATES_PER_GENE = 10` replicates per
+  gene under a fixed seed (`_DISTANCE_SEED = 42`), built in memory by
+  `_distance_difference_proportions` from a `MutationPool.from_summarized_json`, so
+  no cached pool file is required.
+
+#### Panel G — which TFs, in which order, with which stars
+
+`_draw_significant_tf_heatmap` mirrors `minmax_comparison.py` so the panel matches
+that standalone figure's data, ordering and stars:
+
+- **Rows:** the per-gene-normalized four-run diff matrix
+  (`build_matrix(..., normalization="per_gene")`) restricted to the TFs whose
+  **paired ara max-vs-min contrast** reaches the *** tier
+  (`q_contrast < _THREE_STAR_ALPHA = 0.001`). Because every surviving TF is *** by
+  construction, the redundant row-label stars are dropped — the selection *is* the
+  claim, and repeating it per row would suggest a per-row test result.
+- **Columns:** `ara max`, `GOF` (left, maximization) then `ara min`, `LOF`
+  (right, minimization), ordered by `order_tfs_by_group_contrast` so max-favoured
+  TFs sit above min-favoured ones.
+- **Cell stars are intra-run, not the selection test.** The ara pair reuses the
+  `q_a`/`q_b` columns from the paired analysis; GOF and LOF have no paired partner
+  and each get an independent `single_run_tf_significance` test
+  (`_significant_tf_cell_stars`). Rendering fix: seaborn's `va="center"` leaves
+  asterisk glyphs sitting high in their text box, so each annotation is nudged down
+  by `_STAR_VERTICAL_NUDGE` (0.12 cell heights).
+- **Two soft grey dividers** (`0.45`, lw 1.0 — the default black/2.0 reads harsh):
+  vertical between the max and min run groups, horizontal where the ordering score
+  (max-group mean minus min-group mean) changes sign. The horizontal one is drawn
+  only when both blocks are non-empty.
+- Every TF label is forced (`set_yticks`/`set_yticklabels`); seaborn's "auto"
+  locator would otherwise label every other row in this short axes.
+- **Panel letter re-anchored in figure coordinates.** G's long TF row labels push
+  its axes far right, so an axes-fraction letter landed right of B's. After a
+  `fig.canvas.draw()` (needed for the constrained layout to resolve positions) the
+  letter is moved to B's letter x at G's own top edge, so the right-column letters
+  line up.
+
+**Caveat for the caption:** panel G shows only *** TFs from the **ara** max-vs-min
+contrast; GOF/LOF columns are displayed for those same TFs but did not take part in
+the selection, so the panel is not a symmetric four-run screen.
+
+**Stale code comments (not fixed here):** the constant block above `_ARA_MAX_DIR`
+and the docstring of `_significant_tf_cell_stars` still call the heatmap "panel E"
+from an earlier layout; it is panel G.
+
+### 3h. Figure 6 — STARR-seq × deepCRE positional correlation
+
+**Date added:** 2026-08-03 (documenting code committed 2026-07-2x, `40b3959` /
+`f01c417` / `4e0a253`)
+
+`fig6()` / `_populate_fig6` compose four panels at double-column width, 170 mm
+high, over the STARR-seq overlap analysis:
+
+- **A** — Spearman correlation between deepCRE prediction and STARR-seq enrichment
+  as a function of overlap start position; **B** — the p-value of that correlation
+  on a log y-axis. Both over the **pooled WRKY + bHLH** dataset, overlaying the
+  `all` / `light` / `dark` STARR-seq conditions (`_fig6_position_series`,
+  `POSITION_SERIES_COLORS`).
+- **C** — the **WRKY-only** point-level scatter with the peak-correlation window
+  highlighted on top of the full dataset and coloured by binding status.
+- **D** — a boxplot of the enrichment of *exactly* those highlight-window points,
+  binding vs non-binding.
+
+Grid is 4×4: row 0 A|B (two columns each), row 1 a thin legend strip (0.15), row 2
+C (three columns) | D (one column), row 3 a second legend strip (0.22).
+`_FIG6_WIDTH_RATIOS = [1, 1, 0.6, 1.4]` — columns 0+1 and 2+3 sum equal so A and B
+stay the same width, while the last column is widened (third narrowed to
+compensate) so single-column panel D's two x-tick labels no longer touch.
+
+Design decisions:
+
+- **The pool is built per TF, then concatenated.** `_build_fig6_dataframes` runs
+  `prepare_wrky_enrichment_df()` and `prepare_bhlh_enrichment_df()` independently
+  (own reference windows and mapping), so genes shared between the two TF sets are
+  never double-counted, then row-concatenates for A/B. The WRKY frame is reused for
+  C/D rather than recomputed. This runs the deepCRE prediction pipelines and is the
+  slow part of the figure — there is **no cached point-level dataframe**, so fig6
+  is rebuilt from scratch on every call.
+- **Two legend strips, not in-panel legends.** All four auto-created legends are
+  removed; the condition key goes under A/B and the binding-status + fit-line key
+  under C/D. The bottom key is assembled by hand — the overlay plot draws its two
+  fit lines *unlabelled*, so their handles are appended with `_FIT_ALL_LABEL` /
+  `_FIT_HIGHLIGHT_LABEL`, and `markerscale=2.2` compensates for the shrunken
+  publication marker sizes.
+- **Publication marker/line weights.** The standalone plots use `s=30`/`lw=3` and
+  35/55, far too heavy at panel size: `_POSITION_SCATTER_SIZE = 4.0` with
+  `alpha 0.12`, `_POSITION_LINE_WIDTH = 1.4`, overlay markers 6.0 (background) /
+  12.0 (highlight).
+- **The highlight-window fit line is recoloured black and pushed to
+  `zorder = 0.5`** (behind every scatter point, which sit at `zorder ≥ 1`). The
+  standalone dark red both clashed with the binding-status colours and occluded the
+  data; recolouring happens *before* the legend handles are read so the proxy
+  matches.
+- **A dashed vertical connector at `HIGHLIGHT_WINDOW_CENTER`** on A and B ties the
+  top row to the window C/D zoom into. Kept black rather than the panel-C highlight
+  colour so the figure is not overloaded with hues.
+- **Panels C and D share `BINDING_STATUS_COLORS`** and, more importantly, share the
+  *point set*: `plot_overlay_highlight_correlation` returns the deduplicated
+  highlight points and those are handed straight to `_draw_binding_status_boxplot`,
+  so D cannot drift from C. `saturation=1.0` keeps the box fills identical to C's
+  point colours (seaborn otherwise desaturates to 0.75). Absent groups are dropped
+  from the order rather than drawn empty.
+- Standalone titles are stripped from A/B/C; axis labels and panel letters carry
+  the meaning in a multi-panel figure. A/B share the overlap-position x-axis via
+  `sync_axis_limits(..., sync_y=False)` (y is a correlation vs. a log p-value).
+
+#### Panel D's significance annotation
+
+`_annotate_binding_status_significance` runs a **two-sided Mann-Whitney U** on the
+binding vs non-binding `enrichment` of the highlight-window points, draws a
+significance bar labelled by `q_to_stars(p)` (or `ns`), and prints U, p, the
+rank-biserial effect size and both group sizes to the console so the numbers are
+available for the caption. Mann-Whitney rather than a t-test to match
+`binding_vs_nonbinding.py` and to assume nothing about the normality of enrichment
+values. The test is skipped (with a printed note) when either group is empty.
+
+⚠️ Two honesty notes: the label is a raw p-value passed through a function named
+`q_to_stars`, so the stars are **not** multiplicity-corrected — a single planned
+comparison, but the caption should say "uncorrected". And `n=` labels sit under each
+box, so the reader can see the group sizes the test rests on. The bar is drawn
+*before* the sample-size labels because it expands the y-limits.
+
+### 3i. Figure 1 — graphical-abstract miniatures
+
+**Date added:** 2026-08-03 (documenting `fig1_miniatures.py`, commits `5b51eda` /
+`49a6255`)
+
+Figure 1 is a graphical abstract, designed separately in
+**`FIG1_GRAPHICAL_ABSTRACT_PLAN.md`** (scientific briefing + implementation plan) —
+that document, not this one, is the source of truth for its content.
+
+`fig1_miniatures.py` renders the small inset illustrations it needs as **standalone
+SVGs** under `figures/mpl_compositions/fig1_miniatures/`, rather than as panels of
+one composed figure: each is placed by hand in the abstract's layout. Every
+miniature reuses the exact data source and plotting building block of the full
+figure it is a reduction of, so the insets cannot disagree with the panels they
+advertise:
+
+- `pareto_front_mini` — the example gene's final Pareto front
+  (`example_gene_pareto.load_final_front`), single `Purples` shade at 0.85.
+- `deepcis_scan_mini` — the same scan CSV, gene and TF as figure 4 panel K
+  (importing the `_FIG4_DEEPCIS_*` values' twins), with the mutation and TSS/TTS
+  markers off; keeps a Reference/Optimized legend since the two curves are
+  otherwise indistinguishable, with `_DEEPCIS_MINI_Y_MAX = 1.3` giving it headroom.
+- `fig6c_mini` — figure 6 panel C's highlight-window points only, without the
+  full-data background or the binding-status split; recoloured to a `magma` shade
+  (0.2) rather than the binding highlight colour, which would imply a split that
+  isn't shown.
+- `fig3g_mini` — figure 3 panel G's heatmap reduced to the top/bottom
+  `_TF_HEATMAP_MINI_N_EXTREME = 3` TFs by group contrast, stars removed, `_tnt`
+  suffix stripped from TF names (a model-naming artefact, not part of the family
+  name), colour bar relabelled "introduction frequency". It imports
+  `_ARA_MAX_DIR`, `_FIG3_TF_*` and `_THREE_STAR_ALPHA` from `compose_plots_mpl.py`
+  so the selection rule stays shared with the full panel.
+
+Panels are 55 × 36 mm (`_MINI_SIZE_MM`; the heatmap 55 × 40 mm) and saved with
+`bbox_inches="tight"`, SVG only — they are placed as vector insets, so no raster
+fallback is wanted. Tests: `test_fig1_miniatures.py` (6 tests) covers each
+miniature's data restriction, legend presence/absence, marker suppression, colour
+shade, label rewriting, and the missing-gene error.
+
 ### 4. `figure_composition.py`
 
 Unchanged in behavior; documented as a fallback for frozen raster panels only.
@@ -466,7 +865,11 @@ publication figure script
 - Refactored plot functions: extend/add tests asserting that passing an `ax` draws
   onto it and does **not** call `savefig` (mock it), and that `ax=None` preserves
   current create-and-save behavior.
-- Per-figure composition scripts are one-off and exercised via their helper calls.
+- Per-figure composition scripts are one-off and exercised via their helper calls;
+  the helpers that carry real logic (data assembly, position shifts, statistics,
+  legend surgery) are unit-tested with synthetic frames and mocked pipelines, while
+  the `_populate_figN` layout functions themselves are not (see the test-gap note
+  under "Implementation status").
 
 ## Resolved decisions
 
@@ -475,11 +878,40 @@ publication figure script
 - `figure_composition.py` is demoted, **not deleted** (kept for possible later use).
 - Scope: all of `src/analysis/` then all of `src/workflows/` except `hoffie/`.
 
-## Implementation status (2026-07-14) — COMPLETE
+## Implementation status
 
-Refactor complete; full test suite green (834 passed, hoffie excluded). All
-edited files lint-clean. (2026-07-13 checkpoint: interrupted at 819 by an
-account session limit; resumed and finished 2026-07-14.)
+### Ax-injection refactor (2026-07-14) — COMPLETE
+
+Refactor complete; full test suite green at that point (834 passed, hoffie
+excluded). All edited files lint-clean. (2026-07-13 checkpoint: interrupted at 819
+by an account session limit; resumed and finished 2026-07-14.)
+
+The suite has grown with the figure work since: **985 tests collected**
+repo-wide as of 2026-08-03, of which `test/workflows/paper_plots/` contributes 35
+(`test_style.py` 16, `test_compose_plots_mpl.py` 13, `test_fig1_miniatures.py` 6) —
+all passing. The 834 figure above is a historical checkpoint, not the current count.
+
+### Composition scripts
+
+| figure | entry point | status |
+| --- | --- | --- |
+| 1 (graphical abstract) | `fig1_miniatures.py` (insets only) | insets implemented; composition per `FIG1_GRAPHICAL_ABSTRACT_PLAN.md` |
+| 2 | `compose_plots_mpl.fig2` | implemented (§3) |
+| 3 | `compose_plots_mpl.fig3` | implemented (§3g) |
+| 4 | `compose_plots_mpl.fig4` | implemented (§3b–3f) |
+| 6 | `compose_plots_mpl.fig6` | implemented (§3h) |
+
+There is no figure 5 composition in this module. `python -m
+workflows.paper_plots.compose_plots_mpl` runs `fig2`, `fig3`, `fig4`, `fig6` in
+order.
+
+**Known test gaps** (flagged rather than silently accepted): `test_compose_plots_mpl.py`
+covers the figure-4 helpers and `_draw_binding_status_boxplot`, but the figure-3
+helpers (`_distance_difference_proportions`, `_significant_tf_cell_stars`,
+`_draw_significant_tf_heatmap`, `_color_bars_neutral`) and the figure-6 helpers
+`_build_fig6_dataframes`, `_fig6_position_series` and
+`_annotate_binding_status_significance` have no unit tests. The last one is the
+notable one — it computes a published p-value.
 
 **Done + tested + lint-clean:**
 
