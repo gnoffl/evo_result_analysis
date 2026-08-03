@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 from workflows.paper_plots.style import (
     PUBLICATION_RC,
+    broken_y_axes,
     figure_size_inches,
     mm_to_inch,
     panel_label,
@@ -160,6 +161,97 @@ class TestSyncAxisLimits(unittest.TestCase):
             self.assertEqual(ax.get_xlim(), (2.0, 3.0))
         finally:
             plt.close(fig)
+
+
+class TestBrokenYAxes(unittest.TestCase):
+    """Tests for splitting a grid cell into a broken-y axes pair."""
+
+    def setUp(self) -> None:
+        self.fig = plt.figure()
+        self.grid = self.fig.add_gridspec(nrows=1, ncols=1)
+
+    def tearDown(self) -> None:
+        plt.close(self.fig)
+
+    def test_returns_pair_with_requested_limits(self) -> None:
+        # Act
+        upper_ax, lower_ax = broken_y_axes(
+            self.fig, self.grid[0, 0], (0.0, 20.0), (50.0, 60.0)
+        )
+
+        # Assert
+        self.assertEqual(lower_ax.get_ylim(), (0.0, 20.0))
+        self.assertEqual(upper_ax.get_ylim(), (50.0, 60.0))
+        self.assertGreater(
+            upper_ax.get_position().y0, lower_ax.get_position().y0
+        )
+
+    def test_limits_survive_later_plotting(self) -> None:
+        # Arrange
+        upper_ax, lower_ax = broken_y_axes(
+            self.fig, self.grid[0, 0], (0.0, 20.0), (50.0, 60.0)
+        )
+
+        # Act — a bar taller than the lower range must not rescale the axes.
+        lower_ax.bar([1.0], [60.0])
+        upper_ax.bar([1.0], [60.0])
+
+        # Assert
+        self.assertEqual(lower_ax.get_ylim(), (0.0, 20.0))
+        self.assertEqual(upper_ax.get_ylim(), (50.0, 60.0))
+
+    def test_hides_facing_spines_and_upper_tick_labels(self) -> None:
+        # Act
+        upper_ax, lower_ax = broken_y_axes(
+            self.fig, self.grid[0, 0], (0.0, 20.0), (50.0, 60.0)
+        )
+
+        # Assert
+        self.assertFalse(upper_ax.spines["bottom"].get_visible())
+        self.assertFalse(lower_ax.spines["top"].get_visible())
+        self.assertEqual(
+            [label.get_text() for label in upper_ax.get_xticklabels()
+             if label.get_visible()],
+            [],
+        )
+
+    def test_break_marks_follow_visible_spines(self) -> None:
+        # Arrange — hiding the right spine must drop the right-hand marks.
+        upper_ax, lower_ax = broken_y_axes(
+            self.fig, self.grid[0, 0], (0.0, 20.0), (50.0, 60.0)
+        )
+        marks_with_right_spine = len(lower_ax.get_lines()[0].get_xdata())
+        plt.close(self.fig)
+        self.fig = plt.figure()
+        self.grid = self.fig.add_gridspec(nrows=1, ncols=1)
+
+        # Act
+        with plt.rc_context({"axes.spines.right": False}):
+            _, lower_ax_without_right = broken_y_axes(
+                self.fig, self.grid[0, 0], (0.0, 20.0), (50.0, 60.0)
+            )
+
+        # Assert
+        self.assertEqual(marks_with_right_spine, 2)
+        self.assertEqual(
+            len(lower_ax_without_right.get_lines()[0].get_xdata()), 1
+        )
+
+    def test_break_marks_excluded_from_layout(self) -> None:
+        # Arrange / Act
+        upper_ax, lower_ax = broken_y_axes(
+            self.fig, self.grid[0, 0], (0.0, 20.0), (50.0, 60.0)
+        )
+
+        # Assert — marks straddling the cut must not reserve layout space, which
+        # would push the two halves apart again.
+        self.assertFalse(upper_ax.get_lines()[0].get_in_layout())
+        self.assertFalse(lower_ax.get_lines()[0].get_in_layout())
+
+    def test_overlapping_ranges_raise(self) -> None:
+        # Act / Assert
+        with self.assertRaises(ValueError):
+            broken_y_axes(self.fig, self.grid[0, 0], (0.0, 20.0), (10.0, 60.0))
 
 
 if __name__ == "__main__":

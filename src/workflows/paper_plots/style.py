@@ -32,6 +32,7 @@ from typing import Iterator, Optional, Sequence
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.gridspec import SubplotSpec
 from matplotlib.text import Text
 
 # Common journal column widths in millimetres. Adjust to the target journal.
@@ -224,3 +225,107 @@ def sync_axis_limits(
         upper = max(ax.get_ylim()[1] for ax in axes)
         for ax in axes:
             ax.set_ylim(lower, upper)
+
+
+def broken_y_axes(
+    fig: Figure,
+    subplot_spec: SubplotSpec,
+    lower_ylim: tuple[float, float],
+    upper_ylim: tuple[float, float],
+    *,
+    height_ratios: tuple[float, float] = (1.0, 4.0),
+    hspace: float = 0.08,
+    break_mark_size: float = 5.0,
+) -> tuple[Axes, Axes]:
+    """Split one grid cell into a pair of axes with a broken y-axis.
+
+    Use this when a single tall bar or point compresses everything else into the
+    bottom of a panel: the empty stretch of the y-axis is cut out, so the bulk of
+    the data keeps its resolution while the outlier stays visible. The caller
+    draws the *same* data onto both axes; each shows only the part of the range
+    its limits cover.
+
+    The two axes share their x-axis, the facing spines and the upper axes' x-tick
+    labels are removed, and diagonal break marks are drawn on both sides of the
+    cut.
+
+    Args:
+        fig: Figure the axes are added to.
+        subplot_spec: Grid cell to split, e.g. ``grid[0, 1]``.
+        lower_ylim: ``(bottom, top)`` limits of the lower (main) axes.
+        upper_ylim: ``(bottom, top)`` limits of the upper (outlier) axes.
+        height_ratios: Height ratio of upper to lower axes. Defaults to a short
+            outlier strip over a tall main panel.
+        hspace: Gap between the two axes, as a fraction of the average axes
+            height. Under ``layout="constrained"`` this is only *extra* space on
+            top of the layout engine's own ``h_pad``, so ``hspace=0`` still
+            leaves a visible gap; shrink ``h_pad`` on the figure's layout engine
+            to close it further.
+        break_mark_size: Size of the diagonal break marks in points.
+
+    Returns:
+        The ``(upper_ax, lower_ax)`` pair, in top-to-bottom order.
+
+    Raises:
+        ValueError: If ``lower_ylim`` and ``upper_ylim`` are not disjoint and
+            ordered, i.e. if the upper axes does not start above the top of the
+            lower axes. Overlapping ranges would draw the same bars twice.
+    """
+    if upper_ylim[0] < lower_ylim[1]:
+        raise ValueError(
+            f"upper_ylim {upper_ylim} must start above the top of lower_ylim "
+            f"{lower_ylim}; overlapping ranges would show the same data twice."
+        )
+
+    grid = subplot_spec.subgridspec(
+        nrows=2, ncols=1, height_ratios=list(height_ratios), hspace=hspace
+    )
+    upper_ax = fig.add_subplot(grid[0, 0])
+    lower_ax = fig.add_subplot(grid[1, 0], sharex=upper_ax)
+    upper_ax.set_ylim(*upper_ylim)
+    lower_ax.set_ylim(*lower_ylim)
+    # Plotting onto the axes afterwards would otherwise autoscale the y-limits
+    # back to the full data range and undo the break.
+    upper_ax.set_autoscaley_on(False)
+    lower_ax.set_autoscaley_on(False)
+
+    upper_ax.spines["bottom"].set_visible(False)
+    lower_ax.spines["top"].set_visible(False)
+    upper_ax.tick_params(axis="x", bottom=False, labelbottom=False)
+
+    # Slanted marks straddling the cut, one pair per axes so they stay put when
+    # the axes are resized by the layout engine. They are only drawn where a
+    # vertical spine actually ends, so they do not float in mid-air on a panel
+    # whose right spine the stylesheet hides.
+    break_mark = {
+        "marker": [(-1.0, -0.5), (1.0, 0.5)],
+        "markersize": break_mark_size,
+        "linestyle": "none",
+        "color": "black",
+        "markeredgecolor": "black",
+        "markeredgewidth": 1.0,
+        "clip_on": False,
+    }
+    mark_x_positions = [
+        x_position
+        for x_position, spine_name in ((0.0, "left"), (1.0, "right"))
+        if lower_ax.spines[spine_name].get_visible()
+    ]
+    upper_marks = upper_ax.plot(
+        mark_x_positions,
+        [0.0] * len(mark_x_positions),
+        transform=upper_ax.transAxes,
+        **break_mark,
+    )
+    lower_marks = lower_ax.plot(
+        mark_x_positions,
+        [1.0] * len(mark_x_positions),
+        transform=lower_ax.transAxes,
+        **break_mark,
+    )
+    # The marks straddle the cut on purpose, so they must not be treated as
+    # decorations the layout engine has to make room for -- that would push the
+    # two halves apart again.
+    for mark in (*upper_marks, *lower_marks):
+        mark.set_in_layout(False)
+    return upper_ax, lower_ax
