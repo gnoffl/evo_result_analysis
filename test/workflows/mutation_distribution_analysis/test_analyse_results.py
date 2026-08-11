@@ -1,4 +1,4 @@
-"""Tests for plot_optimization_vs_random calculation functions."""
+"""Tests for analyse_results calculation and plotting functions."""
 
 import textwrap
 import unittest
@@ -10,7 +10,7 @@ matplotlib.use("Agg")  # headless backend for tests
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from workflows.mutation_distribution_analysis.plot_optimization_vs_random import (
+from workflows.mutation_distribution_analysis.analyse_results import (
     build_plot_dataframe,
     load_evolution_summary,
     load_random_mutation_averages,
