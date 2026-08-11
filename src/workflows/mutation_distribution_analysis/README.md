@@ -35,16 +35,27 @@ much simpler equivalent (`plans/baseline_sampler_plan.md`):
 * For a target gene with wildtype `W`, filter the pool to rows where
   `source_base == W[position]` — i.e. the subset of pool entries that are
   consistent with this gene's wildtype.
-* **Uniformly sample rows** from that subset.
+* **Sample `k` distinct positions**, then a substitution at each.
 
-Uniform-over-rows reproduces the empirical joint `(position, source_base,
-new_base)` density implicitly: a `(pos, src, new)` combination that occurs
-50× in the filtered pool is drawn 50× more often than one that occurs once.
-No explicit PMF, no smoothing decisions, no fallback rules for sparse cells.
+The empirical joint factorises as `P(position, source_base, new_base) =
+P(position) · P(new_base | position)`, with `source_base` fixed by the
+wildtype at that position. The two factors are drawn separately:
 
-After each draw all rows sharing the chosen position are removed from the
-working set ("position blocking"), guaranteeing no two SNPs land at the same
-site in one baseline.
+* **Positions** come from the maximum-entropy (conditional Bernoulli) design in
+  `conditional_poisson.py`, calibrated so that position `i`'s probability of
+  *ending up in* the drawn set of size `k` is exactly `k · n_i / N`, where
+  `n_i` is its number of applicable rows and `N` the total. No two SNPs can
+  land at the same site, because the design draws distinct positions by
+  construction.
+* **Substitutions** are then uniform over the applicable rows at each drawn
+  position, so a `(pos, src, new)` combination occurring 50× at that position
+  is drawn 50× more often than one occurring once. No explicit PMF, no
+  smoothing decisions, no fallback rules for sparse cells.
+
+The earlier scheme — draw a row uniformly, drop that position, repeat — kept
+each *individual draw* proportional to the pool but not the *inclusion*
+probabilities, which flattened the null. See
+`plans/sampler_inclusion_probability_fix.md`.
 
 ---
 
@@ -161,8 +172,9 @@ arguments.
 | Sequence per gene | Highest-fitness pareto tip at gen 1999 | Also the most-mutated sequence → consistent target for the "what does the algorithm do" question |
 | Pool scope | Pooled across all ~1000 genes | ~75k mutations give reliable empirical estimates |
 | Source-base conditioning | Always | Sticks closely to what the evolutionary algorithm actually does (sampling `(position, source_base, new_base)` triples) and is more specific than conditioning on position alone |
-| Sampling implementation | **Uniform over filtered rows + position blocking** (replaces the PMF approach in `plans/plan.md`) | Implicitly preserves the empirical joint; no smoothing or fallback edge cases |
-| Position uniqueness | Without replacement (position-blocking) | No two SNPs at the same site, mirroring the algorithm's behaviour |
+| Sampling implementation | **Maximum-entropy position design + uniform substitution over applicable rows** (replaces both the PMF approach in `plans/plan.md` and the uniform-over-rows draw that followed it) | Inclusion probability is exactly `k · n_i / N`, which uniform-over-rows did not deliver; the substitution conditional still needs no smoothing or fallback |
+| Position uniqueness | Distinct positions by construction (conditional Bernoulli, conditioned on exactly `k`) | No two SNPs at the same site, mirroring the algorithm's behaviour |
+| Infeasible target (`k · n_i / N > 1`) | Take-all capping, iterated — genes are **not** dropped | An inclusion probability above 1 cannot be granted; affects 3 ara / 6 zea genes, forcing 1–2 positions of ~90 (≤0.18% of `k` displaced). Dropping would be a threshold artefact on a quantity correlated `rho = +0.66/+0.34` with fitness gain. See `plans/sampler_inclusion_probability_fix.md` §2.1–2.2 |
 | Insufficient applicable pool | Skip gene with warning, continue | Single gene shouldn't abort a 1000-gene run |
 | Pool persistence format | Plain JSON (three top-level keys) | Human-readable, reloads cleanly to the original DataFrames |
 | Pareto-front fitness recorded | `initial_fitness` (fewest mutations) + `final_fitness` (most mutations) | Captures the front's span without persisting the whole front |
@@ -191,14 +203,19 @@ mutation_distribution_analysis/
 ├── README.md                       (this file)
 ├── mutation_pool.py                Step 1 — pool extraction
 ├── baseline_sampler.py             Steps 2+3 — filtering + sampling
+├── conditional_poisson.py          maximum-entropy position design
 ├── evaluate_sequences.py           Step 4 — MSR scoring (script form)
 ├── mutation_pools/                 persisted pools (ara, zea)
 ├── mutated_sequences/              sampled FASTAs + prediction CSVs
 └── plans/
     ├── plan.md                     original conceptual plan (PMF approach)
     ├── mutation_pool_plan.md       Step 1 implementation plan
-    └── baseline_sampler_plan.md    Steps 2+3 implementation plan
-                                    (supersedes the PMF approach in plan.md)
+    ├── baseline_sampler_plan.md    Steps 2+3 implementation plan
+    │                               (supersedes the PMF approach in plan.md)
+    ├── sampler_inclusion_probability_fix.md
+    │                               why uniform-over-rows was wrong
+    └── conditional_poisson_implementation_plan.md
+                                    the design that replaced it
 ```
 
 Unit tests for steps 1 and 2/3 live at
