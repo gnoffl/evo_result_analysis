@@ -2,7 +2,16 @@
 
 Compares the inter-mutation distance distribution of the EA's *real*
 mutations against a null distribution drawn from the EA's own positional
-pool (uniform-over-rows + position-blocking, no wildtype filtering).
+pool (no wildtype filtering).
+
+The null uses the maximum-entropy (conditional Bernoulli) design of
+:mod:`workflows.mutation_distribution_analysis.conditional_poisson`, under
+which a position's probability of appearing in a drawn set of size ``k`` is
+exactly ``k`` times its share of the pool. The earlier
+uniform-over-rows-with-position-blocking draw did **not** have that property —
+it is successive sampling, which flattens the null relative to the positional
+usage it was calibrated against; see
+``mutation_distribution_analysis/plans/sampler_inclusion_probability_fix.md``.
 
 Public API:
 
@@ -36,45 +45,10 @@ from tqdm import tqdm
 from analysis.mutations.analyze_mutations import (
     calculate_mutation_distances_single_gene,
 )
+from workflows.mutation_distribution_analysis.conditional_poisson import (
+    PositionSampler,
+)
 from workflows.mutation_distribution_analysis.mutation_pool import MutationPool
-
-
-def _sample_positions_blocking(
-    unique_positions: np.ndarray,
-    weights: np.ndarray,
-    k: int,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    """Draw ``k`` distinct positions weighted-without-replacement from a PMF.
-
-    Mathematically equivalent to
-    :func:`workflows.mutation_distribution_analysis.baseline_sampler._sample_mutations_blocking`
-    when only positions (not the ``(source_base, new_base)`` triple) are
-    needed: uniform-over-rows with position blocking is identical to
-    weighted-without-replacement over unique positions, with each unique
-    position weighted by its row count in the pool.
-
-    Args:
-        unique_positions: Sorted 1-D array of distinct positions from the
-            mutation pool.
-        weights: Probability vector aligned with ``unique_positions``;
-            must sum to 1.
-        k: Number of distinct positions to draw.
-        rng: NumPy ``Generator`` used for the draw.
-
-    Returns:
-        1-D array of ``k`` distinct positions sampled without replacement
-        according to ``weights``.
-
-    Raises:
-        ValueError: If ``k`` exceeds the number of unique positions.
-    """
-    if k > unique_positions.size:
-        raise ValueError(
-            f"Cannot draw {k} position-blocking mutations: only "
-            f"{unique_positions.size} unique applicable positions available."
-        )
-    return rng.choice(unique_positions, size=k, replace=False, p=weights)
 
 
 def compute_real_distances(pool: MutationPool) -> Counter:
@@ -112,12 +86,19 @@ def compute_random_distances(
 
     For every gene in ``pool.references``, ``k`` is read from
     ``pool.gene_stats`` (``n_mutations`` column). ``n_per_gene`` independent
-    position-sets of size ``k`` are then drawn from the *full* unfiltered
-    pool of positions via :func:`_sample_positions_blocking`
-    (weighted-without-replacement, equivalent to uniform-over-rows with
-    position blocking). The per-replicate ``np.diff`` of the sorted draws
-    is accumulated and collapsed into a single ``Counter`` at the end.
-    Genes with ``k < 2`` contribute nothing.
+    position-sets of size ``k`` are then drawn from the *full* unfiltered pool
+    of positions under the maximum-entropy design of
+    :class:`~workflows.mutation_distribution_analysis.conditional_poisson.PositionSampler`,
+    so that each position's probability of *ending up in* a drawn set is
+    exactly ``k`` times its share of the pool. The per-replicate ``np.diff`` of
+    the sorted draws is accumulated and collapsed into a single ``Counter`` at
+    the end. Genes with ``k < 2`` contribute nothing.
+
+    The sampler is calibrated per distinct ``k`` — the calibration depends on
+    the sample size, not only on the pool — and cached, since the same
+    unfiltered pool is shared by every gene. Across roughly 1000 genes there
+    are about 40 distinct values of ``k``, so this costs a few seconds in
+    total rather than one calibration per gene.
 
     Args:
         pool: Mutation pool providing both the sample space
@@ -134,19 +115,19 @@ def compute_random_distances(
     """
     pos_arr = pool.mutations["position"].to_numpy()
     unique_positions, counts = np.unique(pos_arr, return_counts=True)
-    weights = counts / counts.sum()
 
     gene_stats_by_id = pool.gene_stats.set_index("gene_id")
+    samplers_by_k: dict[int, PositionSampler] = {}
     all_distances: list[np.ndarray] = []
     for gene_id in tqdm(pool.references.keys(), desc="Random per-gene draws"):
         k = int(gene_stats_by_id.loc[gene_id, "n_mutations"])
         if k < 2:
             continue
+        if k not in samplers_by_k:
+            samplers_by_k[k] = PositionSampler(counts.astype(float), k)
+        sampler = samplers_by_k[k]
         for _ in range(n_per_gene):
-            positions = _sample_positions_blocking(
-                unique_positions, weights, k, rng
-            )
-            positions.sort()
+            positions = unique_positions[sampler.draw(rng)]
             all_distances.append(np.diff(positions))
 
     if not all_distances:

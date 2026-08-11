@@ -3,12 +3,29 @@
 Generates random "baseline" promoter sequences by sampling SNPs directly
 from a pre-built :class:`MutationPool`. For a target gene with wildtype
 ``W``, only pool rows whose ``source_base`` matches ``W[position]`` are
-biochemically applicable; uniform sampling over those rows reproduces the
-empirical joint distribution ``P(position, source_base, new_base)`` while
-position-blocking enforces "no two SNPs at the same site".
+biochemically applicable.
+
+The draw is factorised into a position design and a substitution draw, which
+the empirical joint ``P(position, source_base, new_base)`` permits exactly (see
+:class:`GeneMutationSampler`). Positions are drawn under the maximum-entropy
+design of
+:mod:`workflows.mutation_distribution_analysis.conditional_poisson`, so a
+position's probability of *ending up in* a drawn set of size ``k`` is exactly
+``k`` times its share of the applicable rows, and no two SNPs land at the same
+site. The substitution is then uniform over the applicable rows at the drawn
+position.
+
+The earlier scheme — draw a row uniformly, drop that position, repeat — is
+successive sampling, whose *inclusion* probabilities are not proportional to
+the pool share even though each individual draw is: heavy positions come out
+under-included and light ones over-included, flattening the null. The bias is
+larger here than in the distance analysis because ``_filter_applicable``
+concentrates the weights (median ``max(k*p)`` of 0.23 in ara, 0.41 in zea). See
+``plans/sampler_inclusion_probability_fix.md``.
 
 Public API:
 
+* :class:`GeneMutationSampler` — per-gene calibrated sampler.
 * :func:`sample_baseline_sequence` — per-gene baseline.
 * :func:`generate_baselines_fasta` — batch driver over an entire pool.
 * :func:`main` — CLI entry point.
@@ -18,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -25,6 +43,9 @@ import pandas as pd
 
 from analysis.utils.io import print_status
 from tqdm import tqdm
+from workflows.mutation_distribution_analysis.conditional_poisson import (
+    PositionSampler,
+)
 from workflows.mutation_distribution_analysis.mutation_pool import MutationPool
 
 
@@ -55,55 +76,133 @@ def _filter_applicable(
     return mutations.loc[mask]
 
 
-def _sample_mutations_blocking(
-    applicable: pd.DataFrame,
-    k: int,
-    rng: np.random.Generator,
-) -> List[Tuple[int, str, str]]:
-    """Sample ``k`` mutations uniformly from ``applicable`` with position blocking.
+@dataclass(frozen=True)
+class GeneMutationSampler:
+    """Draws position-blocked mutation sets for one gene's applicable pool.
 
-    After each draw, all rows sharing the drawn position are removed from
-    the working set before the next draw. This guarantees no two sampled
-    mutations land at the same site, while keeping each draw uniform over
-    the rows of the (filtered) pool — which preserves the empirical
-    positional PMF.
+    The joint distribution the pool encodes, ``P(position, source_base,
+    new_base)``, factorises exactly:
+
+    ``P(position = i) = n_i / N`` and
+    ``P(new_base = b | position = i) = n_{i,b} / n_i``,
+
+    where ``n_i`` is the number of applicable rows at position ``i``, ``N`` the
+    total number of applicable rows, and ``n_{i,b}`` the number of those rows
+    carrying substitution ``b``. The conditional does not involve the position
+    design at all — it is a property of the rows at that position — so the
+    positional marginal can be replaced by a correct one without touching it.
+    That is what this class does: positions come from a
+    :class:`~workflows.mutation_distribution_analysis.conditional_poisson.PositionSampler`
+    with weights ``n_i``, so position ``i`` appears in a drawn set with
+    probability exactly ``k * n_i / N``; the substitution is then drawn
+    uniformly over the applicable rows at the chosen position.
+
+    ``source_base`` needs no draw at all. ``_filter_applicable`` keeps only
+    rows whose ``source_base`` equals the wildtype base at their position, so
+    every applicable row at a given position carries the same ``source_base``
+    by construction — verified here rather than assumed.
+
+    Attributes:
+        unique_positions: Ascending distinct positions of the applicable pool.
+        group_starts: Index into the position-sorted row arrays at which each
+            unique position's rows begin.
+        group_sizes: Number of applicable rows at each unique position.
+        source_bases: The single source base of each unique position.
+        sorted_new_bases: ``new_base`` of every applicable row, ordered by
+            position so that each unique position's candidates form a
+            contiguous block.
+        position_sampler: Calibrated maximum-entropy sampler over
+            ``unique_positions``.
+    """
+
+    unique_positions: np.ndarray
+    group_starts: np.ndarray
+    group_sizes: np.ndarray
+    source_bases: np.ndarray
+    sorted_new_bases: np.ndarray
+    position_sampler: PositionSampler
+
+    def draw(self, rng: np.random.Generator) -> List[Tuple[int, str, str]]:
+        """Draw one position-blocked mutation set.
+
+        Args:
+            rng: NumPy ``Generator`` used for the position draw and the
+                substitution draws.
+
+        Returns:
+            A list of ``(position, source_base, new_base)`` tuples of length
+            ``position_sampler.sample_size``, in ascending position order. All
+            positions are distinct, and each ``source_base`` matches the
+            wildtype base at its position.
+        """
+        drawn = self.position_sampler.draw(rng)
+        if drawn.size == 0:
+            return []
+
+        offsets = rng.integers(0, self.group_sizes[drawn])
+        row_indices = self.group_starts[drawn] + offsets
+        return [
+            (
+                int(self.unique_positions[index]),
+                str(self.source_bases[index]),
+                str(self.sorted_new_bases[row]),
+            )
+            for index, row in zip(drawn, row_indices)
+        ]
+
+
+def _build_gene_sampler(
+    applicable: pd.DataFrame, k: int
+) -> GeneMutationSampler:
+    """Group a gene's applicable pool by position and calibrate its sampler.
 
     Args:
-        applicable: Pool rows applicable to the target wildtype. Must contain
-            ``position``, ``source_base``, ``new_base`` columns.
-        k: Number of mutations to draw.
-        rng: NumPy ``Generator`` used for index sampling. Not consumed when
-            ``k == 0``.
+        applicable: Pool rows applicable to the target wildtype, as returned by
+            :func:`_filter_applicable`. Must contain ``position``,
+            ``source_base`` and ``new_base`` columns.
+        k: Number of distinct positions each draw should return.
 
     Returns:
-        A list of ``(position, source_base, new_base)`` tuples of length ``k``,
-        in draw order. All positions are distinct.
+        A :class:`GeneMutationSampler` for this gene. Calibration happens here,
+        so building one costs about 0.3 s at the real pool sizes while each
+        subsequent draw costs well under a millisecond.
 
     Raises:
-        ValueError: If the number of unique positions in ``applicable`` is
-            below ``k``.
+        ValueError: If ``applicable`` holds fewer unique positions than ``k``,
+            or if some position carries more than one distinct ``source_base``
+            (which ``_filter_applicable`` makes impossible, so it would signal
+            an upstream bug).
     """
-    if k == 0:
-        return []
+    positions = applicable["position"].to_numpy()
+    order = np.argsort(positions, kind="stable")
+    sorted_positions = positions[order]
+    sorted_source_bases = applicable["source_base"].to_numpy()[order]
+    sorted_new_bases = applicable["new_base"].to_numpy()[order]
 
-    unique_position_count = applicable["position"].nunique()
-    if unique_position_count < k:
+    unique_positions, group_starts, group_sizes = np.unique(
+        sorted_positions, return_index=True, return_counts=True
+    )
+    if unique_positions.size < k:
         raise ValueError(
             f"Cannot draw {k} position-blocking mutations: only "
-            f"{unique_position_count} unique applicable positions available."
+            f"{unique_positions.size} unique applicable positions available."
         )
 
-    working = applicable
-    result: List[Tuple[int, str, str]] = []
-    for _ in range(k):
-        idx = int(rng.integers(0, len(working)))
-        row = working.iloc[idx]
-        position = int(row["position"])
-        result.append(
-            (position, str(row["source_base"]), str(row["new_base"]))
+    source_bases = sorted_source_bases[group_starts]
+    if not np.all(sorted_source_bases == np.repeat(source_bases, group_sizes)):
+        raise ValueError(
+            "Applicable pool has more than one source_base at some position; "
+            "_filter_applicable should have made that impossible."
         )
-        working = working.loc[working["position"] != position]
-    return result
+
+    return GeneMutationSampler(
+        unique_positions=unique_positions,
+        group_starts=group_starts,
+        group_sizes=group_sizes,
+        source_bases=source_bases,
+        sorted_new_bases=sorted_new_bases,
+        position_sampler=PositionSampler(group_sizes.astype(float), k),
+    )
 
 
 def _apply_mutations(
@@ -157,14 +256,19 @@ def sample_baseline_sequence(
         KeyError: If ``gene_id`` is not present in ``pool.references``.
         ValueError: If the applicable pool has fewer unique positions than
             ``n_mutations``.
+
+    Note:
+        This builds and calibrates a :class:`GeneMutationSampler` on every
+        call, which dominates the cost. Use :func:`generate_baselines_fasta`,
+        or build the sampler yourself, when drawing repeatedly for one gene.
     """
     if gene_id not in pool.references:
         raise KeyError(f"Gene id '{gene_id}' not found in pool.references")
 
     wildtype = pool.references[gene_id]
     applicable = _filter_applicable(pool.mutations, wildtype)
-    mutations = _sample_mutations_blocking(applicable, n_mutations, rng)
-    return _apply_mutations(wildtype, mutations)
+    sampler = _build_gene_sampler(applicable, n_mutations)
+    return _apply_mutations(wildtype, sampler.draw(rng))
 
 
 def generate_baselines_fasta(
@@ -178,12 +282,17 @@ def generate_baselines_fasta(
     For each gene in ``pool.references``:
 
     * ``k`` is taken from ``pool.gene_stats`` (``n_mutations`` column).
-    * The applicable subset of ``pool.mutations`` is computed once.
+    * The applicable subset of ``pool.mutations`` is computed once, and one
+      :class:`GeneMutationSampler` is built and calibrated from it.
     * If the number of unique applicable positions is below ``k``, the gene
       is skipped with a warning and the loop continues.
     * Otherwise ``n_per_gene`` independent baselines are drawn and appended
       to the output FASTA. Each record uses one header line and one
       sequence line.
+
+    Both ``p`` and ``k`` are gene-specific, so the position design has to be
+    calibrated per gene rather than once for the pool. That costs roughly
+    0.3 s per gene, i.e. about five minutes for a thousand-gene pool.
 
     Args:
         pool: Pre-built mutation pool.
@@ -195,6 +304,12 @@ def generate_baselines_fasta(
         rng = np.random.default_rng()
 
     gene_stats_by_id = pool.gene_stats.set_index("gene_id")
+    print_status(
+        f"Calibrating a per-gene position design for "
+        f"{len(pool.references)} genes; expect roughly "
+        f"{0.3 * len(pool.references) / 60:.0f} minutes.",
+        "INFO",
+    )
 
     with open(output_path, "w") as fasta:
         for gene_id, wildtype in tqdm(pool.references.items(), desc="Generating baselines"):
@@ -210,9 +325,9 @@ def generate_baselines_fasta(
                 )
                 continue
 
+            sampler = _build_gene_sampler(applicable, k)
             for i in range(n_per_gene):
-                mutations = _sample_mutations_blocking(applicable, k, rng)
-                sequence = _apply_mutations(wildtype, mutations)
+                sequence = _apply_mutations(wildtype, sampler.draw(rng))
                 fasta.write(f">{gene_id}_baseline_{i:03d}\n")
                 fasta.write(f"{sequence}\n")
 

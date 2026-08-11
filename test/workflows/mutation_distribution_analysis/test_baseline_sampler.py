@@ -16,8 +16,8 @@ import pandas as pd
 from workflows.mutation_distribution_analysis import baseline_sampler as bs
 from workflows.mutation_distribution_analysis.baseline_sampler import (
     _apply_mutations,
+    _build_gene_sampler,
     _filter_applicable,
-    _sample_mutations_blocking,
     generate_baselines_fasta,
     sample_baseline_sequence,
 )
@@ -137,12 +137,12 @@ class TestFilterApplicable(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _sample_mutations_blocking
+# GeneMutationSampler / _build_gene_sampler
 # ---------------------------------------------------------------------------
 
 
-class TestSampleMutationsBlocking(unittest.TestCase):
-    """Tests for bs._sample_mutations_blocking."""
+class TestGeneMutationSampler(unittest.TestCase):
+    """Tests for bs._build_gene_sampler and the sampler it returns."""
 
     @staticmethod
     def _wide_applicable() -> pd.DataFrame:
@@ -154,31 +154,32 @@ class TestSampleMutationsBlocking(unittest.TestCase):
 
     def test_returns_k_mutations(self) -> None:
         """A seeded draw of k=3 yields exactly 3 mutation tuples."""
-        applicable = self._wide_applicable()
+        sampler = _build_gene_sampler(self._wide_applicable(), 3)
         rng = np.random.default_rng(0)
 
-        result = _sample_mutations_blocking(applicable, 3, rng)
+        result = sampler.draw(rng)
 
         self.assertEqual(len(result), 3)
 
     def test_no_duplicate_positions(self) -> None:
         """Sampled positions are all distinct under position blocking."""
         applicable = pd.DataFrame([_mut_row(f"g{p}", (p // 5) + 1, "A", "T") for p in range(20)], columns=MUTATION_COLUMNS)
+        sampler = _build_gene_sampler(applicable, 4)
         rng = np.random.default_rng(random.randint(0, 1000))
 
-        result = _sample_mutations_blocking(applicable, 4, rng)
+        result = sampler.draw(rng)
         positions = [pos for pos, _, _ in result]
 
         self.assertEqual(len(positions), len(set(positions)))
 
     def test_deterministic_under_seed(self) -> None:
         """Two calls with identical seeds produce identical sequences of draws."""
-        applicable = self._wide_applicable()
+        sampler = _build_gene_sampler(self._wide_applicable(), 4)
         rng_a = np.random.default_rng(42)
         rng_b = np.random.default_rng(42)
 
-        result_a = _sample_mutations_blocking(applicable, 4, rng_a)
-        result_b = _sample_mutations_blocking(applicable, 4, rng_b)
+        result_a = sampler.draw(rng_a)
+        result_b = sampler.draw(rng_b)
 
         self.assertEqual(result_a, result_b)
 
@@ -191,21 +192,131 @@ class TestSampleMutationsBlocking(unittest.TestCase):
             ],
             columns=MUTATION_COLUMNS,
         )
-        rng = np.random.default_rng(0)
 
         with self.assertRaises(ValueError):
-            _sample_mutations_blocking(applicable, 3, rng)
+            _build_gene_sampler(applicable, 3)
 
     def test_zero_k_returns_empty_list(self) -> None:
         """k=0 returns [] and does not consume the RNG state."""
-        applicable = self._wide_applicable()
+        sampler = _build_gene_sampler(self._wide_applicable(), 0)
         rng = np.random.default_rng(7)
         state_before = rng.bit_generator.state
 
-        result = _sample_mutations_blocking(applicable, 0, rng)
+        result = sampler.draw(rng)
 
         self.assertEqual(result, [])
         self.assertEqual(rng.bit_generator.state, state_before)
+
+    def test_rejects_a_position_with_two_source_bases(self) -> None:
+        """A position carrying two source bases signals an upstream bug."""
+        applicable = pd.DataFrame(
+            [
+                _mut_row("g1", 0, "A", "T"),
+                _mut_row("g2", 0, "C", "T"),
+                _mut_row("g3", 1, "A", "G"),
+            ],
+            columns=MUTATION_COLUMNS,
+        )
+
+        with self.assertRaises(ValueError):
+            _build_gene_sampler(applicable, 1)
+
+
+class TestDrawFactorisation(unittest.TestCase):
+    """The factorised draw reproduces the pool's conditional distributions.
+
+    The position marginal is deliberately *not* the pool share — that is the
+    point of the fix — but the substitution conditional
+    ``P(new_base | position)`` must still be exactly the applicable-row
+    frequency at that position, and ``source_base`` must be determined rather
+    than drawn.
+    """
+
+    @staticmethod
+    def _mixed_applicable() -> pd.DataFrame:
+        """Two positions, with 3:1 and 1:1 splits between two substitutions."""
+        rows = (
+            [_mut_row("g1", 0, "A", "T")] * 3
+            + [_mut_row("g1", 0, "A", "G")] * 1
+            + [_mut_row("g1", 1, "C", "T")] * 2
+            + [_mut_row("g1", 1, "C", "G")] * 2
+        )
+        return pd.DataFrame(rows, columns=MUTATION_COLUMNS)
+
+    def test_source_base_is_uniquely_determined(self) -> None:
+        """Each position has one source base, taken without consuming the RNG."""
+        applicable = self._mixed_applicable()
+        sampler = _build_gene_sampler(applicable, 2)
+
+        self.assertEqual(list(sampler.source_bases), ["A", "C"])
+
+    def test_new_base_frequencies_match_the_applicable_rows(self) -> None:
+        """P(new_base | position) equals that substitution's row share."""
+        applicable = self._mixed_applicable()
+        sampler = _build_gene_sampler(applicable, 2)
+        expected = {0: {"T": 0.75, "G": 0.25}, 1: {"T": 0.5, "G": 0.5}}
+        n_replicates = 20000
+        rng = np.random.default_rng(4242)
+        hits: Dict[int, Dict[str, int]] = {
+            0: {"T": 0, "G": 0}, 1: {"T": 0, "G": 0}
+        }
+
+        for _ in range(n_replicates):
+            for position, source_base, new_base in sampler.draw(rng):
+                self.assertEqual(source_base, "A" if position == 0 else "C")
+                hits[position][new_base] += 1
+
+        for position, expected_shares in expected.items():
+            total = sum(hits[position].values())
+            self.assertEqual(total, n_replicates)  # k = 2, both always drawn
+            for new_base, expected_share in expected_shares.items():
+                observed = hits[position][new_base] / total
+                # 5 standard errors of a binomial proportion.
+                tolerance = 5.0 * (
+                    expected_share * (1 - expected_share) / total
+                ) ** 0.5
+                self.assertAlmostEqual(
+                    observed, expected_share, delta=tolerance,
+                    msg=f"position {position}, new_base {new_base}",
+                )
+
+    def test_position_inclusion_is_proportional_to_row_count(self) -> None:
+        """A position appears in a draw with probability ``k * n_i / N``.
+
+        This is the property the replaced successive sampler lacked.
+        """
+        rows = (
+            [_mut_row("g1", 0, "A", "T")] * 40
+            + [_mut_row("g1", 1, "A", "G")] * 30
+            + [_mut_row("g1", 2, "A", "C")] * 20
+            + [_mut_row("g1", 3, "A", "T")] * 6
+            + [_mut_row("g1", 4, "A", "G")] * 4
+        )
+        applicable = pd.DataFrame(rows, columns=MUTATION_COLUMNS)
+        sampler = _build_gene_sampler(applicable, 2)
+        expected = 2.0 * np.array([40, 30, 20, 6, 4]) / 100.0
+        n_replicates = 20000
+        rng = np.random.default_rng(99)
+        hits = np.zeros(5)
+
+        for _ in range(n_replicates):
+            for position, _source_base, _new_base in sampler.draw(rng):
+                hits[position] += 1
+        observed = hits / n_replicates
+
+        for position, expected_probability in enumerate(expected):
+            tolerance = 5.0 * (
+                expected_probability
+                * (1 - expected_probability)
+                / n_replicates
+            ) ** 0.5
+            self.assertAlmostEqual(
+                observed[position], expected_probability, delta=tolerance,
+                msg=(
+                    f"position {position}: observed {observed[position]:.4f} "
+                    f"vs target {expected_probability:.4f}"
+                ),
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -21,7 +21,6 @@ from workflows.mutation_distance_analysis import (
     mutation_distance_analysis as mda,
 )
 from workflows.mutation_distance_analysis.mutation_distance_analysis import (
-    _sample_positions_blocking,
     _to_proportions,
     compute_random_distances,
     compute_real_distances,
@@ -78,167 +77,16 @@ def _make_pool(
 
 
 # ---------------------------------------------------------------------------
-# _sample_positions_blocking
+# position sampling
+#
+# ``_sample_positions_blocking`` was removed: it drew positions by successive
+# sampling, whose inclusion probabilities are not proportional to the pool
+# share. ``compute_random_distances`` now uses
+# ``conditional_poisson.PositionSampler``, and the draw's contract — size,
+# uniqueness, determinism, error paths, and the inclusion probabilities
+# themselves — is covered in
+# ``test/workflows/mutation_distribution_analysis/test_conditional_poisson.py``.
 # ---------------------------------------------------------------------------
-
-
-class TestSamplePositionsBlocking(unittest.TestCase):
-    """Tests for _sample_positions_blocking."""
-
-    # ------------------------------------------------------------------
-    # helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _uniform_weights(n: int) -> np.ndarray:
-        """Return a uniform probability vector of length *n*."""
-        return np.full(n, 1.0 / n)
-
-    # ------------------------------------------------------------------
-    # basic contract
-    # ------------------------------------------------------------------
-
-    def test_returns_correct_number_of_positions(self) -> None:
-        """Result has exactly *k* elements."""
-        positions = np.arange(10)
-        weights = self._uniform_weights(10)
-
-        result = _sample_positions_blocking(
-            positions, weights, k=4, rng=np.random.default_rng(0)
-        )
-
-        self.assertEqual(result.shape, (4,))
-        self.assertTrue(all(isinstance(pos, np.integer) for pos in result))
-        self.assertTrue(all(0 <= pos < 10 for pos in result))
-
-    def test_all_returned_positions_are_from_input(self) -> None:
-        """Every drawn position belongs to *unique_positions*."""
-        positions = np.array([3, 7, 15, 22, 40])
-        weights = self._uniform_weights(5)
-
-        result = _sample_positions_blocking(
-            positions, weights, k=3, rng=np.random.default_rng(1)
-        )
-
-        for pos in result:
-            self.assertIn(pos, positions)
-
-    def test_all_returned_positions_are_unique(self) -> None:
-        """Position-blocking: no duplicates in a single draw."""
-        positions = np.arange(20)
-        weights = self._uniform_weights(20)
-
-        result = _sample_positions_blocking(
-            positions, weights, k=10, rng=np.random.default_rng(2)
-        )
-
-        self.assertEqual(len(result), len(set(result.tolist())))
-
-    # ------------------------------------------------------------------
-    # boundary / edge cases
-    # ------------------------------------------------------------------
-
-    def test_draw_k_equals_pool_size(self) -> None:
-        """Drawing all positions returns every position exactly once."""
-        positions = np.array([1, 5, 9])
-        weights = self._uniform_weights(3)
-
-        result = _sample_positions_blocking(
-            positions, weights, k=3, rng=np.random.default_rng(3)
-        )
-
-        self.assertEqual(sorted(result.tolist()), [1, 5, 9])
-
-    def test_draw_k_equals_one(self) -> None:
-        """Requesting a single position returns a length-1 array."""
-        positions = np.array([10, 20, 30])
-        weights = self._uniform_weights(3)
-
-        result = _sample_positions_blocking(
-            positions, weights, k=1, rng=np.random.default_rng(4)
-        )
-
-        self.assertEqual(result.shape, (1,))
-        self.assertIn(result[0], positions)
-
-    # ------------------------------------------------------------------
-    # error handling
-    # ------------------------------------------------------------------
-
-    def test_raises_value_error_when_k_exceeds_pool(self) -> None:
-        """ValueError is raised when *k* > number of unique positions."""
-        positions = np.array([1, 2, 3])
-        weights = self._uniform_weights(3)
-
-        with self.assertRaises(ValueError):
-            _sample_positions_blocking(
-                positions, weights, k=4, rng=np.random.default_rng(0)
-            )
-
-    # ------------------------------------------------------------------
-    # determinism
-    # ------------------------------------------------------------------
-
-    def test_deterministic_under_fixed_seed(self) -> None:
-        """Two calls with the same seed return identical arrays."""
-        positions = np.arange(50)
-        weights = self._uniform_weights(50)
-
-        result_a = _sample_positions_blocking(
-            positions, weights, k=10, rng=np.random.default_rng(99)
-        )
-        result_b = _sample_positions_blocking(
-            positions, weights, k=10, rng=np.random.default_rng(99)
-        )
-
-        np.testing.assert_array_equal(result_a, result_b)
-
-    def test_different_seeds_produce_different_draws(self) -> None:
-        """Two calls with different seeds almost surely differ for a large pool."""
-        positions = np.arange(100)
-        weights = self._uniform_weights(100)
-
-        result_a = _sample_positions_blocking(
-            positions, weights, k=20, rng=np.random.default_rng(7)
-        )
-        result_b = _sample_positions_blocking(
-            positions, weights, k=20, rng=np.random.default_rng(8)
-        )
-
-        # Not guaranteed in general but virtually certain for k=20 out of 100.
-        self.assertFalse(
-            np.array_equal(np.sort(result_a), np.sort(result_b)),
-            "Expected distinct draws from different seeds.",
-        )
-
-
-    # ------------------------------------------------------------------
-    # weight bias
-    # ------------------------------------------------------------------
-
-    def test_weights_bias_the_draw(self) -> None:
-        """A heavily skewed weight vector concentrates draws on one position.
-
-        With k=1, position 0 has weight 0.9 and position 1 has 0.1.
-        Over many independent draws the fraction selecting position 0
-        should be close to 0.9.
-        """
-        positions = np.array([0, 1])
-        weights = np.array([0.9, 0.1])
-        n_trials = 2_000
-        rng = np.random.default_rng(42)
-
-        hits = sum(
-            _sample_positions_blocking(
-                positions, weights, k=1, rng=rng
-            )[0] == 0
-            for _ in range(n_trials)
-        )
-
-        # Allow generous tolerance: expect fraction in [0.85, 0.95].
-        fraction = hits / n_trials
-        self.assertGreater(fraction, 0.85)
-        self.assertLess(fraction, 0.95)
 
 
 # ---------------------------------------------------------------------------
