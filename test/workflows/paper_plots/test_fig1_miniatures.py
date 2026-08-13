@@ -21,6 +21,10 @@ from workflows.paper_plots.fig1_miniatures import (
     _DEEPCIS_TF,
     _FIG6C_MINI_CMAP,
     _FIG6C_MINI_COLOR_SHADE,
+    _PARETO_CMAP,
+    _PARETO_COLOR_SHADE,
+    _PARETO_REJECTED_CMAP,
+    _PARETO_REJECTED_COLOR_SHADE,
     deepcis_scan_mini,
     fig3g_mini,
     fig6c_mini,
@@ -36,24 +40,43 @@ class ParetoFrontMiniTest(unittest.TestCase):
     def tearDown(self) -> None:
         plt.close("all")
 
-    def test_scatters_final_front_with_labels_and_no_legend(self) -> None:
+    def test_scatters_front_and_rejected_with_labels_and_no_legend(self) -> None:
         # Arrange
-        mutation_counts = [0.0, 2.0, 5.0]
-        predictions = [0.2, 0.5, 0.9]
+        front_mutation_counts = [0.0, 2.0, 5.0]
+        front_predictions = [0.2, 0.5, 0.9]
+        rejected_mutation_counts = [1.0, 3.0]
+        rejected_predictions = [0.3, 0.6]
 
         # Act
         with patch(
-            f"{_MODULE}.load_final_front",
-            return_value=(mutation_counts, predictions),
+            f"{_MODULE}.load_final_front_and_rejected",
+            return_value=(
+                (front_mutation_counts, front_predictions),
+                (rejected_mutation_counts, rejected_predictions),
+            ),
         ), patch(f"{_MODULE}._save_mini_figure") as save_mini_figure:
             pareto_front_mini()
 
-        # Assert
+        # Assert: rejected candidates and the front are drawn as two separate
+        # point clouds, in different colours, with no title/legend.
         save_mini_figure.assert_called_once()
         fig = save_mini_figure.call_args.args[0]
         ax = fig.axes[0]
-        self.assertEqual(len(ax.collections), 1)
-        self.assertEqual(len(ax.collections[0].get_offsets()), 3)
+        self.assertEqual(len(ax.collections), 2)
+        rejected_collection, front_collection = ax.collections
+        self.assertEqual(len(rejected_collection.get_offsets()), 2)
+        self.assertEqual(len(front_collection.get_offsets()), 3)
+        expected_front_color = colormaps[_PARETO_CMAP](_PARETO_COLOR_SHADE)
+        expected_rejected_color = colormaps[_PARETO_REJECTED_CMAP](
+            _PARETO_REJECTED_COLOR_SHADE
+        )
+        self.assertEqual(
+            tuple(front_collection.get_facecolor()[0])[:3], expected_front_color[:3]
+        )
+        self.assertEqual(
+            tuple(rejected_collection.get_facecolor()[0])[:3],
+            expected_rejected_color[:3],
+        )
         self.assertEqual(ax.get_xlabel(), "Mutation count")
         self.assertEqual(ax.get_ylabel(), "deepCRE prediction")
         self.assertEqual(ax.get_title(), "")

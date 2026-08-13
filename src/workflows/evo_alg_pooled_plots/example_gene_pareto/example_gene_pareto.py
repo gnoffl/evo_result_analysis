@@ -51,6 +51,13 @@ START_COLOR = "black"
 FRONT_GLOB = "pareto_front*.json"
 _GEN_PATTERN = re.compile(r"pareto_front_gen_(\d+)\.json$")
 
+# Population snapshot file names: ``population_gen_<N>_before.json``, the full
+# population (front members plus non-selected candidates) entering generation
+# ``N``. Used to recover the candidates that were evaluated but not kept on the
+# final front.
+POPULATION_GLOB = "population_gen_*_before.json"
+_POPULATION_GEN_PATTERN = re.compile(r"population_gen_(\d+)_before\.json$")
+
 # Fractional padding added around the data when computing axis limits.
 AXIS_MARGIN = 0.05
 
@@ -79,6 +86,54 @@ def load_mutation_prediction(file_path: Path) -> tuple[list[float], list[float]]
     mutation_counts = [entry[2] for entry in entries]
     predictions = [entry[1] for entry in entries]
     return mutation_counts, predictions
+
+
+def load_sequence_mutation_prediction(
+    file_path: Path,
+) -> tuple[list[str], list[float], list[float]]:
+    """Load sequences, mutation counts, and deepCRE predictions from a JSON file.
+
+    Args:
+        file_path: Path to a JSON file holding a list of
+            ``[sequence, deepcre_prediction, mutation_count]`` triples.
+
+    Returns:
+        A tuple ``(sequences, mutation_counts, predictions)`` of parallel lists.
+    """
+    with open(file_path) as handle:
+        entries = json.load(handle)
+    sequences = [entry[0] for entry in entries]
+    mutation_counts = [entry[2] for entry in entries]
+    predictions = [entry[1] for entry in entries]
+    return sequences, mutation_counts, predictions
+
+
+def all_population_files(run_dir: Path | None = None) -> list[Path]:
+    """Find every population snapshot file, ordered by generation number.
+
+    Args:
+        run_dir: Directory holding ``population_gen_<N>_before.json`` files.
+            Defaults to the module-level :data:`RUN_DIR`, resolved at call
+            time (not import time), so that patching ``RUN_DIR`` in tests
+            takes effect.
+
+    Returns:
+        Paths to every population snapshot file, earliest generation first.
+
+    Raises:
+        ValueError: If no population snapshot file is found.
+    """
+    if run_dir is None:
+        run_dir = RUN_DIR
+    candidates = []
+    for path in run_dir.glob(POPULATION_GLOB):
+        match = _POPULATION_GEN_PATTERN.search(path.name)
+        if match:
+            candidates.append((int(match.group(1)), path))
+    if not candidates:
+        raise ValueError(f"No population snapshot files found in {run_dir}.")
+    candidates.sort(key=lambda item: item[0])
+    return [path for _, path in candidates]
 
 
 def sample_gradient_colors(count: int) -> list[tuple[float, float, float, float]]:
@@ -399,6 +454,52 @@ def load_final_front() -> tuple[list[float], list[float]]:
     file_names = [path.name for path in RUN_DIR.glob(FRONT_GLOB)]
     final_file_name, _ = order_front_files(file_names)[-1]
     return load_mutation_prediction(RUN_DIR / final_file_name)
+
+
+def load_final_front_and_rejected() -> tuple[
+    tuple[list[float], list[float]], tuple[list[float], list[float]]
+]:
+    """Load the final Pareto front plus the population candidates not on it.
+
+    The "rejected" candidates are pooled across every saved population
+    snapshot (every ``population_gen_<N>_before.json`` file, all generations),
+    deduplicated by sequence, and filtered down to those whose sequence is not
+    one of the final front's sequences: solutions the algorithm evaluated at
+    some point but did not keep on the final front.
+
+    Used by :mod:`workflows.paper_plots.fig1_miniatures` to build a small inset
+    illustration from the same data source as the full incremental series
+    above.
+
+    Returns:
+        A tuple ``(front, rejected)``, each a ``(mutation_counts, predictions)``
+        pair of parallel lists.
+    """
+    front_mutation_counts, front_predictions = load_final_front()
+
+    file_names = [path.name for path in RUN_DIR.glob(FRONT_GLOB)]
+    final_file_name, _ = order_front_files(file_names)[-1]
+    front_sequences, _, _ = load_sequence_mutation_prediction(RUN_DIR / final_file_name)
+    front_sequence_set = set(front_sequences)
+
+    rejected_by_sequence: dict[str, tuple[float, float]] = {}
+    for population_file in all_population_files():
+        population_sequences, population_mutation_counts, population_predictions = (
+            load_sequence_mutation_prediction(population_file)
+        )
+        for sequence, mutation_count, prediction in zip(
+            population_sequences, population_mutation_counts, population_predictions
+        ):
+            if sequence not in front_sequence_set:
+                rejected_by_sequence[sequence] = (mutation_count, prediction)
+
+    rejected_mutation_counts = [pair[0] for pair in rejected_by_sequence.values()]
+    rejected_predictions = [pair[1] for pair in rejected_by_sequence.values()]
+
+    return (
+        (front_mutation_counts, front_predictions),
+        (rejected_mutation_counts, rejected_predictions,)
+    )
 
 
 if __name__ == "__main__":

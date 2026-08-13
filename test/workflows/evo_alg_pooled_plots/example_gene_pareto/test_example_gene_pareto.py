@@ -1,18 +1,25 @@
 """Unit tests for the example-gene Pareto scatter calculation functions."""
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import mock_open, patch
 
 from workflows.evo_alg_pooled_plots.example_gene_pareto.example_gene_pareto import (
     _frame_slug,
+    all_population_files,
     compute_shared_limits,
     extract_zero_mutation_points,
+    load_final_front_and_rejected,
     load_mutation_prediction,
+    load_sequence_mutation_prediction,
     order_front_files,
     plot_final_front_mini,
     sample_gradient_colors,
 )
+
+_MODULE = "workflows.evo_alg_pooled_plots.example_gene_pareto.example_gene_pareto"
 
 
 class TestSampleGradientColors(unittest.TestCase):
@@ -176,6 +183,102 @@ class TestExtractZeroMutationPoints(unittest.TestCase):
         # Assert
         self.assertEqual(zero_counts, [])
         self.assertEqual(zero_predictions, [])
+
+
+class TestLoadSequenceMutationPrediction(unittest.TestCase):
+    """Tests for :func:`load_sequence_mutation_prediction`."""
+
+    def test_parses_sequences_mutation_counts_and_predictions(self) -> None:
+        # Arrange
+        entries = [
+            ["ACGT", 0.5, 3.0],
+            ["ACGA", 0.8, 5.0],
+        ]
+        fake_file = mock_open(read_data=json.dumps(entries))
+
+        # Act
+        with patch("builtins.open", fake_file):
+            sequences, mutation_counts, predictions = (
+                load_sequence_mutation_prediction("ignored.json")
+            )
+
+        # Assert
+        self.assertEqual(sequences, ["ACGT", "ACGA"])
+        self.assertEqual(mutation_counts, [3.0, 5.0])
+        self.assertEqual(predictions, [0.5, 0.8])
+
+
+class TestAllPopulationFiles(unittest.TestCase):
+    """Tests for :func:`all_population_files`."""
+
+    def test_orders_by_generation_number(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as run_dir:
+            run_dir_path = Path(run_dir)
+            (run_dir_path / "population_gen_19999_before.json").write_text("[]")
+            (run_dir_path / "population_gen_00001_before.json").write_text("[]")
+            (run_dir_path / "pareto_front.json").write_text("[]")
+
+            # Act
+            result = all_population_files(run_dir_path)
+
+        # Assert
+        self.assertEqual(
+            [path.name for path in result],
+            ["population_gen_00001_before.json", "population_gen_19999_before.json"],
+        )
+
+    def test_raises_when_no_population_file_found(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as run_dir:
+            run_dir_path = Path(run_dir)
+            (run_dir_path / "pareto_front.json").write_text("[]")
+
+            # Act / Assert
+            with self.assertRaises(ValueError):
+                all_population_files(run_dir_path)
+
+
+class TestLoadFinalFrontAndRejected(unittest.TestCase):
+    """Tests for :func:`load_final_front_and_rejected`."""
+
+    def test_splits_population_into_front_and_rejected_across_generations(self) -> None:
+        # Arrange: the final front keeps sequence "A" and "B". Two population
+        # snapshots (different generations) each contribute a distinct
+        # not-selected sequence ("C" and "D"); "C" reappears in both snapshots
+        # and must be counted once.
+        front_entries = [["A", 0.9, 1.0], ["B", 0.8, 2.0]]
+        population_gen_1_entries = [
+            ["A", 0.9, 1.0],
+            ["B", 0.8, 2.0],
+            ["C", 0.4, 4.0],
+        ]
+        population_gen_2_entries = [
+            ["A", 0.9, 1.0],
+            ["C", 0.4, 4.0],
+            ["D", 0.3, 6.0],
+        ]
+        with tempfile.TemporaryDirectory() as run_dir:
+            run_dir_path = Path(run_dir)
+            (run_dir_path / "pareto_front.json").write_text(json.dumps(front_entries))
+            (run_dir_path / "population_gen_00001_before.json").write_text(
+                json.dumps(population_gen_1_entries)
+            )
+            (run_dir_path / "population_gen_00002_before.json").write_text(
+                json.dumps(population_gen_2_entries)
+            )
+
+            # Act
+            with patch(f"{_MODULE}.RUN_DIR", run_dir_path):
+                front, rejected = load_final_front_and_rejected()
+
+        # Assert
+        self.assertEqual(front, ([1.0, 2.0], [0.9, 0.8]))
+        rejected_mutation_counts, rejected_predictions = rejected
+        self.assertEqual(
+            sorted(zip(rejected_mutation_counts, rejected_predictions)),
+            [(4.0, 0.4), (6.0, 0.3)],
+        )
 
 
 class TestPlotFinalFrontMini(unittest.TestCase):

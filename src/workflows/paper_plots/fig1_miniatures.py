@@ -36,7 +36,7 @@ from matplotlib.figure import Figure
 
 from analysis.motives.deepcis_visualize import _plot_gene_tf
 from workflows.evo_alg_pooled_plots.example_gene_pareto.example_gene_pareto import (
-    load_final_front,
+    load_final_front_and_rejected,
 )
 from workflows.overlap_analysis._common import (
     HIGHLIGHT_WINDOW_CENTER,
@@ -78,6 +78,12 @@ _DEEPCIS_MINI_Y_MAX = 1.3
 # the full incremental series' purple/magenta gradient).
 _PARETO_CMAP = "Purples"
 _PARETO_COLOR_SHADE = 0.85
+
+# Colormap and shade for the non-selected candidates shown alongside the final
+# front in the Pareto-front miniature: a deep red from the magma scale, so the
+# two point clouds are distinguishable but visually related.
+_PARETO_REJECTED_CMAP = "magma"
+_PARETO_REJECTED_COLOR_SHADE = 0.6
 
 # Colour for the fig 6c miniature's scatter/fit-line, taken from the magma
 # colormap instead of the full figure's binding-status highlight colour.
@@ -121,15 +127,35 @@ def _save_mini_figure(fig: Figure, filename: str) -> None:
 def pareto_front_mini() -> None:
     """Render and save the final-Pareto-front miniature.
 
-    Loads the example gene's final front via
-    :func:`example_gene_pareto.load_final_front` and scatters it in a single
-    dark purple shade, with axis labels but no title or legend.
+    Loads the example gene's final front and the population candidates not
+    selected onto it via
+    :func:`example_gene_pareto.load_final_front_and_rejected`, scattering the
+    rejected candidates in a deep-red magma shade underneath the front (in its
+    usual dark purple shade), with axis labels but no title or legend.
     """
-    mutation_counts, predictions = load_final_front()
-    color = colormaps[_PARETO_CMAP](_PARETO_COLOR_SHADE)
+    (front_mutation_counts, front_predictions), (
+        rejected_mutation_counts,
+        rejected_predictions,
+    ) = load_final_front_and_rejected()
+    front_color = colormaps[_PARETO_CMAP](_PARETO_COLOR_SHADE)
+    rejected_color = colormaps[_PARETO_REJECTED_CMAP](_PARETO_REJECTED_COLOR_SHADE)
     with publication_style():
         fig, ax = plt.subplots(figsize=figure_size_inches(*_MINI_SIZE_MM))
-        ax.scatter(mutation_counts, predictions, color=color, edgecolors="none")
+        ax.scatter(
+            rejected_mutation_counts,
+            rejected_predictions,
+            color=rejected_color,
+            edgecolors="none",
+            zorder=1,
+            s=5
+        )
+        ax.scatter(
+            front_mutation_counts,
+            front_predictions,
+            color=front_color,
+            edgecolors="none",
+            zorder=2,
+        )
         ax.set_xlabel("Mutation count")
         ax.set_ylabel("deepCRE prediction")
         fig.tight_layout(pad=0.1)
@@ -269,9 +295,9 @@ def fig3g_mini() -> None:
 def main() -> None:
     """Render and save all four figure 1 miniature insets."""
     pareto_front_mini()
-    deepcis_scan_mini()
-    fig6c_mini()
-    fig3g_mini()
+    # deepcis_scan_mini()
+    # fig6c_mini()
+    # fig3g_mini()
 
 
 if __name__ == "__main__":
