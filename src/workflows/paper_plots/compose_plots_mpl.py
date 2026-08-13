@@ -185,7 +185,7 @@ def _populate_fig2(fig: plt.Figure) -> None:
         },
     ]
 
-    panel_letters = [["A", "B", "C"], ["D", "E", "F"]]
+    panel_letters = [["A", "C", "E"], ["B", "D", "F"]]
 
     # Pre-load stats so the scatter panels can share one colour normalisation.
     stats_per_run = [_load_stats(run["stats_json"]) for run in runs]
@@ -203,6 +203,7 @@ def _populate_fig2(fig: plt.Figure) -> None:
     grid = fig.add_gridspec(nrows=2, ncols=4, width_ratios=[1.0, 0.05, 1.0, 1.0])
     colorbar_ax = fig.add_subplot(grid[:, 1])
 
+    scatter_axes = []
     pareto_axes = []
     hist_axes = []
     scatter_mappable = None
@@ -268,6 +269,7 @@ def _populate_fig2(fig: plt.Figure) -> None:
             for ax in (scatter_ax, pareto_ax, hist_ax):
                 ax.set_xlabel("")
 
+        scatter_axes.append(scatter_ax)
         pareto_axes.append(pareto_ax)
         hist_axes.append(hist_ax)
 
@@ -275,6 +277,13 @@ def _populate_fig2(fig: plt.Figure) -> None:
     fig.colorbar(
         scatter_mappable, cax=colorbar_ax, label="Mutations at Half Max Effect"
     )
+
+    # Panel B's tick labels carry one more decimal place than panel A's,
+    # which otherwise pushes B's y-axis label further from the axis than
+    # A's. Pull B's label in to match A's (tighter) distance.
+    scatter_axes[1].yaxis.labelpad = 1.0
+    scatter_axes[0].yaxis.labelpad = 5.0
+
 
     # Make the two runs comparable within the Pareto and histogram columns.
     sync_axis_limits(pareto_axes)
@@ -1663,6 +1672,6 @@ def fig6() -> None:
 
 if __name__ == "__main__":
     fig2()
-    fig3()
-    fig4()
-    fig6()
+    # fig3()
+    # fig4()
+    # fig6()
