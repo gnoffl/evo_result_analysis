@@ -20,10 +20,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from matplotlib import colormaps
 from matplotlib.lines import Line2D
 from scipy.stats import mannwhitneyu
 
-from analysis.motives.deepcis_visualize import _plot_gene_tf
+from analysis.motives.deepcis_visualize import MUTATION_MARKER_COLOR, _plot_gene_tf
 from analysis.mutations.analyze_mutations import (
     COLORS,
     calculate_net_nucleotide_change,
@@ -822,9 +823,22 @@ _FIG4_DEEPCIS_MUTATION_COUNT = 5
 # reference wherever the two sequences predict the same signal (the optimized
 # curve is drawn last). A thinner dashed optimized curve on top of a solid
 # reference keeps both readable where they coincide.
-_FIG4_DEEPCIS_REFERENCE_WIDTH = 1.2
-_FIG4_DEEPCIS_OPTIMIZED_WIDTH = 1.0
+_FIG4_DEEPCIS_REFERENCE_WIDTH = 1.8
+_FIG4_DEEPCIS_OPTIMIZED_WIDTH = 1.4
 _FIG4_DEEPCIS_OPTIMIZED_DASHES = (3, 2)
+
+_FIG4_DEEPCIS_MAGMA = colormaps["magma"]
+
+# Optimized curve and mutation markers are recoloured from the standalone
+# plot's blue/"#d62728" onto the same magma map the rest of the figure's
+# colours are sampled from (see _FIG4_CONDITION_COLORS below). Reference and
+# the TSS/TTS markers keep their standalone colours (black, "#2f4f4f"). The
+# optimized colour sits at a middle magma sample: dark enough to stay visible
+# against the white background, light enough to read against the black
+# reference line, and far enough from the mutation markers' sample (0.65) to
+# stay a distinct magenta rather than red.
+_FIG4_DEEPCIS_OPTIMIZED_COLOR = _FIG4_DEEPCIS_MAGMA(0.75)
+_FIG4_DEEPCIS_MUTATION_COLOR = _FIG4_DEEPCIS_MAGMA(0.55)  # keeps a red look
 
 # Bottom-row bar colours, sampled from the same magma map as the scatter
 # colorbar so the whole figure stays in one colour family. Panel I takes the two
@@ -906,16 +920,23 @@ def _fig4_introduced_mutation_positions() -> List[float]:
 
 
 def _restyle_fig4_deepcis_lines(ax: plt.Axes) -> None:
-    """Thin the track's curves and dash the optimized one.
+    """Thin the track's curves, dash the optimized one, and recolour it to magma.
 
     Both sequences predict an identical signal over most of the window, and the
     optimized curve is drawn last, so at the standalone line weight it hides the
     reference entirely outside the few windows the mutations touch. Dashing it
-    lets the reference show through wherever the two coincide.
+    lets the reference show through wherever the two coincide. The optimized
+    curve and the mutation markers are also recoloured from the standalone
+    plot's blue/"#d62728" onto the figure's magma palette (reference and the
+    TSS/TTS markers are left at their standalone colours). The mutation
+    markers' legend proxy (an off-axes handle already sitting on the legend
+    built by ``_plot_gene_tf``) is recoloured too, since it carries no artist on
+    ``ax`` for the vertical-marker loop below to reach.
 
     Args:
-        ax: Axes holding the track. Curves are matched by their legend label, so
-            unlabelled artists (the vertical markers) are left untouched.
+        ax: Axes holding the track. Curves are matched by their legend label,
+            and mutation markers by their standalone colour, so the TSS/TTS
+            markers (a different colour) are left untouched.
     """
     for line in ax.get_lines():
         if line.get_label() == "Reference":
@@ -923,6 +944,15 @@ def _restyle_fig4_deepcis_lines(ax: plt.Axes) -> None:
         elif line.get_label() == "Optimized":
             line.set_linewidth(_FIG4_DEEPCIS_OPTIMIZED_WIDTH)
             line.set_dashes(_FIG4_DEEPCIS_OPTIMIZED_DASHES)
+            line.set_color(_FIG4_DEEPCIS_OPTIMIZED_COLOR)
+        elif line.get_color() == MUTATION_MARKER_COLOR:
+            line.set_color(_FIG4_DEEPCIS_MUTATION_COLOR)
+
+    legend = ax.get_legend()
+    if legend is not None:
+        for handle in legend.legend_handles:  # type: ignore
+            if handle.get_color() == MUTATION_MARKER_COLOR:
+                handle.set_color(_FIG4_DEEPCIS_MUTATION_COLOR)
 
 
 def _legend_below_keeping_entries(ax: plt.Axes) -> None:
@@ -1675,6 +1705,6 @@ def fig6() -> None:
 
 if __name__ == "__main__":
     # fig2()
-    fig3()
-    # fig4()
+    # fig3()
+    fig4()
     # fig6()

@@ -24,7 +24,9 @@ from workflows.paper_plots.compose_plots_mpl import (
     LOF_UNCONSTRAINED_RUN_DIR,
     LOF_VCF_DIR,
     _FIG4_DEEPCIS_GENE,
+    _FIG4_DEEPCIS_MUTATION_COLOR,
     _FIG4_DEEPCIS_MUTATION_COUNT,
+    _FIG4_DEEPCIS_OPTIMIZED_COLOR,
     _FIG4_DEEPCIS_OPTIMIZED_WIDTH,
     _FIG4_DEEPCIS_REFERENCE_WIDTH,
     _FIG4_DEEPCIS_TF,
@@ -220,6 +222,32 @@ class Fig4DeepcisTrackTest(unittest.TestCase):
         )
         self.assertEqual(reference_line.get_linestyle(), "-")
         self.assertNotEqual(optimized_line.get_linestyle(), "-")
+        self.assertEqual(optimized_line.get_color(), _FIG4_DEEPCIS_OPTIMIZED_COLOR)
+
+    def test_restyle_recolors_mutation_markers_and_their_legend_proxy(self) -> None:
+        # Arrange: a mutation marker (standalone colour) plus a TSS/TTS marker
+        # (a different colour, which must be left alone) and a legend carrying
+        # the mutation markers' off-axes proxy handle.
+        self.ax.axvline(x=0.5, color=MUTATION_MARKER_COLOR, label="_nolegend_")
+        tss_marker = self.ax.axvline(x=0.2, color="#2f4f4f", label="_nolegend_")
+        proxy = Line2D([0], [0], color=MUTATION_MARKER_COLOR, label="Mutations")
+        self.ax.legend(handles=[proxy])
+
+        # Act
+        _restyle_fig4_deepcis_lines(self.ax)
+
+        # Assert
+        marker_colors = {
+            line.get_color()
+            for line in self.ax.get_lines()
+            if line.get_label() == "_nolegend_"
+        }
+        self.assertEqual(marker_colors, {_FIG4_DEEPCIS_MUTATION_COLOR, "#2f4f4f"})
+        self.assertEqual(tss_marker.get_color(), "#2f4f4f")
+        self.assertEqual(
+            self.ax.get_legend().legend_handles[0].get_color(),  # type: ignore
+            _FIG4_DEEPCIS_MUTATION_COLOR,
+        )
 
     def test_legend_below_keeps_proxy_entries_and_refreshes_live_handles(self) -> None:
         # Arrange: one real curve plus a proxy entry with no artist on the axes.
@@ -309,7 +337,7 @@ class Fig4DeepcisTrackTest(unittest.TestCase):
         marker_positions = sorted(
             line.get_xdata()[0]
             for line in self.ax.lines
-            if line.get_color() == MUTATION_MARKER_COLOR
+            if line.get_color() == _FIG4_DEEPCIS_MUTATION_COLOR
         )
         self.assertEqual(marker_positions, [100.0, 200.0])
         self.assertIn(_FIG4_DEEPCIS_TF, self.ax.get_ylabel())
