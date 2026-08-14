@@ -481,13 +481,16 @@ def _draw_significant_tf_heatmap(ax: plt.Axes, colorbar_ax: plt.Axes) -> None:
         add_colorbar=False,
         ax=ax,
     )
-    ax.figure.colorbar(ax.collections[0], cax=colorbar_ax, label="diff_calc / gene")
+    ax.figure.colorbar(
+        ax.collections[0], cax=colorbar_ax, label="Δ binding peaks / gene"
+    )
 
     # Force every TF label to show: in this shorter axes seaborn's default "auto"
     # y-ticks would otherwise thin the labels to every other TF.
     n_rows, n_columns = matrix.shape
     ax.set_yticks(np.arange(n_rows) + 0.5)
-    ax.set_yticklabels(matrix.index, rotation=0)
+    tf_names = [tf.split("_", 1)[0] for tf in matrix.index]
+    ax.set_yticklabels(tf_names, rotation=0)
 
     # Asterisk glyphs sit high in their text box, so seaborn's va="center" leaves
     # them above the cell centre; nudge each annotation down to centre it.
@@ -1671,7 +1674,7 @@ def fig6() -> None:
 
 
 if __name__ == "__main__":
-    fig2()
-    # fig3()
+    # fig2()
+    fig3()
     # fig4()
     # fig6()
