@@ -43,13 +43,23 @@ def count_genes(run_dir: str) -> int:
         return len(json.load(handle))
 
 
-def load_run_diffs(run_dir: str, label: str, normalization: str = "per_gene") -> pd.Series:
+def load_run_diffs(
+    run_dir: str,
+    label: str,
+    normalization: str = "per_gene",
+    mutated_column: str = MUTATED_COLUMN,
+) -> pd.Series:
     """Load per-TF ``diff_calc`` for one run, normalized by gene count.
 
     Args:
         run_dir: Run directory containing the stats JSON and peak summary CSV.
         label: Column name to give the returned Series.
         normalization: Normalization method; "per_gene" or "fold_change", defaults to "per_gene".
+        mutated_column: Name of the optimized-sequence column in the peak summary
+            CSV, used by the "fold_change" normalization. Defaults to
+            ``"max_mutated"`` (the label used by runs scanned with an older
+            pipeline version); pass ``"optimized"`` for runs scanned with the
+            current pipeline (see :mod:`analysis.motives.deepcis_scanner`).
 
     Returns:
         Series indexed by TF name with ``diff_calc / n_genes`` values.
@@ -65,7 +75,7 @@ def load_run_diffs(run_dir: str, label: str, normalization: str = "per_gene") ->
         diffs = diffs[DIFF_COLUMN] / count_genes(run_dir)
     elif normalization == "fold_change":
         with np.errstate(divide="ignore", invalid="ignore"):
-            ratio = diffs[MUTATED_COLUMN] / diffs[REF_COLUMN]
+            ratio = diffs[mutated_column] / diffs[REF_COLUMN]
         diffs = pd.Series(
             np.where(np.isfinite(ratio), np.log2(np.where(ratio > 0, ratio, np.nan)), np.nan),
             index=diffs.index,
@@ -75,7 +85,9 @@ def load_run_diffs(run_dir: str, label: str, normalization: str = "per_gene") ->
 
 
 def build_matrix(
-    runs: List[Tuple[str, str]], normalization: str = "per_gene"
+    runs: List[Tuple[str, str]],
+    normalization: str = "per_gene",
+    mutated_column: str = MUTATED_COLUMN,
 ) -> pd.DataFrame:
     """Build a TF × run matrix of normalized diff values (NaN for absent TFs).
 
@@ -85,12 +97,19 @@ def build_matrix(
     Args:
         runs: List of ``(run_directory, display_label)`` tuples, in display order.
         normalization: Passed to :func:`load_run_diffs` ("per_gene" or "fold_change").
+        mutated_column: ``signal_type``/peak-summary label of the optimized
+            sequence, passed to :func:`load_run_diffs` for every run. Defaults to
+            ``"max_mutated"``; pass ``"optimized"`` for runs scanned with the
+            current pipeline.
 
     Returns:
         DataFrame with one column per run (in the given order) and one row per TF
         (union across runs), values from :func:`load_run_diffs`.
     """
-    columns = {label: load_run_diffs(run_dir, label, normalization) for run_dir, label in runs}
+    columns = {
+        label: load_run_diffs(run_dir, label, normalization, mutated_column)
+        for run_dir, label in runs
+    }
     return pd.DataFrame(columns)
 
 
@@ -149,25 +168,32 @@ def top_bottom_tfs(matrix: pd.DataFrame, n: int) -> pd.DataFrame:
     return matrix.loc[keep]
 
 
-def load_per_gene_tf_counts(run_dir: str, n_core_fields: int = 2) -> pd.DataFrame:
-    """Load per-replicate, per-TF reference and max_mutated peak counts for one run.
+def load_per_gene_tf_counts(
+    run_dir: str, n_core_fields: int = 2, mutated_column: str = MUTATED_COLUMN
+) -> pd.DataFrame:
+    """Load per-replicate, per-TF reference and optimized peak counts for one run.
 
     Reads the run's ``*_annotated_peaks_*.csv`` (one peak per row) and counts peaks
-    per replicate/TF for the reference and optimized (``max_mutated``) sequences.
-    Each replicate is reduced to its core id — the first ``n_core_fields``
-    underscore-separated fields of the sequence id — so the per-run trailing
-    timestamp is dropped and replicates match across runs (see
+    per replicate/TF for the reference and optimized (``mutated_column``)
+    sequences. Each replicate is reduced to its core id — the first
+    ``n_core_fields`` underscore-separated fields of the sequence id — so the
+    per-run trailing timestamp is dropped and replicates match across runs (see
     :func:`load_per_gene_diffs` for the field-count convention and examples).
 
     Args:
         run_dir: Run directory containing the ``deepcis_scan`` subfolder.
         n_core_fields: Number of leading underscore-separated fields that uniquely
             identify a replicate.
+        mutated_column: ``signal_type`` label of the optimized sequence in the
+            annotated-peaks CSV. Defaults to ``"max_mutated"`` (the label used by
+            runs scanned with an older pipeline version); pass ``"optimized"`` for
+            runs scanned with the current pipeline (see
+            :mod:`analysis.motives.deepcis_scanner`).
 
     Returns:
         DataFrame indexed by (core_gene, tf) with columns ``reference``,
-        ``max_mutated`` and ``diff`` (``max_mutated`` minus ``reference``). Only
-        (gene, TF) combinations with at least one reference or max_mutated peak
+        ``mutated_column`` and ``diff`` (``mutated_column`` minus ``reference``).
+        Only (gene, TF) combinations with at least one reference or optimized peak
         appear; filling absent combinations with 0 is the caller's responsibility.
 
     Raises:
@@ -179,26 +205,29 @@ def load_per_gene_tf_counts(run_dir: str, n_core_fields: int = 2) -> pd.DataFram
             f"Expected one {ANNOTATED_PEAKS_GLOB} in {run_dir}/deepcis_scan, found {matches}"
         )
     peaks = pd.read_csv(matches[0])
-    peaks = peaks[peaks[SIGNAL_TYPE_COLUMN].isin([REF_COLUMN, MUTATED_COLUMN])].copy()
+    peaks = peaks[peaks[SIGNAL_TYPE_COLUMN].isin([REF_COLUMN, mutated_column])].copy()
     peaks["core_gene"] = peaks[GENE_COLUMN].str.split("_").str[:n_core_fields].str.join("_")
     counts = (
         peaks.groupby(["core_gene", TF_COLUMN, SIGNAL_TYPE_COLUMN])
         .size()
         .unstack(SIGNAL_TYPE_COLUMN, fill_value=0)
-        .reindex(columns=[REF_COLUMN, MUTATED_COLUMN], fill_value=0)
+        .reindex(columns=[REF_COLUMN, mutated_column], fill_value=0)
     )
-    counts["diff"] = counts[MUTATED_COLUMN] - counts[REF_COLUMN]
+    counts["diff"] = counts[mutated_column] - counts[REF_COLUMN]
     return counts
 
 
-def load_per_gene_diffs(run_dir: str, n_core_fields: int = 2) -> pd.DataFrame:
+def load_per_gene_diffs(
+    run_dir: str, n_core_fields: int = 2, mutated_column: str = MUTATED_COLUMN
+) -> pd.DataFrame:
     """Load per-replicate, per-TF binding diffs for one run.
 
     Reads the run's ``*_annotated_peaks_*.csv`` (one peak per row), counts peaks
-    per replicate/TF for the reference and optimized (``max_mutated``) sequences,
-    and returns their difference. Each replicate is reduced to its core id — the
-    first ``n_core_fields`` underscore-separated fields of the sequence id — so the
-    per-run trailing timestamp is dropped and replicates match across runs.
+    per replicate/TF for the reference and optimized (``mutated_column``)
+    sequences, and returns their difference. Each replicate is reduced to its core
+    id — the first ``n_core_fields`` underscore-separated fields of the sequence
+    id — so the per-run trailing timestamp is dropped and replicates match across
+    runs.
 
     The default of 2 fields suits natural-gene ids like
     ``1_AT1G01150_gene:..._<timestamp>`` (core ``1_AT1G01150``). Random-start
@@ -211,15 +240,17 @@ def load_per_gene_diffs(run_dir: str, n_core_fields: int = 2) -> pd.DataFrame:
         run_dir: Run directory containing the ``deepcis_scan`` subfolder.
         n_core_fields: Number of leading underscore-separated fields that uniquely
             identify a replicate.
+        mutated_column: ``signal_type`` label of the optimized sequence in the
+            annotated-peaks CSV; passed through to :func:`load_per_gene_tf_counts`.
 
     Returns:
         DataFrame indexed by (core_gene, tf) with a single ``diff`` column
-        (``max_mutated`` peak count minus ``reference`` peak count).
+        (optimized peak count minus ``reference`` peak count).
 
     Raises:
         FileNotFoundError: If there is not exactly one annotated-peaks CSV.
     """
-    counts = load_per_gene_tf_counts(run_dir, n_core_fields)
+    counts = load_per_gene_tf_counts(run_dir, n_core_fields, mutated_column)
     return counts[["diff"]].copy()
 
 
@@ -258,7 +289,9 @@ def _tf_stats(arr: np.ndarray) -> Tuple[float, int, float]:
 
 
 def _pair_contrast_matrix(
-    run_a_directory: str, run_b_directory: str
+    run_a_directory: str,
+    run_b_directory: str,
+    mutated_column: str = MUTATED_COLUMN,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, List[str], List[str]]:
     """Return ``(a_mat, b_mat, contrast_mat, shared_genes, all_tfs)`` for a run pair.
 
@@ -270,13 +303,17 @@ def _pair_contrast_matrix(
     Args:
         run_a_directory: First run directory (the "A" side of the contrast).
         run_b_directory: Second run directory (the "B" side of the contrast).
+        mutated_column: ``signal_type`` label of the optimized sequence, passed
+            through to :func:`load_per_gene_diffs` for both runs. Defaults to
+            ``"max_mutated"``; pass ``"optimized"`` for runs scanned with the
+            current pipeline.
 
     Returns:
         Tuple of the A matrix, B matrix, their difference, the sorted shared-gene
         list, and the sorted union of TFs.
     """
-    diff_a = load_per_gene_diffs(run_a_directory)["diff"]
-    diff_b = load_per_gene_diffs(run_b_directory)["diff"]
+    diff_a = load_per_gene_diffs(run_a_directory, mutated_column=mutated_column)["diff"]
+    diff_b = load_per_gene_diffs(run_b_directory, mutated_column=mutated_column)["diff"]
 
     shared_genes = sorted(
         set(diff_a.index.get_level_values("core_gene"))
@@ -297,6 +334,7 @@ def paired_tf_significance(
     run_b_directory: str,
     label_a: str = "a",
     label_b: str = "b",
+    mutated_column: str = MUTATED_COLUMN,
 ) -> pd.DataFrame:
     """Per-TF paired significance between two runs over their shared genes.
 
@@ -312,6 +350,9 @@ def paired_tf_significance(
         label_a: Suffix naming the A-side columns; defaults to ``"a"``. Pass a
             meaningful name (e.g. ``"ara_model"``) to make the CSV self-describing.
         label_b: Suffix naming the B-side columns; defaults to ``"b"``.
+        mutated_column: ``signal_type`` label of the optimized sequence in both
+            runs' annotated-peaks CSVs. Defaults to ``"max_mutated"``; pass
+            ``"optimized"`` for runs scanned with the current pipeline.
 
     Returns:
         One row per TF with the contrast columns (``median_D``, ``n_nonzero_D``,
@@ -322,7 +363,7 @@ def paired_tf_significance(
         the neutral ``*_a`` / ``*_b``.
     """
     a_mat, b_mat, contrast_mat, shared_genes, all_tfs = _pair_contrast_matrix(
-        run_a_directory, run_b_directory
+        run_a_directory, run_b_directory, mutated_column=mutated_column
     )
 
     rows = []
@@ -356,8 +397,10 @@ def paired_tf_significance(
     return result.sort_values("q_contrast").reset_index(drop=True)
 
 
-def single_run_tf_significance(run_dir: str, n_core_fields: int = 2) -> pd.DataFrame:
-    """Per-TF significance of diff (max_mutated − reference) vs 0 within one run.
+def single_run_tf_significance(
+    run_dir: str, n_core_fields: int = 2, mutated_column: str = MUTATED_COLUMN
+) -> pd.DataFrame:
+    """Per-TF significance of diff (optimized − reference) vs 0 within one run.
 
     Loads per-replicate diffs from the run's annotated-peaks CSV, tests each TF's
     distribution against zero with a two-sided Wilcoxon signed-rank test, and
@@ -368,6 +411,9 @@ def single_run_tf_significance(run_dir: str, n_core_fields: int = 2) -> pd.DataF
         n_core_fields: Number of leading underscore-separated fields identifying a
             replicate; passed to :func:`load_per_gene_diffs`. Use 3 for
             random-start runs (see that function's note).
+        mutated_column: ``signal_type`` label of the optimized sequence in the
+            annotated-peaks CSV. Defaults to ``"max_mutated"``; pass
+            ``"optimized"`` for runs scanned with the current pipeline.
 
     Returns:
         DataFrame with columns tf, n_genes, median_diff, n_nonzero, p_intra,
@@ -376,7 +422,7 @@ def single_run_tf_significance(run_dir: str, n_core_fields: int = 2) -> pd.DataF
     Raises:
         FileNotFoundError: If there is not exactly one annotated-peaks CSV.
     """
-    diff = load_per_gene_diffs(run_dir, n_core_fields)["diff"]
+    diff = load_per_gene_diffs(run_dir, n_core_fields, mutated_column)["diff"]
     all_genes = sorted(set(diff.index.get_level_values("core_gene")))
     all_tfs = sorted(set(diff.index.get_level_values(TF_COLUMN)))
     mat = _diff_series_to_matrix(diff, all_genes, all_tfs)
@@ -399,13 +445,15 @@ def single_run_tf_significance(run_dir: str, n_core_fields: int = 2) -> pd.DataF
     return result.sort_values("q_intra").reset_index(drop=True)
 
 
-def per_gene_tf_binding_summary(run_dir: str, n_core_fields: int = 2) -> pd.DataFrame:
+def per_gene_tf_binding_summary(
+    run_dir: str, n_core_fields: int = 2, mutated_column: str = MUTATED_COLUMN
+) -> pd.DataFrame:
     """Mean and standard deviation of per-gene TF binding within one run.
 
     For every TF, aggregates over all genes in the run and reports the mean and
     sample standard deviation (ddof=1) of three per-(gene, TF) quantities: the
     ``reference`` peak count (binding in the starting sequence), the
-    ``max_mutated`` peak count (binding in the optimized sequence), and their
+    ``mutated_column`` peak count (binding in the optimized sequence), and their
     ``diff`` (net change introduced by the optimizer).
 
     Genes are the replicates. A gene with no peak for a given TF counts as 0, so
@@ -418,6 +466,9 @@ def per_gene_tf_binding_summary(run_dir: str, n_core_fields: int = 2) -> pd.Data
         n_core_fields: Number of leading underscore-separated fields identifying a
             replicate; passed to :func:`load_per_gene_tf_counts`. Use 3 for
             random-start runs (see :func:`load_per_gene_diffs`).
+        mutated_column: ``signal_type`` label of the optimized sequence in the
+            annotated-peaks CSV. Defaults to ``"max_mutated"``; pass
+            ``"optimized"`` for runs scanned with the current pipeline.
 
     Returns:
         DataFrame with one row per TF and columns ``tf``, ``n_genes``,
@@ -428,12 +479,12 @@ def per_gene_tf_binding_summary(run_dir: str, n_core_fields: int = 2) -> pd.Data
     Raises:
         FileNotFoundError: If there is not exactly one annotated-peaks CSV.
     """
-    counts = load_per_gene_tf_counts(run_dir, n_core_fields)
+    counts = load_per_gene_tf_counts(run_dir, n_core_fields, mutated_column)
     all_genes = sorted(set(counts.index.get_level_values("core_gene")))
     all_tfs = sorted(set(counts.index.get_level_values(TF_COLUMN)))
 
     reference = _diff_series_to_matrix(counts[REF_COLUMN], all_genes, all_tfs)
-    mutated = _diff_series_to_matrix(counts[MUTATED_COLUMN], all_genes, all_tfs)
+    mutated = _diff_series_to_matrix(counts[mutated_column], all_genes, all_tfs)
     diff = _diff_series_to_matrix(counts["diff"], all_genes, all_tfs)
 
     summary = pd.DataFrame(
@@ -453,6 +504,7 @@ def per_gene_tf_binding_summary(run_dir: str, n_core_fields: int = 2) -> pd.Data
 
 def pooled_model_tf_significance(
     model_pairs: List[Tuple[str, str]],
+    mutated_column: str = MUTATED_COLUMN,
 ) -> pd.DataFrame:
     """Pooled per-TF model main effect across several paired gene sources.
 
@@ -472,6 +524,9 @@ def pooled_model_tf_significance(
     Args:
         model_pairs: ``(model_a_run_dir, model_b_run_dir)`` tuples, one per gene
             source, sharing an A = model-A / B = model-B convention.
+        mutated_column: ``signal_type`` label of the optimized sequence in every
+            run's annotated-peaks CSV. Defaults to ``"max_mutated"``; pass
+            ``"optimized"`` for runs scanned with the current pipeline.
 
     Returns:
         One row per TF with columns ``tf, n_genes, median_D, n_nonzero_D,
@@ -488,7 +543,7 @@ def pooled_model_tf_significance(
     tf_union: set = set()
     for run_a_directory, run_b_directory in model_pairs:
         _, _, contrast_mat, _, pair_tfs = _pair_contrast_matrix(
-            run_a_directory, run_b_directory
+            run_a_directory, run_b_directory, mutated_column=mutated_column
         )
         contrast_matrices.append(contrast_mat)
         tf_union.update(pair_tfs)
@@ -527,6 +582,7 @@ def interaction_model_tf_significance(
     group_b_pair: Tuple[str, str],
     label_a: str = "a",
     label_b: str = "b",
+    mutated_column: str = MUTATED_COLUMN,
 ) -> pd.DataFrame:
     """Per-TF test of whether the model effect DIFFERS between two gene groups.
 
@@ -547,6 +603,9 @@ def interaction_model_tf_significance(
         label_a: Suffix naming the group-A columns; defaults to ``"a"``. Pass a
             meaningful name (e.g. ``"ara_genes"``) to make the CSV self-describing.
         label_b: Suffix naming the group-B columns; defaults to ``"b"``.
+        mutated_column: ``signal_type`` label of the optimized sequence in every
+            run's annotated-peaks CSV. Defaults to ``"max_mutated"``; pass
+            ``"optimized"`` for runs scanned with the current pipeline.
 
     Returns:
         One row per TF with columns ``tf, n_<label_a>, n_<label_b>,
@@ -554,8 +613,12 @@ def interaction_model_tf_significance(
         q_interaction``, sorted by ``q_interaction`` ascending. Degenerate TFs
         (Mann-Whitney undefined) get NaN for ``u_stat`` and ``p_interaction``.
     """
-    _, _, contrast_mat_a, _, tfs_a = _pair_contrast_matrix(*group_a_pair)
-    _, _, contrast_mat_b, _, tfs_b = _pair_contrast_matrix(*group_b_pair)
+    _, _, contrast_mat_a, _, tfs_a = _pair_contrast_matrix(
+        *group_a_pair, mutated_column=mutated_column
+    )
+    _, _, contrast_mat_b, _, tfs_b = _pair_contrast_matrix(
+        *group_b_pair, mutated_column=mutated_column
+    )
 
     all_tfs = sorted(set(tfs_a) | set(tfs_b))
     # A TF absent in a group contributes that group's all-zero D vector.

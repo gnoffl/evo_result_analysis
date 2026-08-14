@@ -17,6 +17,7 @@ from workflows.evo_alg_pooled_plots.tf_comparison.tf_comparison_calc import (
     interaction_model_tf_significance,
     load_per_gene_diffs,
     load_per_gene_tf_counts,
+    load_run_diffs,
     order_tfs_by_group_contrast,
     order_tfs_by_mean,
     paired_tf_significance,
@@ -91,6 +92,35 @@ class BuildMatrixTest(unittest.TestCase):
         self.assertAlmostEqual(matrix.loc["WRKY", "SECOND"], 1.0)
         self.assertTrue(np.isnan(matrix.loc["bHLH", "FIRST"]))
         self.assertTrue(np.isnan(matrix.loc["MYB", "SECOND"]))
+
+
+class LoadRunDiffsFoldChangeMutatedColumnTest(unittest.TestCase):
+    """Tests for the mutated_column override in fold_change normalization."""
+
+    def test_fold_change_uses_custom_mutated_column(self) -> None:
+        # Arrange: peak summary uses "optimized" instead of the default
+        # "max_mutated" label; WRKY has reference=1, optimized=4 -> log2(4) = 2.
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_run(
+                tmp,
+                5,
+                pd.DataFrame(
+                    {
+                        "tf": ["WRKY"],
+                        "diff_calc": [3],
+                        "reference": [1],
+                        "optimized": [4],
+                    }
+                ),
+            )
+
+            # Act
+            diffs = load_run_diffs(
+                tmp, "RUN", normalization="fold_change", mutated_column="optimized"
+            )
+
+        # Assert
+        self.assertAlmostEqual(diffs.loc["WRKY"], 2.0)
 
 
 class OrderTfsByGroupContrastTest(unittest.TestCase):
@@ -257,6 +287,27 @@ class LoadPerGeneTfCountsTest(unittest.TestCase):
         pd.testing.assert_series_equal(
             counts["diff"], diffs["diff"], check_names=False
         )
+
+    def test_custom_mutated_column_selects_optimized_signal(self) -> None:
+        # Arrange: WRKY has 2 reference and 5 "optimized" peaks (diff +3); the
+        # default "max_mutated" label is present too but must be ignored.
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_annotated_peaks(
+                tmp,
+                [
+                    ("1_ATX_a_111", "WRKY", "reference", 2),
+                    ("1_ATX_a_111", "WRKY", "optimized", 5),
+                    ("1_ATX_a_111", "WRKY", "max_mutated", 99),
+                ],
+            )
+
+            # Act
+            counts = load_per_gene_tf_counts(tmp, mutated_column="optimized")
+
+        # Assert
+        self.assertEqual(list(counts.columns), ["reference", "optimized", "diff"])
+        self.assertEqual(counts.loc[("1_ATX", "WRKY"), "optimized"], 5)
+        self.assertEqual(counts.loc[("1_ATX", "WRKY"), "diff"], 3)
 
 
 class PerGeneTfBindingSummaryTest(unittest.TestCase):
