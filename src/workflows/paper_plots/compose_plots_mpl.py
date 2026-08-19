@@ -19,10 +19,8 @@ from typing import Any, Dict, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 from matplotlib import colormaps
 from matplotlib.lines import Line2D
-from scipy.stats import mannwhitneyu
 
 from analysis.motives.deepcis_visualize import MUTATION_MARKER_COLOR, _plot_gene_tf
 from analysis.mutations.analyze_mutations import (
@@ -81,15 +79,11 @@ from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.region_muta
 from analysis.mutations.summarize_mutations import MutationsGene
 from workflows.mutation_distribution_analysis.mutation_pool import MutationPool
 from workflows.overlap_analysis._common import (
-    BINDING_STATUS_COLORS,
     HIGHLIGHT_WINDOW_CENTER,
     POSITION_SERIES_COLORS,
     compute_correlation_by_position,
     plot_overlay_highlight_correlation,
     simply_plot_multi,
-)
-from workflows.overlap_analysis.binding_vs_nonbinding.binding_vs_nonbinding import (
-    _rank_effect_size,
 )
 from workflows.overlap_analysis.starrseq_deepcre_correlation_bHLH import (
     prepare_bhlh_enrichment_df,
@@ -1298,20 +1292,10 @@ _OVERLAY_HIGHLIGHT_SIZE = 12.0
 # colour.
 _HIGHLIGHT_MARKER_COLOR = "black"
 _HIGHLIGHT_MARKER_WIDTH = 1.0
-# Panel D: display order and pretty labels for the binding-status boxes. The
-# order mirrors panel C's colour legend (binding first, then non-binding).
-_BINDING_STATUS_ORDER = ["binding", "non_binding"]
-_BINDING_STATUS_LABELS = {"binding": "Binding", "non_binding": "Non-binding"}
-# fig6 grid geometry: four equal-width columns and four rows -- the A/B panels, a
-# thin full-width strip for their legend, the C/D panels, and a thin full-width
-# strip for their legend. The tight column spacing gives the single-column panel
-# D enough width that its two x-tick labels no longer touch.
-_FIG6_HEIGHT_RATIOS = [1.0, 0.15, 1.4, 0.22]
-# Column widths. Columns 0+1 (panel A / left of C) sum to the same as columns
-# 2+3 (panel B / right of C + panel D), so the A and B panels stay equal width;
-# the last column is widened (and the third narrowed to compensate) so the
-# single-column panel D is wide enough that its two x-tick labels do not touch.
-_FIG6_WIDTH_RATIOS = [1.0, 1.0, 0.6, 1.4]
+# fig6 grid geometry: four equal-width columns and three rows -- the A/B panels,
+# a thin full-width strip for their legend, and the full-width panel C.
+_FIG6_HEIGHT_RATIOS = [1.0, 0.15, 1.4]
+_FIG6_WIDTH_RATIOS = [1.0, 1.0, 1.0, 1.0]
 # Legend labels for panel C's two fit lines (drawn unlabelled by the overlay
 # plot): the fit through all points and the fit through the highlight window.
 _FIT_ALL_LABEL = "fit all data"
@@ -1373,174 +1357,32 @@ def _fig6_position_series(
     ]
 
 
-def _annotate_binding_status_significance(
-    ax: plt.Axes, highlight_points: pd.DataFrame
-) -> None:
-    """Test panel D's two boxes for a significant enrichment difference.
-
-    Runs a two-sided Mann-Whitney U test comparing the ``enrichment`` of the
-    binding and non-binding highlight-window points, then draws a significance
-    bar over the two boxes labelled with the star code (``*``/``**``/``***``, or
-    ``ns`` when not significant) via :func:`q_to_stars`, and prints the full
-    numbers to the console. Mann-Whitney U (rather than a t-test) matches the
-    rest of the STARR-seq binding analysis in ``binding_vs_nonbinding.py`` and
-    makes no normality assumption about the enrichment values. Does nothing
-    beyond a printed note when either group is absent (the test is undefined).
-
-    Args:
-        ax: Panel D axes holding the binding vs non-binding enrichment boxplot.
-        highlight_points: The highlight-window points carrying ``enrichment`` and
-            ``starr_binding_status`` columns.
-    """
-    binding_enrichment = highlight_points.loc[
-        highlight_points["starr_binding_status"] == "binding", "enrichment"
-    ]
-    non_binding_enrichment = highlight_points.loc[
-        highlight_points["starr_binding_status"] == "non_binding", "enrichment"
-    ]
-    if len(binding_enrichment) == 0 or len(non_binding_enrichment) == 0:
-        print(
-            "[fig6 panel D] Mann-Whitney U skipped: need both binding and "
-            f"non-binding points (n_binding={len(binding_enrichment)}, "
-            f"n_non_binding={len(non_binding_enrichment)})."
-        )
-        return
-
-    u_statistic, p_value = mannwhitneyu(
-        binding_enrichment, non_binding_enrichment, alternative="two-sided"
-    )
-    _, rank_biserial_r = _rank_effect_size(
-        u_statistic, len(binding_enrichment), len(non_binding_enrichment)
-    )
-    print(
-        "[fig6 panel D] Mann-Whitney U (binding vs non-binding STARR-seq "
-        f"enrichment): U={u_statistic:.1f}, p={p_value:.3g}, "
-        f"rank-biserial r={rank_biserial_r:.3f} "
-        f"(n_binding={len(binding_enrichment)}, "
-        f"n_non_binding={len(non_binding_enrichment)})."
-    )
-
-    # Star code over the two boxes: significant thresholds map to */**/***,
-    # non-significant to "ns". Font size left at the figure default so it
-    # matches the rest of the panel typography.
-    enrichment = highlight_points["enrichment"]
-    top, bottom = enrichment.max(), enrichment.min()
-    span = top - bottom if top > bottom else 1.0
-    bar_y = top + 0.05 * span
-    tick = 0.02 * span
-    significance_label = q_to_stars(p_value) or "ns"
-    ax.plot(
-        [0, 0, 1, 1],
-        [bar_y, bar_y + tick, bar_y + tick, bar_y],
-        color="black",
-        linewidth=1.0,
-    )
-    ax.text(0.5, bar_y + tick, significance_label, ha="center", va="bottom")
-    ax.set_ylim(bottom - 0.05 * span, bar_y + 5 * tick)
-
-
-def _draw_binding_status_boxplot(
-    ax: plt.Axes, highlight_points: pd.DataFrame
-) -> None:
-    """Draw panel D: enrichment by binding status for the highlight-window points.
-
-    Boxes the ``enrichment`` of the exact points panel C colours by binding status
-    (the peak-correlation highlight window of the WRKY dataset), split into the
-    binding and non-binding groups and coloured with the same
-    :data:`BINDING_STATUS_COLORS` as panel C so the two panels read as one. A
-    Mann-Whitney U significance bar comparing the two groups sits above the boxes
-    (see :func:`_annotate_binding_status_significance`) and a sample-size
-    annotation sits below each box.
-
-    Args:
-        ax: Axes to draw the boxplot onto.
-        highlight_points: The deduplicated highlight-window points returned by
-            :func:`plot_overlay_highlight_correlation` with
-            ``color_by_binding=True``; must carry ``enrichment`` and
-            ``starr_binding_status`` columns.
-    """
-    present_order = [
-        status
-        for status in _BINDING_STATUS_ORDER
-        if (highlight_points["starr_binding_status"] == status).any()
-    ]
-    palette = {status: BINDING_STATUS_COLORS[status] for status in present_order}
-
-    # hue == x with legend off is the non-deprecated way to colour by category;
-    # saturation=1 keeps the box fills identical to panel C's point colours
-    # (seaborn otherwise desaturates them to 0.75).
-    sns.boxplot(
-        data=highlight_points,
-        x="starr_binding_status",
-        y="enrichment",
-        order=present_order,
-        hue="starr_binding_status",
-        hue_order=present_order,
-        palette=palette,
-        saturation=1.0,
-        legend=False,
-        ax=ax,
-    )
-    ax.set_xlabel("")
-    ax.set_ylabel("STARR-seq Enrichment")
-    # Set ticks before labels so matplotlib does not warn about a FixedFormatter
-    # without a matching FixedLocator.
-    ax.set_xticks(range(len(present_order)))
-    ax.set_xticklabels([_BINDING_STATUS_LABELS[status] for status in present_order])
-
-    # Significance bar first: it expands the y-limits to make room for the bar
-    # above the boxes, so the sample-size labels placed afterwards land inside
-    # the final axes rather than being pushed off by the later ylim change.
-    _annotate_binding_status_significance(ax, highlight_points)
-
-    # Sample size below each box, clear of the significance bar at the top.
-    # Drop the y-min a little further so the labels sit above the axis floor
-    # with a gap instead of overlapping the x-axis.
-    y_min, y_max = ax.get_ylim()
-    label_y = y_min - 0.05 * (y_max - y_min)
-    ax.set_ylim(y_min - 0.10 * (y_max - y_min), y_max)
-    for position, status in enumerate(present_order):
-        count = int((highlight_points["starr_binding_status"] == status).sum())
-        ax.text(
-            position,
-            label_y,
-            f"n={count}",
-            ha="center",
-            va="bottom",
-        )
-
-
 def _populate_fig6(
     fig: plt.Figure, combined_df: pd.DataFrame, wrky_df: pd.DataFrame
 ) -> None:
-    """Draw all four panels of figure 6 onto ``fig``.
+    """Draw all three panels of figure 6 onto ``fig``.
 
-    Layout is a 4-column x 4-row grid. Row 0: panel A (Spearman correlation by
+    Layout is a 4-column x 3-row grid. Row 0: panel A (Spearman correlation by
     overlap position) and panel B (p-value of that correlation, log y) over the
     pooled WRKY + bHLH dataset, two columns each. Row 1: a thin full-width strip
     holding their all/light/dark condition legend. Row 2: panel C (the WRKY
-    deepCRE-vs-STARR-seq scatter with the peak-correlation window highlighted and
-    coloured by binding status) spanning three columns and panel D (a boxplot of
-    those highlight-window points' enrichment, binding vs non-binding) the last
-    column. Row 3: a thin full-width strip holding the all/binding/non-binding +
-    fit-line legend. A and B each mark the highlighted
-    window's center with a thin dashed vertical line so the reader sees which
-    window panels C/D zoom into. Panels C and D share the binding-status colours,
-    so one legend keys both. Must be called inside a :func:`publication_style`
-    context.
+    deepCRE-vs-STARR-seq scatter with the peak-correlation window highlighted),
+    spanning the full width. A and B each mark the highlighted window's center
+    with a thin dashed vertical line so the reader sees which window panel C
+    zooms into. Must be called inside a :func:`publication_style` context.
 
     Args:
         fig: An (empty) figure to populate.
         combined_df: The pooled WRKY + bHLH analysis-ready dataframe (panels A/B)
             from :func:`_build_fig6_dataframes`.
-        wrky_df: The WRKY-only analysis-ready dataframe (panels C/D) from
+        wrky_df: The WRKY-only analysis-ready dataframe (panel C) from
             :func:`_build_fig6_dataframes`.
     """
-    # Four equal-width columns: A and B take two columns each on the top row,
-    # while C spans three columns and D one on the panel row below; each panel row
-    # is followed by a thin full-width strip that holds that row's legend.
+    # Four equal-width columns: A and B take two columns each on the top row;
+    # panel C spans the full width on the row below. The panel row is followed by
+    # a thin full-width strip that holds its legend.
     grid = fig.add_gridspec(
-        nrows=4,
+        nrows=3,
         ncols=4,
         height_ratios=_FIG6_HEIGHT_RATIOS,
         width_ratios=_FIG6_WIDTH_RATIOS,
@@ -1549,10 +1391,7 @@ def _populate_fig6(
     pvalue_ax = fig.add_subplot(grid[0, 2:4])
     top_legend_ax = fig.add_subplot(grid[1, :])
     top_legend_ax.axis("off")
-    overlay_ax = fig.add_subplot(grid[2, 0:3])
-    boxplot_ax = fig.add_subplot(grid[2, 3])
-    bottom_legend_ax = fig.add_subplot(grid[3, :])
-    bottom_legend_ax.axis("off")
+    overlay_ax = fig.add_subplot(grid[2, :])
 
     named_dfs = _fig6_position_series(combined_df)
     corr_series, _, pval_series, _ = compute_correlation_by_position(named_dfs)
@@ -1591,15 +1430,12 @@ def _populate_fig6(
         if panel_legend is not None:
             panel_legend.remove()
 
-    # Panel C: WRKY-only overlay, highlight-window points coloured by binding
-    # status. The returned highlight points feed panel D so both panels show the
-    # exact same set of points.
-    _, highlight_points, _, _ = plot_overlay_highlight_correlation(
-        wrky_df, color_by_binding=True, ax=overlay_ax
-    )
+    # Panel C: WRKY-only overlay, highlight-window points drawn in a single
+    # colour (the binding vs non-binding distinction is no longer shown).
+    plot_overlay_highlight_correlation(wrky_df, color_by_binding=False, ax=overlay_ax)
     overlay_scatters = overlay_ax.collections
-    # Collection 0 is the grey full-dataset background; the remaining collections
-    # are the binding/non-binding highlight groups, drawn larger.
+    # Collection 0 is the grey full-dataset background; collection 1 is the
+    # highlight-window group, drawn larger.
     for scatter_index, scatter in enumerate(overlay_scatters):
         size = _OVERLAY_ALL_SIZE if scatter_index == 0 else _OVERLAY_HIGHLIGHT_SIZE
         scatter.set_sizes([size])
@@ -1613,8 +1449,9 @@ def _populate_fig6(
         overlay_fit_lines[1].set_color(_HIGHLIGHT_FIT_COLOR)
         overlay_fit_lines[1].set_zorder(_HIGHLIGHT_FIT_ZORDER)
 
-    # Extract panel C's all/binding/non-binding scatter key, append its two fit
-    # lines, and drop the in-panel legend the overlay plot auto-created.
+    # Extract panel C's all/highlight-window scatter key, append its two fit
+    # lines, and rebuild the in-panel legend (the overlay plot's auto-created one
+    # is missing the fit-line entries).
     overlay_handles, overlay_labels = overlay_ax.get_legend_handles_labels()
     overlay_legend = overlay_ax.get_legend()
     if overlay_legend is not None:
@@ -1622,14 +1459,10 @@ def _populate_fig6(
     fit_labels = [_FIT_ALL_LABEL, _FIT_HIGHLIGHT_LABEL]
     overlay_handles = list(overlay_handles) + overlay_fit_lines[:2]
     overlay_labels = list(overlay_labels) + fit_labels[: len(overlay_fit_lines[:2])]
+    overlay_ax.legend(overlay_handles, overlay_labels, loc="best", frameon=False)
 
-    # Panel D: enrichment boxplot of the same highlight-window points, split by
-    # binding status (shares panel C's colours).
-    _draw_binding_status_boxplot(boxplot_ax, highlight_points)
-
-    # Each panel row's legend sits in the thin full-width strip below it, laid
-    # out horizontally: the all/light/dark conditions under A/B, the
-    # binding-status + fit-line key under C/D.
+    # The A/B legend sits in the thin full-width strip below them; panel C keeps
+    # its own in-panel legend (set above).
     top_legend_ax.legend(
         shared_handles,
         shared_labels,
@@ -1637,15 +1470,6 @@ def _populate_fig6(
         ncol=len(shared_labels),
         frameon=False,
         title="STARR-seq condition",
-    )
-    bottom_legend_ax.legend(
-        overlay_handles,
-        overlay_labels,
-        loc="center",
-        ncol=len(overlay_labels),
-        frameon=False,
-        title="Binding status",
-        markerscale=2.2,
     )
 
     # Strip the long standalone titles; the axis labels and panel letters carry
@@ -1671,7 +1495,6 @@ def _populate_fig6(
         (correlation_ax, "A"),
         (pvalue_ax, "B"),
         (overlay_ax, "C"),
-        (boxplot_ax, "D"),
     ):
         panel_label(ax, letter)
 
@@ -1685,9 +1508,8 @@ def fig6() -> None:
     p-value of that correlation on a log axis (B), each overlaying the ``all``,
     ``light`` and ``dark`` STARR-seq conditions. Panel C is the WRKY-only
     point-level deepCRE-vs-STARR-seq scatter with the peak-correlation window
-    (marked by the dashed line on A/B) highlighted on top of the full WRKY dataset
-    and coloured by binding status. Panel D boxes the enrichment of those exact
-    highlight-window points, split into binding vs non-binding.
+    (marked by the dashed line on A/B) highlighted on top of the full WRKY
+    dataset, spanning the full figure width.
 
     The dataframes are rebuilt from scratch on every call (both deepCRE
     prediction pipelines run); there is no cached point-level dataframe.
@@ -1706,5 +1528,5 @@ def fig6() -> None:
 if __name__ == "__main__":
     # fig2()
     # fig3()
-    fig4()
-    # fig6()
+    # fig4()
+    fig6()
