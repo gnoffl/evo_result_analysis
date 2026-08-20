@@ -43,6 +43,11 @@ src/workflows/overlap_analysis/binding_vs_nonbinding/plots/*
 src/workflows/one_off_visualizations/plots/*
 src/workflows/evo_alg_pooled_plots/example_gene_pareto/plots/*
 
+# blamm TFBS analysis: generated motif database and per-run outputs
+src/workflows/blamm_tfbs_analysis/motifs/
+src/workflows/blamm_tfbs_analysis/*__mutations_*/
+src/workflows/starrseq_v2/**/*.csv
+
 
 
 # C extensions
