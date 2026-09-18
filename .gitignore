@@ -17,6 +17,13 @@ src/workflows/evo_alg_pooled_plots/**/*.csv
 src/workflows/overlap_analysis/correlation/*
 src/workflows/overlap_analysis/correlation_bHLH/*
 src/workflows/overlap_analysis/correlation_combined/*
+src/workflows/overlap_analysis/model_species_comparison/cache/*
+src/workflows/overlap_analysis/model_species_comparison/construct/*
+src/workflows/overlap_analysis/model_species_comparison/Ara/*
+src/workflows/overlap_analysis/model_species_comparison/Slyc/*
+src/workflows/overlap_analysis/model_species_comparison/model_groups/*
+src/workflows/overlap_analysis/model_species_comparison/*.png
+src/workflows/overlap_analysis/model_species_comparison/*.csv
 src/workflows/overlap_analysis/data/bHLH_reference_sequences.fa
 src/workflows/overlap_analysis/data/bHLH_genes_of_interest.json
 src/workflows/deepCRE_TPM_correlation/*.png
@@ -47,6 +54,8 @@ src/workflows/evo_alg_pooled_plots/example_gene_pareto/plots/*
 src/workflows/blamm_tfbs_analysis/motifs/
 src/workflows/blamm_tfbs_analysis/*__mutations_*/
 src/workflows/starrseq_v2/**/*.csv
+# starrseq_v2 build artefacts (gene lists, unit files, plan, logs)
+src/workflows/starrseq_v2/build/
 
 
 
@@ -253,3 +262,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# adversarial re-evaluation across MSR models
+src/workflows/adversarial/**/*.csv
+src/workflows/adversarial/**/*.pdf
+src/workflows/adversarial/**/*.png
