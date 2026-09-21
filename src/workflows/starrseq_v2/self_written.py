@@ -1,7 +1,7 @@
 import json
 import os
 import random
-from typing import Dict, List, Optional
+from typing import List, Optional, Tuple
 
 import pandas as pd
 from evolution.extract_sequences import CENTRAL_PADDING, extract_string, find_genes
@@ -35,6 +35,7 @@ EXTRAGENIC = 1000
 
 ARA_FLOWERING_FASTA = DATA + "/ara_flowering_extracted_genes.fa"
 NTAB_FLOWERING_FASTA = DATA + "/ntab_flowering_extracted_genes.fa"
+STARRSEQ_V1_FASTA = DATA + "/starrseq_v1_extracted_genes.fa"
 GENE_METADATA_PATH = DATA + "/candidate_gene_metadata.csv"
 
 
@@ -109,39 +110,7 @@ def add_to_metadata(
     return pd.concat([metadata, new_rows], ignore_index=True)
 
 
-def extract_all_candidate_genes() -> List[Dict]:
-    metadata = pd.DataFrame(columns=["gene_id", "species", "reason"])
-    old_fragment_mappings = pd.DataFrame(wrky_mapping_results() + bhlh_mapping_results())
-
-    # Extract ara genes
-    flowering_genes_ara = []
-    if os.path.isfile(FLOWERING_GENES_ARA_PATH):
-        with open(FLOWERING_GENES_ARA_PATH) as f:
-            flowering_genes_ara = json.load(f)
-    else:
-        print("warning: no {}, extracting without flowering genes".format(
-            FLOWERING_GENES_ARA_PATH
-        ))
-    metadata = add_to_metadata(metadata, flowering_genes_ara, "arabidopsis", "flowering")
-
-    gof_genes = gene_ids_from_fasta(GOF_GENES_ARA_PATH)
-    metadata = add_to_metadata(metadata, gof_genes, "arabidopsis", "GOF")
-    lof_genes = gene_ids_from_fasta(LOF_GENES_ARA_PATH)
-    metadata = add_to_metadata(metadata, lof_genes, "arabidopsis", "LOF")
-
-    # dict.fromkeys removes duplicates while preserving order
-    chosen_genes_ara = list(dict.fromkeys(flowering_genes_ara + gof_genes + lof_genes))
-    random_genes_ara = draw_random_genes(
-        ARA_ANNOTATION, chosen_genes_ara, TARGET_GENE_COUNT_ARA - len(chosen_genes_ara), SEED
-    )
-    metadata = add_to_metadata(metadata, random_genes_ara, "arabidopsis", "random")
-
-    all_genes_ara = chosen_genes_ara + random_genes_ara
-    extract_genes(
-        ARA_GENOME, ARA_ANNOTATION, all_genes_ara, ARA_FLOWERING_FASTA, [ARA_VCF]
-    )
-
-    # Extract ntab genes
+def extract_ntab(metadata):
     flowering_genes_ntab = []
     if os.path.isfile(FLOWERING_GENES_NTAB_PATH):
         with open(FLOWERING_GENES_NTAB_PATH) as f:
@@ -162,14 +131,59 @@ def extract_all_candidate_genes() -> List[Dict]:
 
     all_genes_ntab = flowering_genes_ntab + random_genes_ntab
     extract_genes(NATB_GENOME, NTAB_ANNOTATION, all_genes_ntab, NTAB_FLOWERING_FASTA)
+    return metadata
 
-    if not metadata.empty:
-        metadata.to_csv(GENE_METADATA_PATH, index=False)
-    return old_fragment_mappings
+def extract_ara(metadata):
+    flowering_genes_ara = []
+    if os.path.isfile(FLOWERING_GENES_ARA_PATH):
+        with open(FLOWERING_GENES_ARA_PATH) as f:
+            flowering_genes_ara = json.load(f)
+    else:
+        print("warning: no {}, extracting without flowering genes".format(
+            FLOWERING_GENES_ARA_PATH
+        ))
+    metadata = add_to_metadata(metadata, flowering_genes_ara, "arabidopsis", "flowering")
+
+    gof_genes = gene_ids_from_fasta(GOF_GENES_ARA_PATH)
+    metadata = add_to_metadata(metadata, gof_genes, "arabidopsis", "GOF")
+    lof_genes = gene_ids_from_fasta(LOF_GENES_ARA_PATH)
+    metadata = add_to_metadata(metadata, lof_genes, "arabidopsis", "LOF")
+
+    # dict.fromkeys removes duplicates while preserving order
+    chosen_genes_ara = list(dict.fromkeys(flowering_genes_ara + gof_genes + lof_genes))
+    excluded_genes_ara = list(dict.fromkeys(metadata["gene_id"].to_list()))
+    random_genes_ara = draw_random_genes(
+        ARA_ANNOTATION, excluded_genes_ara, TARGET_GENE_COUNT_ARA - len(chosen_genes_ara), SEED
+    )
+    metadata = add_to_metadata(metadata, random_genes_ara, "arabidopsis", "random")
+
+    all_genes_ara = chosen_genes_ara + random_genes_ara
+    extract_genes(
+        ARA_GENOME, ARA_ANNOTATION, all_genes_ara, ARA_FLOWERING_FASTA, [ARA_VCF]
+    )
+    return metadata
+
+
+def extract_starrseq_v1(metadata):
+    starrseq_v1_mapping = pd.DataFrame(wrky_mapping_results() + bhlh_mapping_results())
+    starrseq_v1_genes = list(dict.fromkeys(starrseq_v1_mapping["gene"]))
+    metadata = add_to_metadata(metadata, starrseq_v1_genes, "arabidopsis", "starrseq_v1")
+    extract_genes(
+        ARA_GENOME, ARA_ANNOTATION, starrseq_v1_genes, STARRSEQ_V1_FASTA, [ARA_VCF]
+    )
+    return metadata,starrseq_v1_mapping
+
+def extract_all_candidate_genes() -> Tuple[pd.DataFrame, pd.DataFrame]:
+    metadata = pd.DataFrame(columns=["gene_id", "species", "reason"])
+    metadata, starrseq_v1_mapping = extract_starrseq_v1(metadata)
+    metadata = extract_ara(metadata)
+    metadata = extract_ntab(metadata)
+
+    return metadata, starrseq_v1_mapping
 
 
 def main():
-    extract_all_candidate_genes()
+    metadata, starrseq_v1_mapping = extract_all_candidate_genes()
 
 
 
