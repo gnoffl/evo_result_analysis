@@ -139,5 +139,45 @@ class TestBuildSiteToGeneIds(unittest.TestCase):
         self.assertEqual(site_to_gene_ids["bHLH_2:300-400"], ["AT2G00001"])
 
 
+class TestBhlhMappingResults(unittest.TestCase):
+    def test_passes_padding_map_and_site_genes_to_the_aligner(self):
+        # Arrange: one site with two candidate genes, each with its own padding.
+        mapping_candidates = pd.DataFrame(
+            [
+                {"site_id": "bHLH_1:100-200", "gene_id": "AT1G00001",
+                 "additional_padding": 0},
+                {"site_id": "bHLH_1:100-200", "gene_id": "AT1G00002",
+                 "additional_padding": 12},
+            ]
+        )
+        gene_data = [{"gene": "AT1G00001"}]
+        alignments = [{"starr_full_name": "frag_1", "gene": "AT1G00001"}]
+
+        # Act
+        with patch.object(bhlh, "ensure_refs_fasta"), \
+                patch.object(bhlh.pd, "read_csv", return_value=mapping_candidates), \
+                patch.object(
+                    bhlh, "load_bhlh_window_candidates", return_value=gene_data,
+                ) as loader, \
+                patch.object(
+                    bhlh._common, "load_starrseq_data", return_value=["entry"],
+                ), \
+                patch.object(
+                    bhlh._common, "map_starrseq_to_deepcre", return_value=alignments,
+                ) as mapper:
+            results = bhlh.bhlh_mapping_results("model.h5")
+
+        # Assert
+        self.assertEqual(results, alignments)
+        padding_map = loader.call_args[0][2]
+        self.assertEqual(padding_map.loc["AT1G00002", "additional_padding"], 12)
+        passed_starrseq, passed_genes, passed_sites = mapper.call_args[0]
+        self.assertEqual(passed_starrseq, ["entry"])
+        self.assertEqual(passed_genes, gene_data)
+        self.assertEqual(
+            passed_sites, {"bHLH_1:100-200": ["AT1G00001", "AT1G00002"]}
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

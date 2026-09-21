@@ -954,9 +954,22 @@ def build_sequences(mapping_results: List[Dict], max_differences: int = 15) -> T
     return seqs, meta_data
 
 
-def make_deepcre_predictions(seqs: np.ndarray, meta_data: List[Dict]) -> pd.DataFrame:
-    # Placeholder for actual deepCRE predictions
-    model = load_model(DEEPCRE_PATH)
+def make_deepcre_predictions(
+    seqs: np.ndarray, meta_data: List[Dict], model_path: str = DEEPCRE_PATH
+) -> pd.DataFrame:
+    """Score one-hot encoded sequences with a deepCRE model.
+
+    Args:
+        seqs: One-hot encoded sequences, shape ``(n, 3020, 4)``.
+        meta_data: One mapping dict per row of ``seqs``, in the same order.
+        model_path: Path to the deepCRE ``.h5`` model. Defaults to the module
+            level :data:`DEEPCRE_PATH`, so existing callers are unaffected;
+            the species comparison overrides it per cross-validation model.
+
+    Returns:
+        ``meta_data`` as a dataframe with an added ``prediction_mutated`` column.
+    """
+    model = load_model(model_path)
     predictions = model.predict(seqs)
     predictions = predictions.flatten().tolist()
     results_df = pd.DataFrame(meta_data)

@@ -154,7 +154,26 @@ def build_site_to_gene_ids(mapping_candidates: pd.DataFrame) -> Dict[str, List[s
     )   #type: ignore
 
 
-def prepare_bhlh_enrichment_df() -> pd.DataFrame:
+def bhlh_mapping_results(model_path: str = _common.DEEPCRE_PATH) -> List[Dict]:
+    """Align the bHLH STARR-seq fragments onto their reference windows.
+
+    Args:
+        model_path: deepCRE model scoring the reference windows (``ref_fitness``).
+
+    Returns:
+        One mapping dict per (fragment, gene) alignment, as returned by
+        :func:`_common.map_starrseq_to_deepcre`.
+    """
+    ensure_refs_fasta(REFS_FASTA_PATH, GENES_JSON_PATH, MAPPING_FILE, GENOME_FASTA_PATH, GTF_PATH)
+    starrseq_data = _common.load_starrseq_data(STARRSEQ_INPUT_FILE)
+    mapping_candidates = pd.read_csv(MAPPING_FILE)
+    additional_padding_map = mapping_candidates[["gene_id", "additional_padding"]].drop_duplicates().set_index("gene_id")
+    gene_data = load_bhlh_window_candidates(REFS_FASTA_PATH, model_path, additional_padding_map)
+    site_to_gene_ids = build_site_to_gene_ids(mapping_candidates)
+    return _common.map_starrseq_to_deepcre(starrseq_data, gene_data, site_to_gene_ids)
+
+
+def prepare_bhlh_enrichment_df(model_path: str = _common.DEEPCRE_PATH) -> pd.DataFrame:
     """Load bHLH inputs and run the prediction pipeline into an analysis-ready df.
 
     Performs the TF-specific data joining: ensure the reference-window FASTA is
@@ -167,19 +186,18 @@ def prepare_bhlh_enrichment_df() -> pd.DataFrame:
     Does not configure matplotlib or the output root; the caller owns those so
     the same dataframe can feed either the bHLH-only or the pooled analysis.
 
+    Args:
+        model_path: deepCRE model used both to score the reference windows
+            (``ref_fitness``) and the mutated sequences, so the two stay
+            consistent. Defaults to :data:`_common.DEEPCRE_PATH`.
+
     Returns:
         Enrichment dataframe ready for :func:`_common.run_correlation_analysis`.
     """
-    ensure_refs_fasta(REFS_FASTA_PATH, GENES_JSON_PATH, MAPPING_FILE, GENOME_FASTA_PATH, GTF_PATH)
-    starrseq_data = _common.load_starrseq_data(STARRSEQ_INPUT_FILE)
-    mapping_candidates = pd.read_csv(MAPPING_FILE)
-    additional_padding_map = mapping_candidates[["gene_id", "additional_padding"]].drop_duplicates().set_index("gene_id")
-    gene_data = load_bhlh_window_candidates(REFS_FASTA_PATH, _common.DEEPCRE_PATH, additional_padding_map)
-    site_to_gene_ids = build_site_to_gene_ids(mapping_candidates)
     starr_seq_results = pd.read_csv(STARR_SEQ_RESULTS)
-    mapping_results = _common.map_starrseq_to_deepcre(starrseq_data, gene_data, site_to_gene_ids)
+    mapping_results = bhlh_mapping_results(model_path)
     seqs, meta_data = _common.build_sequences(mapping_results, max_differences=MAX_DIFFERENCES)
-    prediction_df = _common.make_deepcre_predictions(seqs, meta_data)
+    prediction_df = _common.make_deepcre_predictions(seqs, meta_data, model_path=model_path)
     enrichment_df = _common.merge_with_starrseq_results(prediction_df, starr_seq_results)
     enrichment_df = enrichment_df.dropna(subset=["enrichment"]).reset_index(drop=True)
     enrichment_df = _common.calculate_deltas(enrichment_df)

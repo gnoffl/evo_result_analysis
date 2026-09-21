@@ -56,7 +56,25 @@ def load_relevant_deepcre_window_candidates(run_folder: str):
     return gene_data
 
 
-def prepare_wrky_enrichment_df() -> pd.DataFrame:
+def wrky_mapping_results() -> List[Dict]:
+    """Align the WRKY STARR-seq fragments onto their deepCRE reference windows.
+
+    Returns:
+        One mapping dict per (fragment, gene) alignment, as returned by
+        :func:`_common.map_starrseq_to_deepcre`.
+    """
+    starrseq_data = load_starrseq_data(STARRSEQ_INPUT_FILE)
+    gene_data = load_relevant_deepcre_window_candidates(DEEP_CRE_RUN_FOLDER)
+    mapping_candidates = pd.read_csv(MAPPING_FILE)
+    site_to_gene_ids = (
+        mapping_candidates.groupby("deepCIS_segment")["Gene_ID"]
+        .apply(list)
+        .to_dict()
+    )
+    return _common.map_starrseq_to_deepcre(starrseq_data, gene_data, site_to_gene_ids)
+
+
+def prepare_wrky_enrichment_df(model_path: str = _common.DEEPCRE_PATH) -> pd.DataFrame:
     """Load WRKY inputs and run the prediction pipeline into an analysis-ready df.
 
     Performs the TF-specific data joining: parse the WRKY STARR-seq variants and
@@ -67,23 +85,20 @@ def prepare_wrky_enrichment_df() -> pd.DataFrame:
     Does not configure matplotlib or the output root; the caller owns those so
     the same dataframe can feed either the WRKY-only or the pooled analysis.
 
+    Args:
+        model_path: deepCRE model used to score the mutated sequences. Defaults
+            to :data:`_common.DEEPCRE_PATH`. Note that ``deepcre_ref_fitness``
+            is read from the run's ``pareto_front.json`` and therefore always
+            comes from the model used during evolution, not from this one, so
+            ``delta_prediction`` mixes models when this is overridden.
+
     Returns:
         Enrichment dataframe ready for :func:`_common.run_correlation_analysis`.
     """
-    starrseq_data = load_starrseq_data(STARRSEQ_INPUT_FILE)
-    gene_data = load_relevant_deepcre_window_candidates(DEEP_CRE_RUN_FOLDER)
-    mapping_candidates = pd.read_csv(MAPPING_FILE)
-    site_to_gene_ids = (
-        mapping_candidates.groupby("deepCIS_segment")["Gene_ID"]
-        .apply(list)
-        .to_dict()
-    )
     starr_seq_results = pd.read_csv(STARR_SEQ_RESULTS)
-    mapping_results = _common.map_starrseq_to_deepcre(
-        starrseq_data, gene_data, site_to_gene_ids,
-    )
+    mapping_results = wrky_mapping_results()
     seqs, meta_data = build_sequences(mapping_results)
-    prediction_df = make_deepcre_predictions(seqs, meta_data)
+    prediction_df = make_deepcre_predictions(seqs, meta_data, model_path=model_path)
     enrichment_df = merge_with_starrseq_results(prediction_df, starr_seq_results)
     enrichment_df = enrichment_df.dropna(subset=["enrichment"]).reset_index(drop=True)
     enrichment_df = calculate_deltas(enrichment_df)

@@ -8,6 +8,8 @@ sequence, and ``json.load`` returns the Pareto front so that
 import unittest
 from unittest.mock import mock_open, patch
 
+import pandas as pd
+
 from workflows.overlap_analysis import starrseq_deepcre_correlation_WRKY as wrky
 
 
@@ -73,6 +75,44 @@ class TestLoadRelevantDeepcreWindowCandidates(unittest.TestCase):
         self.assertEqual(minus_gene["end"], 8204500)
         self.assertLessEqual(minus_gene["start"], minus_gene["end"])
         self.assertAlmostEqual(minus_gene["ref_fitness"], 0.99)
+
+
+class TestWrkyMappingResults(unittest.TestCase):
+    def test_groups_candidate_genes_per_site_and_returns_alignments(self):
+        # Arrange: two rows for one site, one for another.
+        mapping_candidates = pd.DataFrame(
+            {
+                "deepCIS_segment": ["WRKY_1:100-200", "WRKY_1:100-200", "WRKY_2:5-9"],
+                "Gene_ID": ["AT1G19040", "AT1G23140", "AT2G00010"],
+            }
+        )
+        gene_data = [{"gene": "AT1G19040"}]
+        alignments = [{"starr_full_name": "frag_1", "gene": "AT1G19040"}]
+
+        # Act
+        with patch.object(wrky, "load_starrseq_data", return_value=["entry"]), \
+                patch.object(
+                    wrky, "load_relevant_deepcre_window_candidates",
+                    return_value=gene_data,
+                ), \
+                patch.object(wrky.pd, "read_csv", return_value=mapping_candidates), \
+                patch.object(
+                    wrky._common, "map_starrseq_to_deepcre", return_value=alignments,
+                ) as mapper:
+            results = wrky.wrky_mapping_results()
+
+        # Assert
+        self.assertEqual(results, alignments)
+        passed_starrseq, passed_genes, passed_sites = mapper.call_args[0]
+        self.assertEqual(passed_starrseq, ["entry"])
+        self.assertEqual(passed_genes, gene_data)
+        self.assertEqual(
+            passed_sites,
+            {
+                "WRKY_1:100-200": ["AT1G19040", "AT1G23140"],
+                "WRKY_2:5-9": ["AT2G00010"],
+            },
+        )
 
 
 if __name__ == "__main__":
