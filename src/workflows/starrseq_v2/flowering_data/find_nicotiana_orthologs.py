@@ -14,7 +14,7 @@ ARC = Path("/home/gernot/ARCitect/ARCs/genRE/assays/Gene_Data/dataset")
 ARA_GENOME = ARC / "genomes/Arabidopsis_thaliana.TAIR10.dna.toplevel.fa"
 ARA_ANNOTATION = ARC / "annotations/Arabidopsis_thaliana.TAIR10.52.gtf"
 NTAB_GENOME = ARC / "genomes/nicotiana_tabacum.fa"
-NTAB_ANNOTATION = ARC / "annotations/hlx-Nicotiana_tabacum-GCF_000715135.1-4097.gff"
+NTAB_ANNOTATION = ARC / "annotations/hlx-Nicotiana_tabacum-GCF_000715135.1-4097.agat.gtf"
 
 HERE = Path(__file__).parent
 ARA_GENES = HERE / "ara_flowering_genes_florid.json"
