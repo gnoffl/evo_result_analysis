@@ -26,7 +26,7 @@ NTAB_DB = HERE / "ntab_prot_per_gene"
 HITS_TSV = HERE / "ara_flowering_vs_ntab.tsv"
 MAPPING_CSV = HERE / "ara_ntab_flowering_orthologs.csv"
 
-OUTPUT_JSON = Path("/home/gernot/Code/PhD_Code/Evolution/data/starrseq_v2/ntab_flowering_genes.json")
+OUTPUT_JSON = HERE / "ntab_flowering_genes.json"
 
 MAX_EVALUE = 1e-10
 MIN_IDENTITY = 30.0
