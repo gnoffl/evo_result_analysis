@@ -15,25 +15,36 @@ DATA = "/home/gernot/Code/PhD_Code/Evolution/data/starrseq_v2"
 ARC = "/home/gernot/ARCitect/ARCs/genRE/assays/Gene_Data/dataset"
 NTAB_BUILD = "/home/gernot/Code/PhD_Code/PhD_Tools/pseudo_chromosomes/nicotiana_build"
 
-# hand-written gene lists; absent for now, so the flowering blocks are skipped
-FLOWERING_GENES_ARA_PATH = DATA + "/ara_flowering_genes.json"
-FLOWERING_GENES_NTAB_PATH = DATA + "/ntab_flowering_genes.json"
+# FLOR-ID list and its N. tabacum orthologs, both built in flowering_data/
+FLOWERING_GENES_ARA_PATH = os.path.join(
+    os.path.dirname(__file__), "flowering_data", "ara_flowering_genes_florid.json"
+)
+FLOWERING_GENES_NTAB_PATH = os.path.join(
+    os.path.dirname(__file__), "flowering_data", "ntab_flowering_genes.json"
+)
 GOF_GENES_ARA_PATH = "/home/gernot/Code/PhD_Code/Evolution/data/Arabidopsis_GOF_extracted_genes.fa"
 LOF_GENES_ARA_PATH = "/home/gernot/Code/PhD_Code/Evolution/data/Arabidopsis_LOF_extracted_genes.fa"
-TARGET_GENE_COUNT_NTAB = 50
-TARGET_GENE_COUNT_ARA = 50
+TARGET_GENE_COUNT_NTAB = 500
+TARGET_GENE_COUNT_ARA = 500
 ARA_GENOME = ARC + "/genomes/Arabidopsis_thaliana.TAIR10.dna.toplevel.fa"
-NATB_GENOME = NTAB_BUILD + "/ntab_pseudo.fa"
+NATB_GENOME = ARC + "/genomes/nicotiana_tabacum.fa"
 ARA_ANNOTATION = ARC + "/annotations/Arabidopsis_thaliana.TAIR10.52.gtf"
-NTAB_ANNOTATION = NTAB_BUILD + "/ntab_pseudo.gtf"
+NTAB_ANNOTATION = ARC + "/annotations/hlx-Nicotiana_tabacum-GCF_000715135.1-4097.agat.gtf"
 ARA_VCF = ARC + "/1001AraVCFs_div_panel/vcf_downloads/combined/all_snps_combined.vcf"
 GENE_NAME_ATTRIBUTE = "gene_id"
 FEATURE_TYPE_FILTER = ["gene"]
 SEED = 20260921
+ARM_SUBSET_FRACTION = 0.2
+ARM_SUBSET_MIN_GENES = 50
+FULL_GRID_SUBSET_FRACTION = 0.2
+FULL_GRID_SUBSET_MIN_GENES = 20
+# off-target windows avoid the central 1500-1519 region of the 3020 bp frame
+RANDOM_WINDOW_LENGTH = 170
+RANDOM_WINDOW_STARTS = list(range(0, 1330)) + list(range(1520, 2850))
 INTRAGENIC = 500
 EXTRAGENIC = 1000
 
-ARA_FLOWERING_FASTA = DATA + "/ara_flowering_extracted_genes.fa"
+ARA_FLOWERING_GOF_FASTA = DATA + "/ara_flowering_GOF_LOF_extracted_genes.fa"
 NTAB_FLOWERING_FASTA = DATA + "/ntab_flowering_extracted_genes.fa"
 STARRSEQ_V1_FASTA = DATA + "/starrseq_v1_extracted_genes.fa"
 GENE_METADATA_PATH = DATA + "/candidate_gene_metadata.csv"
@@ -110,6 +121,120 @@ def add_to_metadata(
     return pd.concat([metadata, new_rows], ignore_index=True)
 
 
+def draw_subset_genes(
+    eligible: pd.DataFrame, fraction: float, min_genes: int, seed: int
+) -> List[str]:
+    """Draw a fixed-size gene sample per species from the eligible rows.
+
+    Args:
+        eligible: Rows the draw runs on; columns gene_id and species.
+        fraction: Share of each species' unique genes to draw.
+        min_genes: Lower bound on the per-species sample size.
+        seed: Seed of the draw.
+
+    Returns:
+        The drawn gene ids across all species.
+    """
+    rng = random.Random(seed)
+    drawn_genes = []
+    for _, rows in eligible.groupby("species"):
+        genes = rows["gene_id"].unique()
+        subset_size = min(len(genes), max(min_genes, round(fraction * len(genes))))
+        mask = [True] * subset_size + [False] * (len(genes) - subset_size)
+        rng.shuffle(mask)
+        drawn_genes.extend(gene for gene, drawn in zip(genes, mask) if drawn)
+    return drawn_genes
+
+
+def select_arm_subset(metadata: pd.DataFrame, seed: int) -> pd.DataFrame:
+    """Draw the arm subset per species over unique genes (starrseq_v1 excluded).
+
+    Args:
+        metadata: Gene-tracking table with columns gene_id, species, reason.
+        seed: Seed of the draw.
+
+    Returns:
+        ``metadata`` with an added boolean column ``arm_subset``; every row of a
+        drawn gene is flagged.
+    """
+    eligible = metadata[metadata["reason"] != "starrseq_v1"]
+    arm_genes = draw_subset_genes(eligible, ARM_SUBSET_FRACTION, ARM_SUBSET_MIN_GENES, seed)
+    metadata["arm_subset"] = metadata["gene_id"].isin(arm_genes)
+    return metadata
+
+
+def select_full_grid_subset(metadata: pd.DataFrame, seed: int) -> pd.DataFrame:
+    """Draw the full-grid subset per species out of the arm subset.
+
+    Args:
+        metadata: Gene-tracking table already carrying ``arm_subset``.
+        seed: Seed of the draw.
+
+    Returns:
+        ``metadata`` with an added boolean column ``full_grid_subset``.
+    """
+    eligible = metadata[metadata["arm_subset"]]
+    grid_genes = draw_subset_genes(
+        eligible, FULL_GRID_SUBSET_FRACTION, FULL_GRID_SUBSET_MIN_GENES, seed
+    )
+    metadata["full_grid_subset"] = metadata["gene_id"].isin(grid_genes)
+    return metadata
+
+
+def add_v1_windows(
+    metadata: pd.DataFrame, starrseq_v1_mapping: pd.DataFrame
+) -> pd.DataFrame:
+    """Attach the STARR-seq v1 mutated windows as alternative_start/_end columns.
+
+    Args:
+        metadata: Gene-tracking table.
+        starrseq_v1_mapping: v1 fragment-to-gene mapping with gene, overlap_start
+            and overlap_end (offsets into the gene's reference window).
+
+    Returns:
+        ``metadata`` with one row per (gene row, mutated window); genes without a
+        v1 window keep a single row with NaN in both columns.
+    """
+    windows = starrseq_v1_mapping[["gene", "overlap_start", "overlap_end"]].drop_duplicates()
+    windows = windows.rename(columns={
+        "gene": "gene_id",
+        "overlap_start": "alternative_start",
+        "overlap_end": "alternative_end",
+    })
+    windows["reason"] = "starrseq_v1"
+    return metadata.merge(windows, on=["gene_id", "reason"], how="left")
+
+
+def add_random_windows(metadata: pd.DataFrame, seed: int) -> pd.DataFrame:
+    """Fill alternative_start/_end of the arm rows that carry no v1 window.
+
+    One window per gene, drawn uniformly over the two allowed start ranges.
+
+    Args:
+        metadata: Gene-tracking table carrying arm_subset and the alternative
+            window columns.
+        seed: Seed of the draw.
+
+    Returns:
+        ``metadata`` with the missing arm windows filled in.
+    """
+    missing = metadata["arm_subset"] & metadata["alternative_start"].isna()
+    rng = random.Random(seed)
+    starts = {}
+    for gene_id in metadata.loc[missing, "gene_id"].unique():
+        offset = rng.randrange(len(RANDOM_WINDOW_STARTS))
+        starts[gene_id] = RANDOM_WINDOW_STARTS[offset]
+    metadata.loc[missing, "alternative_start"] = metadata.loc[missing, "gene_id"].map(starts)
+    metadata.loc[missing, "alternative_end"] = (
+        metadata.loc[missing, "alternative_start"] + RANDOM_WINDOW_LENGTH
+    )
+    # nullable int: rows outside the arm subset keep a missing window
+    metadata[["alternative_start", "alternative_end"]] = (
+        metadata[["alternative_start", "alternative_end"]].astype("Int64")
+    )
+    return metadata
+
+
 def extract_ntab(metadata):
     flowering_genes_ntab = []
     if os.path.isfile(FLOWERING_GENES_NTAB_PATH):
@@ -159,7 +284,7 @@ def extract_ara(metadata):
 
     all_genes_ara = chosen_genes_ara + random_genes_ara
     extract_genes(
-        ARA_GENOME, ARA_ANNOTATION, all_genes_ara, ARA_FLOWERING_FASTA, [ARA_VCF]
+        ARA_GENOME, ARA_ANNOTATION, all_genes_ara, ARA_FLOWERING_GOF_FASTA, [ARA_VCF]
     )
     return metadata
 
@@ -171,7 +296,7 @@ def extract_starrseq_v1(metadata):
     extract_genes(
         ARA_GENOME, ARA_ANNOTATION, starrseq_v1_genes, STARRSEQ_V1_FASTA, [ARA_VCF]
     )
-    return metadata,starrseq_v1_mapping
+    return metadata, starrseq_v1_mapping
 
 def extract_all_candidate_genes() -> Tuple[pd.DataFrame, pd.DataFrame]:
     metadata = pd.DataFrame(columns=["gene_id", "species", "reason"])
@@ -184,7 +309,13 @@ def extract_all_candidate_genes() -> Tuple[pd.DataFrame, pd.DataFrame]:
 
 def main():
     metadata, starrseq_v1_mapping = extract_all_candidate_genes()
-
+    metadata = select_arm_subset(metadata, SEED)
+    metadata = select_full_grid_subset(metadata, SEED)
+    metadata = add_v1_windows(metadata, starrseq_v1_mapping)
+    metadata = add_random_windows(metadata, SEED)
+    # TODO: extract into vector backbone
+    print(metadata.iloc[:20])
+    print(metadata.iloc[-20:])
 
 
 if __name__ == "__main__":
