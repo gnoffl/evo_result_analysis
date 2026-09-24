@@ -13,7 +13,6 @@ from workflows.overlap_analysis.starrseq_deepcre_correlation_bHLH import bhlh_ma
 
 DATA = "/home/gernot/Code/PhD_Code/Evolution/data/starrseq_v2"
 ARC = "/home/gernot/ARCitect/ARCs/genRE/assays/Gene_Data/dataset"
-NTAB_BUILD = "/home/gernot/Code/PhD_Code/PhD_Tools/pseudo_chromosomes/nicotiana_build"
 
 # FLOR-ID list and its N. tabacum orthologs, both built in flowering_data/
 FLOWERING_GENES_ARA_PATH = os.path.join(
@@ -43,11 +42,20 @@ RANDOM_WINDOW_LENGTH = 170
 RANDOM_WINDOW_STARTS = list(range(0, 1330)) + list(range(1520, 2850))
 INTRAGENIC = 500
 EXTRAGENIC = 1000
+# insert site of the extracted construct, verified against construct_1_extracted.fa
+INSERT_START = 780
+INSERT_END = 950
+INSERT_LENGTH = INSERT_END - INSERT_START
+BACKGROUND_PATH = "/home/gernot/Code/PhD_Code/evo_result_analysis/src/workflows/overlap_analysis/correct_construct/construct_1_extracted.fa"
 
 ARA_FLOWERING_GOF_FASTA = DATA + "/ara_flowering_GOF_LOF_extracted_genes.fa"
 NTAB_FLOWERING_FASTA = DATA + "/ntab_flowering_extracted_genes.fa"
 STARRSEQ_V1_FASTA = DATA + "/starrseq_v1_extracted_genes.fa"
 GENE_METADATA_PATH = DATA + "/candidate_gene_metadata.csv"
+ARA_FLOWERING_CONSTRUCT_PATH = DATA + "/ara_flowering_GOF_constructs.fa"
+NTAB_FLOWERING_CONSTRUCT_PATH = DATA + "/ntab_flowering_GOF_constructs.fa"
+ARA_FLOWERING_OFF_TARGET_PATH = DATA + "/ara_flowering_GOF_off_target_constructs.fa"
+NTAB_FLOWERING_OFF_TARGET_PATH = DATA + "/ntab_flowering_GOF_off_target_constructs.fa"
 
 
 def draw_random_genes(
@@ -307,15 +315,77 @@ def extract_all_candidate_genes() -> Tuple[pd.DataFrame, pd.DataFrame]:
     return metadata, starrseq_v1_mapping
 
 
+def splice_correct_windows(gene_fasta_path: str, output_path: str) -> None:
+    """Splice each gene frame's correct window into the construct backbone.
+
+    Args:
+        gene_fasta_path: Extracted gene frames of 3020 bp.
+        output_path: FASTA written, one construct per gene frame.
+    """
+    background = str(Fasta(BACKGROUND_PATH)[0])
+    placeholder = "N" * INSERT_LENGTH
+    frames = Fasta(gene_fasta_path)
+    with open(output_path, "w") as output_file:
+        for gene_id in frames.keys():
+            insert = str(frames[gene_id])[INSERT_START:INSERT_END]
+            output_file.write(f">{gene_id}\n{background.replace(placeholder, insert)}\n")
+
+
+def splice_off_target_windows(
+    metadata: pd.DataFrame, gene_fasta_path: str, output_path: str
+) -> None:
+    """Splice each alternative window of the metadata into the construct backbone.
+
+    Windows shorter than 170 bp (truncated v1 overlaps, or draws running past the
+    frame end) are skipped.
+
+    Args:
+        metadata: Gene-tracking table carrying alternative_start/alternative_end.
+        gene_fasta_path: Extracted gene frames of 3020 bp.
+        output_path: FASTA written, one construct per usable window.
+    """
+    background = str(Fasta(BACKGROUND_PATH)[0])
+    placeholder = "N" * INSERT_LENGTH
+    frames = Fasta(gene_fasta_path)
+    frames_by_gene = {
+        key.split("_gene:")[0].split("_", 1)[1]: key for key in frames.keys()
+    }
+    skipped = 0
+    with open(output_path, "w") as output_file:
+        for _, row in metadata.iterrows():
+            key = frames_by_gene.get(row["gene_id"])
+            if key is None or pd.isna(row["alternative_start"]):
+                continue
+            start, end = int(row["alternative_start"]), int(row["alternative_end"])
+            insert = str(frames[key])[start:end]
+            if len(insert) != INSERT_LENGTH:
+                skipped += 1
+                print(f"skipping {row['gene_id']} window {start}-{end} ({len(insert)} bp)")
+                continue
+            output_file.write(
+                f">{key}_off_{start}\n{background.replace(placeholder, insert)}\n"
+            )
+    print(f"{output_path}: skipped {skipped} windows that were not {INSERT_LENGTH} bp")
+
+
 def main():
     metadata, starrseq_v1_mapping = extract_all_candidate_genes()
     metadata = select_arm_subset(metadata, SEED)
     metadata = select_full_grid_subset(metadata, SEED)
     metadata = add_v1_windows(metadata, starrseq_v1_mapping)
     metadata = add_random_windows(metadata, SEED)
-    # TODO: extract into vector backbone
+    splice_correct_windows(ARA_FLOWERING_GOF_FASTA, ARA_FLOWERING_CONSTRUCT_PATH)
+    splice_correct_windows(NTAB_FLOWERING_FASTA, NTAB_FLOWERING_CONSTRUCT_PATH)
+    splice_off_target_windows(metadata, ARA_FLOWERING_GOF_FASTA, ARA_FLOWERING_OFF_TARGET_PATH)
+    splice_off_target_windows(metadata, NTAB_FLOWERING_FASTA, NTAB_FLOWERING_OFF_TARGET_PATH)
+    metadata["full_length_window"] = (
+        metadata["alternative_end"] - metadata["alternative_start"]
+    ) == RANDOM_WINDOW_LENGTH
+    metadata["full_length_window"] = metadata["full_length_window"].fillna(False)
+    metadata.to_csv(GENE_METADATA_PATH, index=False)
     print(metadata.iloc[:20])
     print(metadata.iloc[-20:])
+    # TODO: final length check, N counts, duplicates, nuclease sites, etc
 
 
 if __name__ == "__main__":
