@@ -2,7 +2,7 @@
 
 import unittest
 
-from src.workflows.starrseq_v2 import download_data
+from workflows.starrseq_v2.flowering_data import download_data
 
 HTML = """
 <table><thead><tr><th>Name</th></tr></thead>
