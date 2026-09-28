@@ -1,5 +1,8 @@
 # Byte-compiled / optimized / DLL files
 .vscode/*
+src/workflows/starrseq_v2/flowering_data/*
+!src/workflows/starrseq_v2/flowering_data/*.py
+!src/workflows/starrseq_v2/flowering_data/*.json
 __pycache__/
 *.py[codz]
 *$py.class
