@@ -24,7 +24,9 @@ _BINDING_PALETTE = {"binding": "#2196F3", "non_binding": "#FF5722"}
 _TF_PALETTE = {"WRKY": "#2196F3", "bHLH": "#FF5722"}
 _CONDITION_MARKERS = {"Light": "o", "Dark": "^"}
 
-def predict_sequences(cache_path: str = PREDICTIONS_CACHE_PATH) -> pd.DataFrame:
+def predict_sequences(
+    cache_path: str = PREDICTIONS_CACHE_PATH, model_path: str = DEEPCRE_PATH
+) -> pd.DataFrame:
     """Run deepCRE on all construct inserts and return per-sequence predictions.
 
     Results are written to cache_path on first run. Subsequent calls load from
@@ -32,6 +34,9 @@ def predict_sequences(cache_path: str = PREDICTIONS_CACHE_PATH) -> pd.DataFrame:
 
     Args:
         cache_path: CSV path to read from / write to.
+        model_path: Path to the deepCRE ``.h5`` model. Defaults to
+            :data:`DEEPCRE_PATH`; the species comparison overrides it per
+            cross-validation model, with one cache file per model.
 
     Returns:
         DataFrame with columns: id, barcode, prediction.
@@ -40,7 +45,7 @@ def predict_sequences(cache_path: str = PREDICTIONS_CACHE_PATH) -> pd.DataFrame:
         return pd.read_csv(cache_path)
 
     inserts_fasta = Fasta(CONSTRUCT_INSERT_PATH)
-    model = load_model(DEEPCRE_PATH)
+    model = load_model(model_path)
     keys = []
     encoded = []
     for key in inserts_fasta.keys():
