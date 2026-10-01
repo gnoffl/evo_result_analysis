@@ -567,6 +567,211 @@ def plot_pooled_allowance_bars(
     return ax
 
 
+# Geometry of the dot-and-interval panel. The pooled estimate of each cell is a
+# single marker with the bootstrap interval as a whisker, dodged left/right per
+# gene set; the individual genes are jittered around the same dodged position,
+# all at one marker area. Scaling that area by the gene's mutation count (the
+# weight the pooled estimator gives it) was tried and dropped: it added a second
+# encoding to a compact panel without changing any reading of it. The jitter seed
+# keeps the published figure reproducible.
+_POINT_DODGE = 0.19
+_POOLED_MARKER = "D"
+_POOLED_MARKER_SIZE = 4.0
+_POOLED_LINE_WIDTH = 1.2
+_GENE_POINT_JITTER = 0.055
+_GENE_POINT_ALPHA = 0.45
+_GENE_POINT_AREA = 4.0
+_GENE_POINT_JITTER_SEED = 20240101
+
+
+def plot_pooled_allowance_points(
+    data: pd.DataFrame,
+    output_dir: Optional[Path] = None,
+    fmt: str = "png",
+    show_legend: bool = True,
+    show_title: bool = True,
+    palette: Optional[dict] = None,
+    ax: Optional[plt.Axes] = None,
+    n_resamples: int = BOOTSTRAP_RESAMPLES,
+    seed: int = BOOTSTRAP_SEED,
+    show_gene_points: bool = True,
+) -> plt.Axes:
+    """Draw pooled percent-allowed as dots with CIs over the individual genes.
+
+    Same estimator as :func:`plot_pooled_allowance_bars` — each marker is the
+    pooled percentage of one group/region cell (total allowed over total
+    mutations, summed across genes) and each whisker its gene-level cluster
+    bootstrap interval — but drawn as a point-and-interval instead of a bar, with
+    every contributing gene shown behind it.
+
+    A bar is a poor container for this quantity: its area and its baseline at
+    zero carry no meaning (the value is a ratio, not a count), and it hides the
+    gene-level structure the estimate is built from. Each gene ``i`` is therefore
+    plotted at its own percentage ``allowed_i / total_i * 100``, all dots at the
+    same size. Genes with no mutations in a region have no percentage and are not
+    plotted; they still take part in the bootstrap resampling.
+
+    The dots reach 0 % and 100 % because a gene with one or two mutations in a
+    region can only score those values, which leaves the pooled markers in the
+    lower tenth of a 0-100 % axis. That is accepted here: the panel's claim is
+    that the share is a few percent everywhere, not that the regions differ (all
+    eight bootstrap intervals overlap).
+
+    When ``ax`` is None (standalone) a new figure is created, styled with the
+    module theme, and — if ``output_dir`` is given — saved to
+    ``pooled_allowance_points.<fmt>`` and closed. When ``ax`` is provided the
+    markers are drawn onto it for panel composition: no theme is set, the figure
+    is not laid out, saved, or closed, and nothing is written to disk.
+
+    Args:
+        data: Tidy DataFrame from :func:`build_group_dataframe`.
+        output_dir: Directory to save the figure into. Ignored when ``ax`` is
+            given; when None in standalone mode the figure is not saved.
+        fmt: File format (e.g. ``"png"``, ``"svg"``, ``"pdf"``).
+        show_legend: Whether to draw the group legend. Set False when the
+            figure is a panel whose legend is provided elsewhere.
+        show_title: Whether to draw the axis title. Set False for panel use.
+        palette: Mapping of group name to colour. When None, uses
+            ``DEFAULT_GROUP_PALETTE``.
+        ax: Axes to draw onto. When None a standalone figure is created.
+        n_resamples: Number of bootstrap resamples per cell.
+        seed: Base seed for the bootstrap, for reproducible intervals.
+        show_gene_points: Whether to plot the individual genes behind the pooled
+            markers.
+
+    Returns:
+        The Axes the markers were drawn onto.
+    """
+    pooled = build_pooled_ci_dataframe(data, n_resamples=n_resamples, seed=seed)
+    if palette is None:
+        palette = DEFAULT_GROUP_PALETTE
+
+    own_figure = ax is None
+    if own_figure:
+        sns.set_theme(style="whitegrid", font_scale=1.1)
+        fig, ax = plt.subplots(figsize=(7, 5))
+    else:
+        fig = ax.get_figure()
+
+    region_positions = np.arange(len(REGION_ORDER), dtype=float)
+    jitter_generator = np.random.default_rng(_GENE_POINT_JITTER_SEED)
+    for group_index, group in enumerate(_GROUP_ORDER):
+        offset = (group_index - (len(_GROUP_ORDER) - 1) / 2) * 2 * _POINT_DODGE
+
+        if show_gene_points:
+            _draw_gene_points(
+                ax,
+                data[data["group"] == group],
+                region_positions,
+                offset,
+                palette[group],
+                jitter_generator,
+            )
+
+        group_rows = pooled[pooled["group"] == group].set_index("region")
+        pooled_percentages = np.array(
+            [
+                group_rows.loc[region, "pooled_percent"]
+                if region in group_rows.index
+                else float("nan")
+                for region in REGION_ORDER
+            ],
+            dtype=float,
+        )
+        # Asymmetric whiskers: the bootstrap interval is not centred on the dot.
+        lower_errors = pooled_percentages - np.array(
+            [group_rows.loc[region, "ci_low"] for region in REGION_ORDER], dtype=float
+        )
+        upper_errors = (
+            np.array(
+                [group_rows.loc[region, "ci_high"] for region in REGION_ORDER],
+                dtype=float,
+            )
+            - pooled_percentages
+        )
+        ax.errorbar(
+            region_positions + offset,
+            pooled_percentages,
+            yerr=np.abs(np.vstack([lower_errors, upper_errors])),
+            fmt=_POOLED_MARKER,
+            markersize=_POOLED_MARKER_SIZE,
+            color=palette[group],
+            markeredgecolor="black",
+            markeredgewidth=0.5,
+            # Black interval, in the figure and in the legend handle: in the gene
+            # set's own colour it vanishes into the per-gene dots behind it.
+            ecolor="black",
+            elinewidth=_POOLED_LINE_WIDTH,
+            capsize=2.5,
+            label=group,
+            zorder=3,
+        )
+
+    ax.set_xticks(region_positions)
+    ax.set_xticklabels(REGION_ORDER)
+    ax.set_xlim(-0.5, len(REGION_ORDER) - 0.5)
+    ax.set_xlabel("Genomic region")
+    ax.set_ylabel("Actual mutations at natural-VCF-allowed positions (%)")
+    ax.set_ylim(-3.0, 103.0)
+    if show_title:
+        ax.set_title("Actual mutations that would have been allowed naturally")
+    if show_legend:
+        ax.legend(title="Gene set", loc="upper right", fontsize=8, title_fontsize=8)
+    elif ax.get_legend() is not None:
+        ax.get_legend().remove()  # type: ignore[union-attr]
+
+    if own_figure:
+        fig.tight_layout()
+        if output_dir is not None:
+            output_path = output_dir / f"pooled_allowance_points.{fmt}"
+            fig.savefig(output_path, bbox_inches="tight", dpi=150)  # type: ignore[union-attr]
+            plt.close(fig)
+            print(f"Saved: {output_path}")
+    return ax
+
+
+def _draw_gene_points(
+    ax: plt.Axes,
+    group_data: pd.DataFrame,
+    region_positions: np.ndarray,
+    offset: float,
+    color: str,
+    jitter_generator: np.random.Generator,
+) -> None:
+    """Scatter one gene set's per-gene percentages behind the pooled markers.
+
+    Only genes with at least one mutation in a region are drawn (a gene without
+    mutations there has no percentage). All markers share one area: the dots show
+    where the genes sit, and how much each gene contributes to the pooled ratio
+    is not encoded.
+
+    Args:
+        ax: Axes to scatter onto.
+        group_data: Rows of one gene set from :func:`build_group_dataframe`.
+        region_positions: x position of each region, in ``REGION_ORDER``.
+        offset: Dodge offset of this gene set, added to the region positions.
+        color: Marker colour for this gene set.
+        jitter_generator: Random generator supplying the horizontal jitter.
+    """
+    plottable = group_data.dropna(subset=["percent_allowed"])
+    region_to_position = dict(zip(REGION_ORDER, region_positions))
+    x_positions = np.array(
+        [region_to_position[region] for region in plottable["region"]], dtype=float
+    )
+    x_positions = x_positions + offset + jitter_generator.uniform(
+        -_GENE_POINT_JITTER, _GENE_POINT_JITTER, size=len(x_positions)
+    )
+    ax.scatter(
+        x_positions,
+        plottable["percent_allowed"].to_numpy(dtype=float),
+        s=_GENE_POINT_AREA,
+        color=color,
+        alpha=_GENE_POINT_ALPHA,
+        linewidths=0.0,
+        zorder=2,
+    )
+
+
 def main() -> None:
     """Run the actual-mutation allowance breakdown for GOF and LOF."""
     gof_vcf_positions = load_vcf_positions_by_gene(GOF_VCF_DIR)
