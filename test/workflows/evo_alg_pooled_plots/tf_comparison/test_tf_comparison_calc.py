@@ -201,12 +201,36 @@ class LoadPerGeneDiffsTest(unittest.TestCase):
         self.assertEqual(diffs.loc[("1_ATX", "WRKY"), "diff"], 1)
         self.assertEqual(diffs.loc[("1_ATX", "MYB"), "diff"], -4)
 
-    def test_raises_without_exactly_one_annotated_peaks_file(self) -> None:
+    def test_raises_without_any_annotated_peaks_file(self) -> None:
         # Arrange: empty run dir (no deepcis_scan).
         with tempfile.TemporaryDirectory() as tmp:
             # Act / Assert
             with self.assertRaises(FileNotFoundError):
                 load_per_gene_diffs(tmp)
+
+    def test_uses_newest_of_several_annotated_peaks_files(self) -> None:
+        # Arrange: two timestamped CSVs in one deepcis_scan, as repeated pipeline
+        # runs leave behind; only the newer one's counts may be used.
+        with tempfile.TemporaryDirectory() as tmp:
+            scan_dir = os.path.join(tmp, "deepcis_scan")
+            os.makedirs(scan_dir)
+            for stamp, mutated_count in [("20260101_000000", 3), ("20260202_000000", 7)]:
+                records = [
+                    {"gene": "1_ATX_a_111", "tf": "WRKY", "signal_type": signal, "peak_area": 1.0}
+                    for signal, count in [("reference", 1), ("max_mutated", mutated_count)]
+                    for _ in range(count)
+                ]
+                pd.DataFrame(records).to_csv(
+                    os.path.join(scan_dir, f"run_annotated_peaks_ref_max_diff_{stamp}.csv"),
+                    index=False,
+                )
+
+            # Act
+            counts = load_per_gene_tf_counts(tmp)
+
+        # Assert: 7 max_mutated peaks from the 20260202 file, not 3 from 20260101.
+        self.assertEqual(counts.loc[("1_ATX", "WRKY"), "max_mutated"], 7)
+        self.assertEqual(counts.loc[("1_ATX", "WRKY"), "diff"], 6)
 
     def test_n_core_fields_controls_replicate_grouping(self) -> None:
         # Arrange: two random-start sequences whose first two underscore fields are

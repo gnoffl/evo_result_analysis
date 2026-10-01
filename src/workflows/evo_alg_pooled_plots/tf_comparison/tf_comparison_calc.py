@@ -21,8 +21,12 @@ from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
-from scipy.stats import mannwhitneyu, wilcoxon
-from statsmodels.stats.multitest import multipletests
+from scipy.stats import mannwhitneyu
+
+from analysis.utils.statistics import (
+    benjamini_hochberg_qvalues,
+    wilcoxon_pvalue_vs_zero,
+)
 
 # Data-schema column names shared by the loaders and significance functions.
 TF_COLUMN = "tf"
@@ -197,14 +201,16 @@ def load_per_gene_tf_counts(
         appear; filling absent combinations with 0 is the caller's responsibility.
 
     Raises:
-        FileNotFoundError: If there is not exactly one annotated-peaks CSV.
+        FileNotFoundError: If there is no annotated-peaks CSV.
     """
     matches = glob.glob(os.path.join(run_dir, "deepcis_scan", ANNOTATED_PEAKS_GLOB))
-    if len(matches) != 1:
+    if not matches:
         raise FileNotFoundError(
-            f"Expected one {ANNOTATED_PEAKS_GLOB} in {run_dir}/deepcis_scan, found {matches}"
+            f"Expected an {ANNOTATED_PEAKS_GLOB} in {run_dir}/deepcis_scan, found none"
         )
-    peaks = pd.read_csv(matches[0])
+    # Repeated pipeline runs leave several CSVs that differ only in their trailing
+    # "_<date>_<time>.csv" stamp; the lexicographically largest name is the newest.
+    peaks = pd.read_csv(max(matches))
     peaks = peaks[peaks[SIGNAL_TYPE_COLUMN].isin([REF_COLUMN, mutated_column])].copy()
     peaks["core_gene"] = peaks[GENE_COLUMN].str.split("_").str[:n_core_fields].str.join("_")
     counts = (
@@ -248,27 +254,10 @@ def load_per_gene_diffs(
         (optimized peak count minus ``reference`` peak count).
 
     Raises:
-        FileNotFoundError: If there is not exactly one annotated-peaks CSV.
+        FileNotFoundError: If there is no annotated-peaks CSV.
     """
     counts = load_per_gene_tf_counts(run_dir, n_core_fields, mutated_column)
     return counts[["diff"]].copy()
-
-
-def _wilcoxon_pvalue(values: np.ndarray) -> float:
-    """Two-sided Wilcoxon signed-rank p-value of ``values`` vs 0 (NaN if undefined)."""
-    try:
-        return float(wilcoxon(values)[1])
-    except ValueError:
-        return float("nan")
-
-
-def _bh_qvalues(pvalues: pd.Series) -> pd.Series:
-    """Benjamini-Hochberg q-values, leaving NaN p-values as NaN."""
-    qvalues = pd.Series(np.nan, index=pvalues.index)
-    finite = pvalues.notna()
-    if finite.any():
-        qvalues[finite] = multipletests(pvalues[finite].to_numpy(), method="fdr_bh")[1]
-    return qvalues
 
 
 def _diff_series_to_matrix(
@@ -285,7 +274,7 @@ def _diff_series_to_matrix(
 
 def _tf_stats(arr: np.ndarray) -> Tuple[float, int, float]:
     """Return (median, n_nonzero, wilcoxon_p) for a per-gene diff vector."""
-    return float(np.median(arr)), int(np.count_nonzero(arr)), _wilcoxon_pvalue(arr)
+    return float(np.median(arr)), int(np.count_nonzero(arr)), wilcoxon_pvalue_vs_zero(arr)
 
 
 def _pair_contrast_matrix(
@@ -393,7 +382,7 @@ def paired_tf_significance(
         (f"p_{label_a}", f"q_{label_a}"),
         (f"p_{label_b}", f"q_{label_b}"),
     ]:
-        result[q_col] = _bh_qvalues(result[p_col])
+        result[q_col] = benjamini_hochberg_qvalues(result[p_col])
     return result.sort_values("q_contrast").reset_index(drop=True)
 
 
@@ -420,7 +409,7 @@ def single_run_tf_significance(
         q_intra, sorted by q_intra ascending.
 
     Raises:
-        FileNotFoundError: If there is not exactly one annotated-peaks CSV.
+        FileNotFoundError: If there is no annotated-peaks CSV.
     """
     diff = load_per_gene_diffs(run_dir, n_core_fields, mutated_column)["diff"]
     all_genes = sorted(set(diff.index.get_level_values("core_gene")))
@@ -441,7 +430,7 @@ def single_run_tf_significance(
         )
 
     result = pd.DataFrame(rows)
-    result["q_intra"] = _bh_qvalues(result["p_intra"])
+    result["q_intra"] = benjamini_hochberg_qvalues(result["p_intra"])
     return result.sort_values("q_intra").reset_index(drop=True)
 
 
@@ -477,7 +466,7 @@ def per_gene_tf_binding_summary(
         ``mean_max_mutated`` descending.
 
     Raises:
-        FileNotFoundError: If there is not exactly one annotated-peaks CSV.
+        FileNotFoundError: If there is no annotated-peaks CSV.
     """
     counts = load_per_gene_tf_counts(run_dir, n_core_fields, mutated_column)
     all_genes = sorted(set(counts.index.get_level_values("core_gene")))
@@ -573,7 +562,7 @@ def pooled_model_tf_significance(
         )
 
     result = pd.DataFrame(rows)
-    result["q_model"] = _bh_qvalues(result["p_model"])
+    result["q_model"] = benjamini_hochberg_qvalues(result["p_model"])
     return result.sort_values("q_model").reset_index(drop=True)
 
 
@@ -647,5 +636,5 @@ def interaction_model_tf_significance(
         )
 
     result = pd.DataFrame(rows)
-    result["q_interaction"] = _bh_qvalues(result["p_interaction"])
+    result["q_interaction"] = benjamini_hochberg_qvalues(result["p_interaction"])
     return result.sort_values("q_interaction").reset_index(drop=True)
