@@ -20,20 +20,34 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import seaborn as sns  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
+from mpl_toolkits.axes_grid1 import make_axes_locatable  # noqa: E402
+
+from analysis.utils.statistics import (  # noqa: E402
+    SIGNIFICANCE_STAR_THRESHOLDS,
+    qvalue_to_stars,
+)
 
 COLORMAP = "RdBu_r"
-# q-value thresholds (most stringent first) mapped to the star annotation.
-STAR_THRESHOLDS = [(0.001, "***"), (0.01, "**"), (0.05, "*")]
+# q-value thresholds (most stringent first) mapped to the star annotation. Shared
+# with the blamm motif analysis so both render the same q-values identically.
+STAR_THRESHOLDS = SIGNIFICANCE_STAR_THRESHOLDS
+# Colour bar width for the transposed (wide) layout, in inches.
+_TRANSPOSED_COLORBAR_WIDTH_INCHES = 0.18
 
 
 def q_to_stars(qvalue: float) -> str:
-    """Return the significance star string for a q-value (empty if not significant)."""
-    if pd.isna(qvalue):
-        return ""
-    for threshold, stars in STAR_THRESHOLDS:
-        if qvalue < threshold:
-            return stars
-    return ""
+    """Return the significance star string for a q-value (empty if not significant).
+
+    Thin alias of :func:`analysis.utils.statistics.qvalue_to_stars`, kept so the
+    plotting callers can import their star helper from the plotting module.
+
+    Args:
+        qvalue: Corrected p-value; NaN counts as not significant.
+
+    Returns:
+        The star string, or the empty string if no threshold is cleared.
+    """
+    return qvalue_to_stars(qvalue)
 
 
 def plot_heatmap(
@@ -45,6 +59,8 @@ def plot_heatmap(
     separator_after_column: Optional[int] = None,
     annotate_values: bool = True,
     add_colorbar: bool = True,
+    transpose: bool = False,
+    annotation_fontsize: Optional[float] = None,
     ax: Optional[plt.Axes] = None,
 ) -> Figure:
     """Draw the cross-run TF heatmap on a symmetric diverging scale.
@@ -75,6 +91,14 @@ def plot_heatmap(
             suppress it (e.g. so the caller can add one dedicated colorbar axes);
             the mappable is then available as ``ax.collections[0]``. Defaults to
             True.
+        transpose: When True, draw the matrix rotated by 90° — TFs along the x
+            axis and runs along the y axis — giving a wide instead of a tall
+            figure. ``row_stars`` then annotate the TF *x* tick labels and
+            ``separator_after_column`` draws a horizontal divider. Defaults to
+            False (TFs on the y axis).
+        annotation_fontsize: Font size for the cell annotations. None keeps the
+            matplotlib default; smaller values help the value+star strings fit
+            into the narrow cells of a transposed heatmap.
         ax: Axes to draw onto. When None (standalone), a figure sized to the
             matrix is created and returned unchanged. When given, the heatmap is
             drawn onto ``ax`` and the parent figure is returned; figure sizing and
@@ -87,7 +111,11 @@ def plot_heatmap(
     n_tfs, n_runs = matrix.shape
     own_figure = ax is None
     if own_figure:
-        fig, ax = plt.subplots(figsize=(max(4.0, 0.9 * n_runs + 2.5), max(4.0, 0.3 * n_tfs + 1.0)))
+        if transpose:
+            figsize = (max(6.0, 0.40 * n_tfs + 3.0), max(3.0, 0.45 * n_runs + 3.0))
+        else:
+            figsize = (max(4.0, 0.9 * n_runs + 2.5), max(4.0, 0.3 * n_tfs + 1.0))
+        fig, ax = plt.subplots(figsize=figsize)
 
     annot_arg: Union[bool, pd.DataFrame] = annotate
     fmt_arg = ".2f"
@@ -104,33 +132,62 @@ def plot_heatmap(
                     annot_data.loc[tf, col] = (
                         f"{val:.2f}{stars}" if annotate_values else stars
                     )
-        annot_arg = annot_data
+        annot_arg = annot_data.T if transpose else annot_data
         fmt_arg = ""
 
+    # In the transposed layout the heatmap is very wide and short, where the
+    # default colour bar placement gives a bar that does not span the heatmap's
+    # height. A divider-managed axes of fixed width (in inches) is pinned to the
+    # heatmap's height instead.
+    colorbar_axes = None
+    if add_colorbar and own_figure and transpose:
+        colorbar_axes = make_axes_locatable(ax).append_axes(
+            "right", size=_TRANSPOSED_COLORBAR_WIDTH_INCHES, pad=0.1
+        )
+
     sns.heatmap(
-        matrix,
+        matrix.T if transpose else matrix,
         cmap=COLORMAP,
         center=0,
         vmin=-limit,
         vmax=limit,
         annot=annot_arg,
         fmt=fmt_arg,
+        annot_kws={"fontsize": annotation_fontsize} if annotation_fontsize else None,
         linewidths=0.5,
         linecolor="white",
         cbar=add_colorbar,
+        cbar_ax=colorbar_axes,
         cbar_kws={"label": cbar_label} if add_colorbar else None,
         ax=ax,
     )
-    if separator_after_column is not None and 0 < separator_after_column < n_runs:
-        ax.axvline(separator_after_column, color="black", linewidth=2.0)
-    ax.set_xlabel("run")
-    ax.set_ylabel("TF family")
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
-    if row_stars:
-        labels = [
-            f"{tf} {row_stars[tf]: <3}" if row_stars.get(tf) else str(tf) + "    " for tf in matrix.index
+    if transpose:
+        if separator_after_column is not None and 0 < separator_after_column < n_runs:
+            ax.axhline(separator_after_column, color="black", linewidth=2.0)
+        ax.set_xlabel("TF family")
+        ax.set_ylabel("run")
+        # Stars go after the TF name; no padding, since rotated x labels are
+        # centred on their column rather than right-aligned like y labels.
+        tf_labels = [
+            f"{tf} {row_stars[tf]}" if row_stars and row_stars.get(tf) else str(tf)
+            for tf in matrix.index
         ]
-        ax.set_yticklabels(labels, rotation=0)
+        ax.set_xticks(np.arange(n_tfs) + 0.5)
+        ax.set_xticklabels(tf_labels, rotation=90, ha="center")
+        ax.set_yticks(np.arange(n_runs) + 0.5)
+        ax.set_yticklabels([str(run) for run in matrix.columns], rotation=0)
+    else:
+        if separator_after_column is not None and 0 < separator_after_column < n_runs:
+            ax.axvline(separator_after_column, color="black", linewidth=2.0)
+        ax.set_xlabel("run")
+        ax.set_ylabel("TF family")
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
+        if row_stars:
+            tf_labels = [
+                f"{tf} {row_stars[tf]: <3}" if row_stars.get(tf) else str(tf) + "    "
+                for tf in matrix.index
+            ]
+            ax.set_yticklabels(tf_labels, rotation=0)
     if own_figure:
         fig.tight_layout()
     return ax.get_figure()
