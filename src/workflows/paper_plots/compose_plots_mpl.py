@@ -63,7 +63,7 @@ from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.actual_muta
     build_group_dataframe,
     collect_actual_mutation_region_counts,
     load_vcf_positions_by_gene,
-    plot_pooled_allowance_bars,
+    plot_pooled_allowance_points,
 )
 from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.natural_unconstrained_mutation_vis import (
     LOF_VCF_DIR,
@@ -74,7 +74,7 @@ from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.region_muta
     build_region_dataframe,
     collect_unconstrained_region_counts,
     collect_vcf_region_counts,
-    plot_region_breakdown,
+    plot_region_breakdown_boxes,
 )
 from analysis.mutations.summarize_mutations import MutationsGene
 from workflows.mutation_distribution_analysis.mutation_pool import MutationPool
@@ -516,7 +516,7 @@ def _color_bars_neutral(ax: plt.Axes) -> None:
     """Paint all of an axes' bars a single neutral grey.
 
     The bar panels carry no colour meaning (sign is already read from the zero
-    line), so a uniform grey keeps colour reserved for the heatmap (panel E).
+    line), so a uniform grey keeps colour reserved for the heatmap (panel G).
 
     Args:
         ax: Axes whose bar patches should be recoloured.
@@ -529,24 +529,24 @@ def _color_bars_neutral(ax: plt.Axes) -> None:
 def _populate_fig3(fig: plt.Figure) -> None:
     """Draw all seven panels of figure 3 onto ``fig``.
 
-    Layout is one flat 4-column x 5-row grid (no nested outer halves). Row 0 holds
-    the two rolling-mean line panels (A: ara, B: zea), each spanning two columns;
-    row 1 is a short strip holding the shared A/C/G/T legend; rows 2-4 have equal
-    height. The two net-nucleotide-change bar plots (C: ara, D: zea) sit
-    one-per-column in the left two columns of row 2; the two mutation-distance
-    difference panels (E: ara, F: zea) each span the left two columns on rows 3
-    and 4; the significant-TF heatmap (G) spans the right two columns across
-    rows 2-4, with a dedicated thin colour-bar column split off inside it. The
-    line and bar plots share one A/C/G/T nucleotide colour scheme, explained by
-    the single legend in row 1. Must be called inside a :func:`publication_style`
-    context.
+    Layout is one flat 4-column x 5-row grid (no nested outer halves). Row 0
+    holds the two net-nucleotide-change bar plots (A: ara, B: zea) one-per-column
+    in the left two columns, plus the ara rolling-mean line panel (C) spanning
+    the right two columns; row 1 is a short strip holding the shared A/C/G/T
+    legend; rows 2-4 have equal height. The zea rolling-mean line panel (D) spans
+    the left two columns of row 2; the two mutation-distance difference panels
+    (E: ara, F: zea) each span the left two columns on rows 3 and 4; the
+    significant-TF heatmap (G) spans the right two columns across rows 2-4, with
+    a dedicated thin colour-bar column split off inside it. The line and bar
+    plots share one A/C/G/T nucleotide colour scheme, explained by the single
+    legend in row 1. Must be called inside a :func:`publication_style` context.
 
     Args:
         fig: An (empty) figure to populate.
     """
-    # Flat grid: row 0 the line panels, row 1 the (short) shared legend spanning
-    # all columns, rows 2-4 equal height. Columns are equal width; A/B and E/F
-    # span two columns each.
+    # Flat grid: row 0 the bar panels (left) and the ara line panel (right), row 1
+    # the (short) shared legend spanning all columns, rows 2-4 equal height.
+    # Columns are equal width; C, D and E/F span two columns each.
     grid = fig.add_gridspec(
         nrows=5, ncols=4, height_ratios=[1.0, 0.2, 1.0, 1.0, 1.0]
     )
@@ -560,11 +560,36 @@ def _populate_fig3(fig: plt.Figure) -> None:
         nrows=1, ncols=2, width_ratios=[1.0, 0.045], wspace=0.05
     )
 
-    # --- A, B: net-change rolling-mean line plots (row 0, two columns each) ----
-    line_axes = []
-    line_cells = [grid[0, 0:2], grid[0, 2:4]]
+    # --- A, B: net-nucleotide-change bar plots (row 0, one per left column) ---
+    bar_axes = []
+    bar_cells = [grid[0, 0], grid[0, 1]]
     for column_index, (run, letter) in enumerate(zip(_FIG3_RUNS, ["A", "B"])):
-        line_ax = fig.add_subplot(line_cells[column_index])
+        bar_ax = fig.add_subplot(bar_cells[column_index])
+        net_change = calculate_net_nucleotide_change(run["mutated_sequences_json"])
+        # plot_net_nucleotide_change already colours the bars by A/C/G/T, matching
+        # the line plots, so no neutral recolouring here.
+        plot_net_nucleotide_change(
+            net_change,
+            _UNUSED_NAME,
+            _UNUSED_FORMAT,
+            titles=False,
+            ax=bar_ax,
+        )
+        bar_ax.axhline(0, color="black", linewidth=0.8)
+        bar_ax.set_title(run["species_label"], fontstyle="italic")
+        # A and B sit side by side and share the y-axis label: keep it on A only.
+        if column_index == 1:
+            bar_ax.set_ylabel("")
+        panel_label(bar_ax, letter)
+        bar_axes.append(bar_ax)
+
+    # --- C, D: net-change rolling-mean line plots (row 0 right, row 2 left) ---
+    # The two line panels are no longer side by side, so each keeps its own
+    # y-axis label.
+    line_axes = []
+    line_cells = [grid[0, 2:4], grid[2, 0:2]]
+    for panel_index, (run, letter) in enumerate(zip(_FIG3_RUNS, ["C", "D"])):
+        line_ax = fig.add_subplot(line_cells[panel_index])
         _, _, net_change_by_position = calculate_positional_nucleotide_change(
             run["mutated_sequences_json"]
         )
@@ -581,34 +606,8 @@ def _populate_fig3(fig: plt.Figure) -> None:
         if panel_legend is not None:
             panel_legend.remove()
         line_ax.set_title(run["species_label"], fontstyle="italic")
-        # A and B share the y-axis label: keep it on A only.
-        if column_index == 1:
-            line_ax.set_ylabel("")
         panel_label(line_ax, letter)
         line_axes.append(line_ax)
-
-    # --- C, D: net-nucleotide-change bar plots (row 2, one per left column) ---
-    bar_axes = []
-    bar_cells = [grid[2, 0], grid[2, 1]]
-    for column_index, (run, letter) in enumerate(zip(_FIG3_RUNS, ["C", "D"])):
-        bar_ax = fig.add_subplot(bar_cells[column_index])
-        net_change = calculate_net_nucleotide_change(run["mutated_sequences_json"])
-        # plot_net_nucleotide_change already colours the bars by A/C/G/T, matching
-        # the line plots, so no neutral recolouring here.
-        plot_net_nucleotide_change(
-            net_change,
-            _UNUSED_NAME,
-            _UNUSED_FORMAT,
-            titles=False,
-            ax=bar_ax,
-        )
-        bar_ax.axhline(0, color="black", linewidth=0.8)
-        bar_ax.set_title(run["species_label"], fontstyle="italic")
-        # C and D share the y-axis label: keep it on C only.
-        if column_index == 1:
-            bar_ax.set_ylabel("")
-        panel_label(bar_ax, letter)
-        bar_axes.append(bar_ax)
 
     # --- E, F: mutation-distance difference panels (rows 3-4, left columns) ---
     distance_axes = []
@@ -663,28 +662,29 @@ def _populate_fig3(fig: plt.Figure) -> None:
     )
 
     # G's long TF row labels shrink the heatmap axes far to the right, so its
-    # panel letter (anchored in axes fraction) lands right of B's. Re-anchor it in
-    # figure coordinates to B's letter x, just above G's own top, so the two
-    # right-column letters line up. Requires a draw so the constrained layout has
-    # resolved the final axes positions.
+    # panel letter (anchored in axes fraction) lands right of C's. Re-anchor it in
+    # figure coordinates to C's letter x (C is the panel directly above G, in the
+    # same right two columns), just above G's own top, so the two right-column
+    # letters line up. Requires a draw so the constrained layout has resolved the
+    # final axes positions.
     fig.canvas.draw()
-    b_axes_position = line_axes[1].get_position()
+    c_axes_position = line_axes[0].get_position()
     # -0.08 and +0.02 mirror panel_label's default x and (y - 1) offsets.
-    b_label_x = b_axes_position.x0 - 0.08 * b_axes_position.width
+    c_label_x = c_axes_position.x0 - 0.08 * c_axes_position.width
     heatmap_position = heatmap_ax.get_position()
     heatmap_label.set_transform(fig.transFigure)
     heatmap_label.set_position(
-        (b_label_x, heatmap_position.y1 + 0.02 * heatmap_position.height)
+        (c_label_x, heatmap_position.y1 + 0.02 * heatmap_position.height)
     )
 
 
 def fig3() -> None:
     """Compose figure 3: mutation signatures plus the significant-TF contrast.
 
-    Panels A/B are the rolling-mean net nucleotide change along the sequence for
-    the ara and zea maximization runs; panels C/D are the total net nucleotide
-    change (A, C, G, T bar plots) for the same runs; panels E/F are the
-    per-distance difference between the real and random-baseline inter-mutation
+    Panels A/B are the total net nucleotide change (A, C, G, T bar plots) for the
+    ara and zea maximization runs; panels C/D are the rolling-mean net nucleotide
+    change along the sequence for the same runs (C: ara, D: zea); panels E/F are
+    the per-distance difference between the real and random-baseline inter-mutation
     distance distributions (shared limits). A/B and C/D share one A/C/G/T
     nucleotide colour scheme with a single figure legend. Panel G is the four-run
     per-gene TF diff heatmap restricted to the TFs whose ara max-vs-min paired
@@ -703,10 +703,10 @@ def fig3() -> None:
 
 # --- Figure 4: GOF/LOF single-mutation runs (fitness + half-max + regions) ---
 
-# The four runs shown one per row: two maximization (GOF) runs on top, two
-# minimization (LOF) runs below, each as unconstrained ("single") then natural
-# (constrained) variant. ``objective`` groups the scatter y-limit sharing (both
-# maximization panels share one y-range, both minimization panels another).
+# The four runs shown one per row: the two unconstrained ("single") runs on top
+# (GOF then LOF), the two natural (constrained) runs below in the same order.
+# ``objective`` groups the scatter y-limit sharing (both maximization panels share
+# one y-range, both minimization panels another).
 _FIG4_RUNS: List[Dict[str, str]] = [
     {
         "row_label": "GOF",
@@ -717,19 +717,19 @@ _FIG4_RUNS: List[Dict[str, str]] = [
         ),
     },
     {
-        "row_label": "GOF (natural)",
-        "objective": "max",
-        "stats_json": (
-            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
-            "GOF_LOF/GOF/GOF_single_natural/stats_GOF_single_natural.json"
-        ),
-    },
-    {
         "row_label": "LOF",
         "objective": "min",
         "stats_json": (
             "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
             "GOF_LOF/LOF/LOF_single/stats_LOF_single.json"
+        ),
+    },
+    {
+        "row_label": "GOF (natural)",
+        "objective": "max",
+        "stats_json": (
+            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+            "GOF_LOF/GOF/GOF_single_natural/stats_GOF_single_natural.json"
         ),
     },
     {
@@ -761,7 +761,7 @@ _FIG4_ROW_LABEL_OFFSET_POINTS = 42.0
 # genes otherwise leave the panels nearly empty.
 #
 # x: only 4 of the 345 genes need more than 30 mutations to reach half max (1 in
-# panel D, 3 in panel H). They are pooled into a ">=30" overflow bin rather than
+# panel F, 3 in panel H). They are pooled into a ">=30" overflow bin rather than
 # dropped, so the bulk of the distribution gets the whole axis and no gene
 # disappears.
 #
@@ -834,16 +834,18 @@ _FIG4_DEEPCIS_MAGMA = colormaps["magma"]
 _FIG4_DEEPCIS_OPTIMIZED_COLOR = _FIG4_DEEPCIS_MAGMA(0.75)
 _FIG4_DEEPCIS_MUTATION_COLOR = _FIG4_DEEPCIS_MAGMA(0.55)  # keeps a red look
 
-# Bottom-row bar colours, sampled from the same magma map as the scatter
+# Bottom-row hue colours, sampled from the same magma map as the scatter
 # colorbar so the whole figure stays in one colour family. Panel I takes the two
-# far-apart samples (dark purple vs orange) because its two bars are read against
+# far-apart samples (dark purple vs orange) because its two boxes are read against
 # each other; panel J takes the intermediate pair, so the two hue meanings
 # (condition vs gene set) stay distinguishable despite sitting side by side.
+# Unchanged from the bar version of these panels, so the colour code of the whole
+# figure is untouched by the switch to boxes and dots.
 _FIG4_CONDITION_COLORS = {"Constrained": "#3b0f70", "Unconstrained": "#f9795d"}
 _FIG4_GROUP_COLORS = {"GOF": "#ca3e72", "LOF": "#fec68a"}
 
 # Legends of the two bottom-row panels are drawn below their axes (just under the
-# x-label) instead of inside, where bars would overlap them.
+# x-label) instead of inside, where the data would overlap them.
 _FIG4_LEGEND_BELOW_ANCHOR = (0.5, -0.24)
 
 
@@ -854,8 +856,8 @@ def _gof_region_dataframe() -> pd.DataFrame:
     constrained natural mutations, ``GOF_RUN_DIR`` for the unconstrained
     reference positions) from the region-breakdown workflow. The LOF slots of
     :func:`build_region_dataframe` are filled with empty frames because
-    :func:`plot_region_breakdown` keeps only the ``group == "GOF"`` rows, so LOF
-    is scanned and drawn nowhere in figure 4.
+    :func:`plot_region_breakdown_boxes` keeps only the ``group == "GOF"`` rows,
+    so LOF is scanned and drawn nowhere in figure 4.
 
     Returns:
         Tidy DataFrame with columns ``gene``, ``group``, ``condition``,
@@ -1065,9 +1067,10 @@ def _populate_fig4(fig: plt.Figure) -> None:
     one row each, as a start-vs-final-fitness scatter (coloured by mutations at
     half max, magma, sharing one colorbar in a thin middle column) next to a
     histogram of mutations at half max. The bottom half is two rows of two
-    columns: the GOF possible-mutation breakdown (I) beside the per-region share
-    of mutations actually introduced by the unconstrained runs that sit at
-    natural-variation positions (J), then one panel spanning both columns (K),
+    columns: the GOF possible-mutation breakdown as per-gene boxes (I) beside the
+    per-region share of mutations actually introduced by the unconstrained runs
+    that sit at natural-variation positions, as a pooled dot with its bootstrap
+    interval over the individual genes (J), then one panel spanning both columns (K),
     the deepCIS binding track of a single example gene, reference vs its
     5-mutation optimized variant, with the introduced mutation positions marked.
     Must be called inside a :func:`publication_style` context.
@@ -1214,7 +1217,7 @@ def _populate_fig4(fig: plt.Figure) -> None:
 
     # --- Region panels (row 4, one half-width panel each) --------------------
     region_ax = fig.add_subplot(bottom_grid[0, 0])
-    plot_region_breakdown(
+    plot_region_breakdown_boxes(
         _gof_region_dataframe(),
         "GOF",
         show_legend=True,
@@ -1228,7 +1231,7 @@ def _populate_fig4(fig: plt.Figure) -> None:
     _move_legend_below(region_ax)
 
     allowance_ax = fig.add_subplot(bottom_grid[0, 1])
-    plot_pooled_allowance_bars(
+    plot_pooled_allowance_points(
         _actual_mutation_allowance_dataframe(),
         show_legend=True,
         show_title=False,
@@ -1252,19 +1255,22 @@ def _populate_fig4(fig: plt.Figure) -> None:
 def fig4() -> None:
     """Compose figure 4: GOF/LOF single-mutation fitness, half-max, regions.
 
-    Four runs one per row -- two maximization (GOF unconstrained, GOF natural) then
-    two minimization (LOF unconstrained, LOF natural) -- each showing a start-vs-
+    Four runs one per row -- the two unconstrained runs (GOF, LOF) then the two
+    natural (constrained) runs (GOF, LOF) -- each showing a start-vs-
     final-fitness scatter coloured by mutations at half max (shared magma colorbar)
     and a histogram of mutations at half max. All scatters share the start-fitness
     x-axis; the two GOF scatters share one y-range and the two LOF scatters another;
     all four histograms share x and y limits. Below the runs, the GOF possible-
     mutation region breakdown (constrained vs unconstrained, per genomic region) is
-    drawn as a half-width panel next to the per-region percentage of actually
-    introduced mutations that fall on natural-variation (VCF) positions, pooled per
-    region with gene-level bootstrap confidence intervals, for the GOF and LOF gene
-    sets. The bottom row is one full-width deepCIS binding track of a single example
-    gene from the constrained GOF run, contrasting the reference sequence with its
-    5-mutation Pareto-front variant and marking where those mutations sit.
+    drawn as a half-width panel of per-gene boxes, next to
+    the per-region percentage of actually introduced mutations that fall on
+    natural-variation (VCF) positions, pooled per region with gene-level bootstrap
+    confidence intervals, for the GOF and LOF gene sets -- drawn there as a dot per
+    cell with its interval as a whisker, over the individual genes' percentages.
+    The bottom row is one full-width deepCIS binding track
+    of a single example gene from the constrained GOF run, contrasting the reference
+    sequence with its 5-mutation Pareto-front variant and marking where those
+    mutations sit.
     """
     with publication_style():
         fig = plt.figure(
@@ -1528,5 +1534,5 @@ def fig6() -> None:
 if __name__ == "__main__":
     # fig2()
     # fig3()
-    # fig4()
-    fig6()
+    fig4()
+    # fig6()
