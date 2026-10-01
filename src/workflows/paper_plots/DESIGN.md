@@ -286,8 +286,8 @@ original-scale estimator. No run hit the convergence fallback.
 | panel | run | n | slope | intercept | R² | final-fitness SD |
 | --- | --- | --- | --- | --- | --- | --- |
 | A | GOF (unconstrained) | 105 | 4.53 | 8.77 | 0.063 | 1.4e-04 |
-| C | GOF (natural) | 104 | 8.20 | −1.46 | 0.857 | 2.19e-01 |
-| E | LOF (unconstrained) | 68 | 1.03 | −10.92 | 0.027 | 5.9e-05 |
+| C | LOF (unconstrained) | 68 | 1.03 | −10.92 | 0.027 | 5.9e-05 |
+| E | GOF (natural) | 104 | 8.20 | −1.46 | 0.857 | 2.19e-01 |
 | G | LOF (natural) | 68 | 6.51 | −5.98 | 0.470 | 3.24e-01 |
 
 This supersedes the previously recorded GOF-natural ≈ 0.85 / LOF-natural ≈ 0.46,
@@ -575,8 +575,8 @@ leaving the panels nearly empty. The distribution of `num_mutations_half_max_eff
 | panel | n genes | max | genes > 30 | tallest bar |
 |---|---|---|---|---|
 | B GOF | 105 | 18 | 0 | 60 |
-| D GOF (natural) | 104 | 48 | 1 | 27 |
-| F LOF | 68 | 13 | 0 | 12 |
+| D LOF | 68 | 13 | 0 | 12 |
+| F GOF (natural) | 104 | 48 | 1 | 27 |
 | H LOF (natural) | 68 | 37 | 3 | 6 |
 
 **x — overflow bin at 30** (`hist_half_max_mutations(max_mutations_shown=30)`, a
@@ -584,7 +584,7 @@ new backward-compatible param; `None` keeps the full data range). Only 4 of 345
 genes exceed 30 mutations, but they stretched the axis to 50. They are **pooled
 into a final bin tick-labelled `≥30`** rather than dropped, so the truncation is
 visible in the panel itself and no gene silently disappears — the pooled bin is
-plainly there in D and H.
+plainly there in F and H.
 
 **y — broken axis** (`style.broken_y_axes`). The four panels must share one count
 axis to be comparable, and panel B's spike of 60 genes at 2 mutations set that
@@ -652,9 +652,9 @@ figure 4 needed, §3e — here no column strip has to be kept out of another row
 
 | row | contents |
 |---|---|
-| 0 | A (ara) and B (zea) rolling-mean net nucleotide change, two columns each |
+| 0 | A (ara) and B (zea) total net nucleotide change bars, one column each (left two columns); C — ara rolling-mean net nucleotide change, right two columns |
 | 1 | thin (0.2) full-width strip holding the shared A/C/G/T legend |
-| 2 | C (ara) and D (zea) total net nucleotide change bars, one column each |
+| 2 | D — zea rolling-mean net nucleotide change, left two columns |
 | 3 | E — ara mutation-distance difference, left two columns |
 | 4 | F — zea mutation-distance difference, left two columns |
 | 2–4 | G — significant-TF heatmap, right two columns, with a `width_ratios=[1, 0.045]` sub-grid splitting off its colour-bar column |
@@ -664,17 +664,22 @@ Design decisions:
 - **One shared A/C/G/T legend** in the row-1 strip; the per-panel legends that
   `make_line_plot_rolling_window` and `plot_net_nucleotide_change` create are
   removed. A/B and C/D use the same nucleotide colours (`COLORS`), so one key
-  serves four panels. `plot_sum=False` on the line panels — the per-nucleotide
+  serves four panels. A/B (bars) and C/D (lines) were swapped between slots on
+  2026-08-24 at Gernot's request and re-lettered by reading order, so the bar
+  pair now sits top-left and the two line panels are no longer adjacent.
+  `plot_sum=False` on the line panels — the per-nucleotide
   traces are the signal, the sum only compresses them.
 - **Colour is reserved for the heatmap.** The distance panels' bars are repainted a
   uniform neutral grey (`_color_bars_neutral`, `_NEUTRAL_COLOR` at
   `_BAR_ALPHA`) and their legend dropped entirely: the sign of the
   real-minus-random difference is already read off the zero line, so the original
-  colour carried no information. The net-change bars (C/D) keep their A/C/G/T
+  colour carried no information. The net-change bars (A/B) keep their A/C/G/T
   colours because there the colour *is* the category.
 - **Shared limits within a panel type** via `sync_axis_limits`: y for A/B and for
   C/D (x is position/nucleotide, identical by construction), both x and y for E/F.
-  Duplicated axis labels are dropped — y-label on A and C only, x-label on F only.
+  Duplicated axis labels are dropped where panels are adjacent — y-label on A only
+  (B sits beside it), x-label on F only; C and D each keep their own y-label since
+  they no longer share a row.
 - **Species titles in italics** (`fontstyle="italic"`) since they are binomials.
 - **Distance panels cropped to `_DISTANCE_MAX = 30`**: the real-vs-random
   difference is concentrated at short inter-mutation distances and the long tail is
