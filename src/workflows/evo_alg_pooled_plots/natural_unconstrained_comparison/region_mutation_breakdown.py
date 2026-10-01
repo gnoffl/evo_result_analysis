@@ -19,8 +19,11 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import seaborn as sns
+from matplotlib.colors import to_rgba
+from matplotlib.patches import PathPatch
 from pyfaidx import Fasta
 
 from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.natural_unconstrained_mutation_vis import (
@@ -247,6 +250,237 @@ def plot_region_breakdown(
         fig.tight_layout()
         if output_dir is not None:
             output_path = output_dir / f"region_breakdown_{group}.{fmt}"
+            fig.savefig(output_path, bbox_inches="tight", dpi=150)  # type: ignore[union-attr]
+            plt.close(fig)
+            print(f"Saved: {output_path}")
+    return ax
+
+
+# Overlay geometry for the boxplot variant: the individual genes are drawn as
+# small jittered dots on top of the boxes, so the reader sees the gene-level
+# structure the box summarizes.
+_GENE_POINT_SIZE = 1.8
+_GENE_POINT_ALPHA = 0.55
+_GENE_POINT_JITTER = 0.08
+
+# Box styling. Whiskers, caps and fliers are black; the box outline and median
+# carry the condition colour over a lightened fill of the same colour. The
+# unconstrained counts are nearly constant across genes, so that box collapses
+# onto its own median: a black median there would cover the only mark the
+# condition has, which is why the median keeps the hue and the fill is lightened
+# far enough for a coloured median to read inside it.
+_BOX_LINE_WIDTH = 1.1
+_BOX_FILL_ALPHA = 0.35
+_FLIER_MARKER_SIZE = 2.5
+
+# Symlog y-axis: counts are integers, so a linear band up to 1 carries only the
+# value 0 (the genes with no possible mutation in a region) and everything else
+# stays on the log part of the axis. The linear band is given less height than a
+# full decade would get, since it holds a single value.
+_SYMLOG_LINEAR_THRESHOLD = 1.0
+_SYMLOG_LINEAR_SCALE = 0.4
+# Headroom below zero, as a fraction of the linear threshold. A whisker reaching
+# exactly 0 would otherwise terminate on the bottom spine, where the spine hides
+# its end and the whisker reads as running off the panel. Kept below the
+# threshold so the axis gains no tick below 0.
+_SYMLOG_BOTTOM_MARGIN = 0.35
+
+
+def _restyle_box(patch: PathPatch) -> Tuple[float, float, float]:
+    """Give one box a full-opacity outline over a lightened fill of its colour.
+
+    Args:
+        patch: Box artist whose current face colour defines the hue.
+
+    Returns:
+        The box's ``(red, green, blue)`` hue, for reuse on its median line.
+    """
+    red, green, blue = patch.get_facecolor()[:3]
+    patch.set_edgecolor((red, green, blue, 1.0))
+    patch.set_facecolor((red, green, blue, _BOX_FILL_ALPHA))
+    patch.set_linewidth(_BOX_LINE_WIDTH)
+    return red, green, blue
+
+
+def _recolor_box_outlines(ax: plt.Axes) -> None:
+    """Give every box a hue-coloured outline and median over a lightened fill.
+
+    Seaborn fills each box with its hue colour and draws outline and median in a
+    single dark grey. This repaints, per box, the outline and the median line in
+    that box's own fill colour and drops the fill to ``_BOX_FILL_ALPHA``, leaving
+    the black whiskers, caps and fliers untouched.
+
+    Medians are identified as the only non-black lines on the axes (whiskers,
+    caps and fliers are set black before this runs) and matched to their box by
+    horizontal centre, so a panel with any number of boxes and hue levels is
+    handled without knowing seaborn's drawing order.
+
+    The legend swatches seaborn adds for the hue levels are plain ``Rectangle``
+    patches rather than boxes, and are restyled the same way so the legend shows
+    the boxes as they are actually drawn rather than a solid block of hue.
+
+    Args:
+        ax: Axes holding a drawn seaborn boxplot.
+    """
+    black = to_rgba("black")
+    color_by_center = {}
+    for patch in ax.patches:
+        red, green, blue = _restyle_box(patch)
+        if not isinstance(patch, PathPatch):
+            # A legend swatch: no box on the axes, so no median to match to it.
+            continue
+        vertices = patch.get_path().vertices
+        center = (vertices[:, 0].min() + vertices[:, 0].max()) / 2.0
+        color_by_center[round(center, 4)] = (red, green, blue, 1.0)
+
+    for line in ax.lines:
+        if to_rgba(line.get_color()) == black:
+            continue
+        x_data = np.asarray(line.get_xdata(), dtype=float)
+        if len(x_data) == 0:
+            continue
+        center = round((x_data.min() + x_data.max()) / 2.0, 4)
+        if center in color_by_center:
+            line.set_color(color_by_center[center])
+
+
+def plot_region_breakdown_boxes(
+    data: pd.DataFrame,
+    group: str,
+    output_dir: Optional[Path] = None,
+    fmt: str = "png",
+    show_legend: bool = True,
+    show_title: bool = True,
+    palette: Optional[dict] = None,
+    ax: Optional[plt.Axes] = None,
+    show_gene_points: bool = False,
+) -> plt.Axes:
+    """Draw region counts for one gene group as per-condition boxes.
+
+    Same data and grouping as :func:`plot_region_breakdown` (x-axis region in
+    fixed order, hue condition), but each cell is shown as a box over the
+    per-gene counts instead of a mean bar with a standard-deviation error bar. A
+    bar with an error bar implies a symmetric spread around a mean, which these
+    counts do not have (they scale with each gene's non-N sequence content per
+    region); the box reports the median and quartiles instead.
+
+    Whiskers, caps and fliers are black; the box outline and median carry the
+    condition colour over a lightened fill of it (see
+    :func:`_recolor_box_outlines`). Genes outside the whiskers show up as individual
+    fliers; ``show_gene_points`` additionally overlays *every* gene as a small
+    jittered dot, in which case the fliers are suppressed to avoid drawing those
+    genes twice.
+
+    When ``ax`` is None (standalone) a new figure is created, styled with the
+    module theme, and — if ``output_dir`` is given — saved to
+    ``region_breakdown_boxes_<group>.<fmt>`` and closed. When ``ax`` is provided
+    the boxes are drawn onto it for panel composition: no theme is set, the
+    figure is not laid out, saved, or closed, and nothing is written to disk.
+
+    When ``ax`` is None (standalone) a new figure is created, styled with the
+    module theme, and — if ``output_dir`` is given — saved to
+    ``region_breakdown_boxes_<group>.<fmt>`` and closed. When ``ax`` is provided
+    the boxes are drawn onto it for panel composition: no theme is set, the
+    figure is not laid out, saved, or closed, and nothing is written to disk.
+
+    Args:
+        data: Tidy DataFrame from :func:`build_region_dataframe`.
+        group: Gene group to plot (``"GOF"`` or ``"LOF"``).
+        output_dir: Directory to save the figure into. Ignored when ``ax`` is
+            given; when None in standalone mode the figure is not saved.
+        fmt: File format (e.g. ``"png"``, ``"svg"``, ``"pdf"``).
+        show_legend: Whether to draw the condition legend. Set False when the
+            figure is a panel whose legend is provided elsewhere.
+        show_title: Whether to draw the axis title. Set False for panel use.
+        palette: Mapping of condition name to colour. When None, uses
+            ``DEFAULT_CONDITION_PALETTE``.
+        ax: Axes to draw onto. When None a standalone figure is created.
+        show_gene_points: Whether to overlay the individual genes as jittered
+            dots on top of the boxes.
+
+    Returns:
+        The Axes the boxes were drawn onto.
+    """
+    group_data = pd.DataFrame(data[data["group"] == group])
+    if palette is None:
+        palette = DEFAULT_CONDITION_PALETTE
+
+    own_figure = ax is None
+    if ax is None:
+        sns.set_theme(style="whitegrid", font_scale=1.1)
+        fig, ax = plt.subplots(figsize=(7, 5))
+    else:
+        fig = ax.get_figure()
+
+    shared_arguments = {
+        "data": group_data,
+        "x": "region",
+        "y": "count",
+        "hue": "condition",
+        "order": REGION_ORDER,
+        "hue_order": ["Constrained", "Unconstrained"],
+        "palette": palette,
+        "ax": ax,
+    }
+    # Whiskers, caps and fliers are black; the box keeps the condition colour.
+    # ``saturation=1.0`` switches off seaborn's default 0.75 desaturation, so the
+    # boxes carry the palette's exact colours and stay comparable to panels that
+    # use the same palette elsewhere in a composed figure.
+    sns.boxplot(
+        showfliers=not show_gene_points,
+        linewidth=_BOX_LINE_WIDTH,
+        saturation=1.0,
+        whiskerprops={"color": "black"},
+        capprops={"color": "black"},
+        flierprops={
+            "markersize": _FLIER_MARKER_SIZE,
+            "markeredgewidth": _BOX_LINE_WIDTH,
+            "markeredgecolor": "black",
+        },
+        **shared_arguments,
+    )
+    _recolor_box_outlines(ax)
+    if show_gene_points:
+        # The dots are black rather than palette-coloured, so they stay
+        # distinguishable from the box outline they sit inside. The hue is still
+        # passed (as an all-black palette, which seaborn needs to keep the dots
+        # dodged onto their box) but kept out of the legend.
+        point_arguments = dict(shared_arguments)
+        point_arguments["palette"] = {
+            condition: "black" for condition in shared_arguments["hue_order"]
+        }
+        sns.stripplot(
+            dodge=True,
+            jitter=_GENE_POINT_JITTER,
+            size=_GENE_POINT_SIZE,
+            alpha=_GENE_POINT_ALPHA,
+            linewidth=0.0,
+            legend=False,
+            **point_arguments,
+        )
+    # Symlog, not log: a few genes have no possible mutation at all in a region
+    # (their VCF holds no record there), and log(0) is -inf, so a plain log axis
+    # draws that whisker off the bottom of the panel. Below
+    # ``_SYMLOG_LINEAR_THRESHOLD`` the axis is linear, which puts those genes at
+    # exactly 0 while every count above the threshold keeps its log position --
+    # unlike plotting count + 1, no value is shifted.
+    ax.set_yscale(
+        "symlog", linthresh=_SYMLOG_LINEAR_THRESHOLD, linscale=_SYMLOG_LINEAR_SCALE
+    )
+    ax.set_ylim(bottom=-_SYMLOG_BOTTOM_MARGIN * _SYMLOG_LINEAR_THRESHOLD)
+    ax.set_xlabel("Genomic region")
+    ax.set_ylabel("Possible mutations per gene (log scale, 0 included)")
+    if show_title:
+        ax.set_title(f"{group}: possible mutations by region")
+    if show_legend:
+        ax.legend(title="Condition", loc="upper right", fontsize=8, title_fontsize=8)
+    elif ax.get_legend() is not None:
+        ax.get_legend().remove()  # type: ignore[union-attr]
+
+    if own_figure:
+        fig.tight_layout()
+        if output_dir is not None:
+            output_path = output_dir / f"region_breakdown_boxes_{group}.{fmt}"
             fig.savefig(output_path, bbox_inches="tight", dpi=150)  # type: ignore[union-attr]
             plt.close(fig)
             print(f"Saved: {output_path}")

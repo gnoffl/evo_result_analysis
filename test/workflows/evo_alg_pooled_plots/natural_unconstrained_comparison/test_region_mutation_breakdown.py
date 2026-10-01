@@ -2,13 +2,17 @@
 
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+from matplotlib.colors import to_rgba
+from matplotlib.patches import PathPatch
 
 from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.region_mutation_breakdown import (
     REGION_ORDER,
@@ -17,6 +21,7 @@ from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.region_muta
     collect_unconstrained_region_counts,
     collect_vcf_region_counts,
     plot_region_breakdown,
+    plot_region_breakdown_boxes,
 )
 
 _MODULE = (
@@ -301,6 +306,253 @@ class TestPlotRegionBreakdownWithAx(unittest.TestCase):
         try:
             plot_region_breakdown(self._data(), "GOF", ax=ax)
             self.assertTrue(plt.fignum_exists(fig.number))
+        finally:
+            plt.close(fig)
+
+
+class TestPlotRegionBreakdownBoxes(unittest.TestCase):
+    """Behaviour of the boxplot variant of the region breakdown."""
+
+    def _data(self) -> pd.DataFrame:
+        """Two genes per condition with distinct counts, so boxes have spread."""
+        rows = []
+        for condition, counts in (
+            ("Constrained", (4, 6)),
+            ("Unconstrained", (40, 60)),
+        ):
+            for gene, count in zip(("g1", "g2"), counts):
+                for region in REGION_ORDER:
+                    rows.append(
+                        {
+                            "gene": gene,
+                            "group": "GOF",
+                            "condition": condition,
+                            "region": region,
+                            "count": count,
+                        }
+                    )
+        return pd.DataFrame(rows)
+
+    def test_saves_figure_under_boxes_name(self):
+        """Standalone mode writes its own filename, distinct from the bar plot."""
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            plot_region_breakdown_boxes(self._data(), "GOF", output_dir, fmt="png")
+            self.assertTrue(
+                (output_dir / "region_breakdown_boxes_GOF.png").exists()
+            )
+        plt.close("all")
+
+    @staticmethod
+    def _boxes(ax: plt.Axes) -> list:
+        """Return the box artists, excluding the legend swatch rectangles."""
+        return [
+            patch_obj
+            for patch_obj in ax.patches
+            if isinstance(patch_obj, PathPatch)
+        ]
+
+    def test_box_outlines_take_the_palette_colour(self):
+        """Every cell gets a box outlined in its hue colour over a light fill."""
+        palette = {"Constrained": "#000000", "Unconstrained": "#ff8800"}
+        fig, ax = plt.subplots()
+        try:
+            plot_region_breakdown_boxes(self._data(), "GOF", ax=ax, palette=palette)
+            boxes = self._boxes(ax)
+            self.assertEqual(len(boxes), 2 * len(REGION_ORDER))
+            edge_colors = Counter(
+                tuple(round(channel, 3) for channel in box.get_edgecolor())
+                for box in boxes
+            )
+            expected_edges = Counter(
+                {
+                    tuple(round(channel, 3) for channel in to_rgba(colour)): len(
+                        REGION_ORDER
+                    )
+                    for colour in palette.values()
+                }
+            )
+            self.assertEqual(edge_colors, expected_edges)
+        finally:
+            plt.close(fig)
+
+    def test_box_fill_is_lightened(self):
+        """The fill keeps the hue but at reduced opacity, so lines read on it."""
+        fig, ax = plt.subplots()
+        try:
+            plot_region_breakdown_boxes(self._data(), "GOF", ax=ax)
+            for box in self._boxes(ax):
+                fill_alpha = box.get_facecolor()[3]
+                edge_color = box.get_edgecolor()
+                self.assertLess(fill_alpha, 1.0)
+                self.assertGreater(fill_alpha, 0.0)
+                self.assertEqual(box.get_facecolor()[:3], edge_color[:3])
+        finally:
+            plt.close(fig)
+
+    def test_legend_swatches_match_the_boxes(self):
+        """The legend shows the box style, not a solid block of hue.
+
+        Seaborn's hue swatches are plain ``Rectangle`` patches, so they are the
+        patches that are *not* boxes.
+        """
+        fig, ax = plt.subplots()
+        try:
+            plot_region_breakdown_boxes(self._data(), "GOF", ax=ax)
+            swatches = [
+                patch_obj
+                for patch_obj in ax.patches
+                if not isinstance(patch_obj, PathPatch)
+            ]
+            box_styles = {
+                (
+                    tuple(round(channel, 3) for channel in box.get_facecolor()),
+                    tuple(round(channel, 3) for channel in box.get_edgecolor()),
+                )
+                for box in self._boxes(ax)
+            }
+            self.assertEqual(len(swatches), 2)
+            for swatch in swatches:
+                style = (
+                    tuple(round(channel, 3) for channel in swatch.get_facecolor()),
+                    tuple(round(channel, 3) for channel in swatch.get_edgecolor()),
+                )
+                self.assertIn(style, box_styles)
+        finally:
+            plt.close(fig)
+
+    def test_whiskers_are_black_and_medians_take_the_hue(self):
+        """Whiskers and caps stay black; the median carries its box's colour."""
+        palette = {"Constrained": "#123456", "Unconstrained": "#654321"}
+        fig, ax = plt.subplots()
+        try:
+            plot_region_breakdown_boxes(self._data(), "GOF", ax=ax, palette=palette)
+            non_black = [
+                to_rgba(line.get_color())
+                for line in ax.lines
+                if to_rgba(line.get_color()) != to_rgba("black")
+            ]
+            # One median per region x condition cell, none of them black.
+            self.assertEqual(len(non_black), 2 * len(REGION_ORDER))
+            self.assertEqual(
+                set(non_black), {to_rgba(colour) for colour in palette.values()}
+            )
+        finally:
+            plt.close(fig)
+
+    def test_gene_points_not_drawn_by_default(self):
+        """The default panel is boxes only, without a dot per gene."""
+        fig, ax = plt.subplots()
+        try:
+            plot_region_breakdown_boxes(self._data(), "GOF", ax=ax)
+            self.assertEqual(len(ax.collections), 0)
+        finally:
+            plt.close(fig)
+
+    def test_gene_points_can_be_enabled(self):
+        """show_gene_points=True scatters every gene on top of the boxes."""
+        fig, ax = plt.subplots()
+        try:
+            plot_region_breakdown_boxes(
+                self._data(), "GOF", ax=ax, show_gene_points=True
+            )
+            scattered_genes = sum(
+                len(collection.get_offsets()) for collection in ax.collections
+            )
+            self.assertEqual(scattered_genes, len(self._data()))
+        finally:
+            plt.close(fig)
+
+    def test_y_axis_is_symlog_with_room_below_zero(self):
+        """Counts span orders of magnitude, but zero must remain plottable.
+
+        A plain log axis maps a gene with no possible mutation in a region to
+        -inf and draws its whisker off the panel, so the axis is symlog with a
+        linear band at the bottom. The limit sits slightly below 0 so a whisker
+        ending at 0 is not hidden by the bottom spine, but stays inside the
+        linear band so no tick appears below 0.
+        """
+        fig, ax = plt.subplots()
+        try:
+            plot_region_breakdown_boxes(self._data(), "GOF", ax=ax)
+            lower_limit = ax.get_ylim()[0]
+            self.assertEqual(ax.get_yscale(), "symlog")
+            self.assertLess(lower_limit, 0.0)
+            self.assertGreater(lower_limit, -1.0)
+        finally:
+            plt.close(fig)
+
+    def test_zero_count_whisker_stays_inside_the_axes(self):
+        """A gene with zero possible mutations does not push a whisker off-axis."""
+        data = self._data()
+        data.loc[data["gene"] == "g1", "count"] = 0
+        fig, ax = plt.subplots()
+        try:
+            plot_region_breakdown_boxes(data, "GOF", ax=ax)
+            lower_limit = ax.get_ylim()[0]
+            for line in ax.lines:
+                y_data = np.asarray(line.get_ydata(), dtype=float)
+                finite = y_data[np.isfinite(y_data)]
+                self.assertEqual(len(finite), len(y_data))
+                if len(finite):
+                    # Strictly inside: an endpoint on the spine reads as running
+                    # off the panel.
+                    self.assertGreater(finite.min(), lower_limit)
+        finally:
+            plt.close(fig)
+
+    def test_region_ticks_in_fixed_order(self):
+        """x tick labels follow REGION_ORDER."""
+        fig, ax = plt.subplots()
+        try:
+            plot_region_breakdown_boxes(self._data(), "GOF", ax=ax)
+            self.assertEqual(
+                [label.get_text() for label in ax.get_xticklabels()], REGION_ORDER
+            )
+        finally:
+            plt.close(fig)
+
+    def test_other_group_rows_are_ignored(self):
+        """Only the requested group's rows are drawn."""
+        data = self._data()
+        other_group = data.copy()
+        other_group["group"] = "LOF"
+        fig, ax = plt.subplots()
+        try:
+            plot_region_breakdown_boxes(
+                pd.concat([data, other_group], ignore_index=True),
+                "GOF",
+                ax=ax,
+                show_gene_points=True,
+            )
+            scattered_genes = sum(
+                len(collection.get_offsets()) for collection in ax.collections
+            )
+            self.assertEqual(scattered_genes, len(data))
+        finally:
+            plt.close(fig)
+
+    @patch("matplotlib.pyplot.savefig")
+    def test_provided_ax_is_returned_and_not_saved(self, mock_savefig):
+        """Ax injection draws in place, returns the axes, and saves nothing."""
+        fig, ax = plt.subplots()
+        try:
+            returned_ax = plot_region_breakdown_boxes(self._data(), "GOF", ax=ax)
+            self.assertIs(returned_ax, ax)
+            mock_savefig.assert_not_called()
+            self.assertTrue(plt.fignum_exists(fig.number))
+        finally:
+            plt.close(fig)
+
+    def test_legend_and_title_hidden_when_disabled(self):
+        """show_legend/show_title False leave no legend and an empty title."""
+        fig, ax = plt.subplots()
+        try:
+            plot_region_breakdown_boxes(
+                self._data(), "GOF", ax=ax, show_legend=False, show_title=False
+            )
+            self.assertIsNone(ax.get_legend())
+            self.assertEqual(ax.get_title(), "")
         finally:
             plt.close(fig)
 
