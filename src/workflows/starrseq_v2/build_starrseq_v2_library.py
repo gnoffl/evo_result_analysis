@@ -1,7 +1,7 @@
 import json
 import os
 import random
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 from evolution.extract_sequences import CENTRAL_PADDING, extract_string, find_genes
@@ -37,7 +37,8 @@ ARM_SUBSET_FRACTION = 0.2
 ARM_SUBSET_MIN_GENES = 50
 FULL_GRID_SUBSET_FRACTION = 0.2
 FULL_GRID_SUBSET_MIN_GENES = 20
-# off-target windows avoid the central 1500-1519 region of the 3020 bp frame
+# off-target windows avoid the central 1500-1519 region of the 3020 bp frame;
+# add_random_windows additionally drops starts whose window contains N
 STARRSEQ_WINDOW_LENGTH = 170
 RANDOM_WINDOW_STARTS = list(range(0, 1330)) + list(range(1520, 2850))
 INTRAGENIC = 500
@@ -219,14 +220,16 @@ def add_v1_windows(
     return metadata.merge(windows, on=["gene_id", "reason"], how="left")
 
 
-def add_random_windows(metadata: pd.DataFrame, seed: int) -> pd.DataFrame:
+def add_random_windows(metadata: pd.DataFrame, frames: Dict[str, str], seed: int) -> pd.DataFrame:
     """Fill alternative_start/_end of the arm rows that carry no v1 window.
 
-    One window per gene, drawn uniformly over the two allowed start ranges.
+    One window per gene, drawn uniformly over the allowed starts whose window
+    contains no N in the gene's frame.
 
     Args:
         metadata: Gene-tracking table carrying arm_subset and the alternative
             window columns.
+        frames: gene id -> extracted frame; genes without a frame get no window.
         seed: Seed of the draw.
 
     Returns:
@@ -236,8 +239,11 @@ def add_random_windows(metadata: pd.DataFrame, seed: int) -> pd.DataFrame:
     rng = random.Random(seed)
     starts = {}
     for gene_id in metadata.loc[missing, "gene_id"].unique():
-        offset = rng.randrange(len(RANDOM_WINDOW_STARTS))
-        starts[gene_id] = RANDOM_WINDOW_STARTS[offset]
+        if gene_id not in frames:
+            continue
+        frame = frames[gene_id]
+        allowed = [s for s in RANDOM_WINDOW_STARTS if "N" not in frame[s:s + STARRSEQ_WINDOW_LENGTH]]
+        starts[gene_id] = allowed[rng.randrange(len(allowed))]
     metadata.loc[missing, "alternative_start"] = metadata.loc[missing, "gene_id"].map(starts)
     metadata.loc[missing, "alternative_end"] = (
         metadata.loc[missing, "alternative_start"] + STARRSEQ_WINDOW_LENGTH
@@ -321,6 +327,13 @@ def extract_all_candidate_genes() -> Tuple[pd.DataFrame, pd.DataFrame]:
     return metadata, starrseq_v1_mapping
 
 
+def splice(background: str, insert: str) -> str:
+    """Replace the N placeholder of the construct backbone by a full-length insert."""
+    if len(insert) != INSERT_LENGTH:
+        raise ValueError(f"Insert has {len(insert)} bp instead of {INSERT_LENGTH}.")
+    return background.replace("N" * INSERT_LENGTH, insert)
+
+
 def splice_correct_windows(gene_fasta_path: str, output_path: str) -> None:
     """Splice each gene frame's correct window into the construct backbone.
 
@@ -329,12 +342,11 @@ def splice_correct_windows(gene_fasta_path: str, output_path: str) -> None:
         output_path: FASTA written, one construct per gene frame.
     """
     background = str(Fasta(BACKGROUND_PATH)[0])
-    placeholder = "N" * INSERT_LENGTH
     frames = Fasta(gene_fasta_path)
     with open(output_path, "w") as output_file:
         for gene_id in frames.keys():
             insert = str(frames[gene_id])[INSERT_START:INSERT_END]
-            output_file.write(f">{gene_id}\n{background.replace(placeholder, insert)}\n")
+            output_file.write(f">{gene_id}\n{splice(background, insert)}\n")
 
 
 def assign_directions(metadata: pd.DataFrame, seed: int) -> pd.DataFrame:
@@ -425,7 +437,6 @@ def splice_off_target_windows(
         reason: Restricts the rows to this ``reason``; None uses all of them.
     """
     background = str(Fasta(BACKGROUND_PATH)[0])
-    placeholder = "N" * INSERT_LENGTH
     frames = Fasta(gene_fasta_path)
     frames_by_gene = map_genes_to_frames(list(frames.keys()), metadata["gene_id"].to_list())
     usable = metadata["full_length_window"]
@@ -443,9 +454,29 @@ def splice_off_target_windows(
                 continue
             start, end = int(row["alternative_start"]), int(row["alternative_end"])
             insert = str(frames[key])[start:end]
-            output_file.write(
-                f">{key}_off_{start}\n{background.replace(placeholder, insert)}\n"
-            )
+            output_file.write(f">{key}_off_{start}\n{splice(background, insert)}\n")
+
+
+def summarize_subsets(metadata: pd.DataFrame, frames: Dict[str, str]) -> pd.DataFrame:
+    """Count the non-v1 genes per subset and species: all, with a frame, and with an N-free correct window."""
+    genes = metadata[metadata["reason"] != "starrseq_v1"].groupby(["species", "gene_id"])[
+        ["arm_subset", "full_grid_subset"]
+    ].any().reset_index()
+    genes["baseline"] = True
+    genes["with_frame"] = genes["gene_id"].isin(frames)
+    genes["n_free_correct_window"] = [
+        gene_id in frames and "N" not in frames[gene_id][INSERT_START:INSERT_END]
+        for gene_id in genes["gene_id"]
+    ]
+    rows = []
+    for subset in ["baseline", "arm_subset", "full_grid_subset"]:
+        for species, group in genes[genes[subset]].groupby("species"):
+            rows.append({
+                "subset": subset, "species": species, "genes": len(group),
+                "with_frame": int(group["with_frame"].sum()),
+                "n_free_correct_window": int(group["n_free_correct_window"].sum()),
+            })
+    return pd.DataFrame(rows)
 
 
 def main():
@@ -453,7 +484,12 @@ def main():
     metadata = select_arm_subset(metadata, SEED)
     metadata = select_full_grid_subset(metadata, SEED)
     metadata = add_v1_windows(metadata, starrseq_v1_mapping)
-    metadata = add_random_windows(metadata, SEED)
+    frames = {}
+    for fasta_path in (ARA_FLOWERING_GOF_FASTA, NTAB_FLOWERING_FASTA):
+        fasta = Fasta(fasta_path)
+        for gene_id, key in map_genes_to_frames(list(fasta.keys()), metadata["gene_id"].to_list()).items():
+            frames[gene_id] = str(fasta[key])
+    metadata = add_random_windows(metadata, frames, SEED)
     metadata = assign_directions(metadata, SEED)
     metadata = flag_full_length_windows(metadata)
     splice_correct_windows(ARA_FLOWERING_GOF_FASTA, ARA_FLOWERING_CONSTRUCT_PATH)
@@ -467,6 +503,7 @@ def main():
     starrseq_v1_mapping.to_csv(STARRSEQ_MAPPING_PATH, index=False)
     print(metadata.iloc[:20])
     print(metadata.iloc[-20:])
+    print(summarize_subsets(metadata, frames).to_string(index=False))
     # TODO: final length check, N counts, duplicates, nuclease sites, etc
 
 

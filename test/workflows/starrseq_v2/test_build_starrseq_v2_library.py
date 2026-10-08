@@ -260,7 +260,7 @@ class TestAddRandomWindows(unittest.TestCase):
             "alternative_start": [float("nan"), float("nan"), 10.0, float("nan")],
             "alternative_end": [float("nan"), float("nan"), 180.0, float("nan")],
         })
-        result = sw.add_random_windows(metadata, seed=1)
+        result = sw.add_random_windows(metadata, {NTAB_GENES[0]: make_frame("C")}, seed=1)
         ntab_starts = result.loc[result["gene_id"] == NTAB_GENES[0], "alternative_start"]
         self.assertEqual(ntab_starts.nunique(), 1)
         self.assertIn(ntab_starts.iloc[0], sw.RANDOM_WINDOW_STARTS)
@@ -270,11 +270,43 @@ class TestAddRandomWindows(unittest.TestCase):
         self.assertTrue(pd.isna(result.loc[3, "alternative_start"]))
         self.assertEqual(str(result["alternative_start"].dtype), "Int64")
 
+    def test_windows_avoid_n_and_need_a_frame(self):
+        # only the start 0 window [0, 170) is free of N
+        frame = "A" * 170 + "N" * (FRAME_LENGTH - 170)
+        metadata = pd.DataFrame({
+            "gene_id": [NTAB_GENES[0], NTAB_GENES[1]],
+            "arm_subset": [True, True],
+            "alternative_start": [float("nan"), float("nan")],
+            "alternative_end": [float("nan"), float("nan")],
+        })
+        result = sw.add_random_windows(metadata, {NTAB_GENES[0]: frame}, seed=1)
+        self.assertEqual(result.loc[0, "alternative_start"], 0)
+        self.assertTrue(pd.isna(result.loc[1, "alternative_start"]))
+
     def test_windows_avoid_central_region(self):
         self.assertTrue(all(
             start + sw.STARRSEQ_WINDOW_LENGTH <= 1500 or start >= 1520
             for start in sw.RANDOM_WINDOW_STARTS
         ))
+
+
+class TestSummarizeSubsets(unittest.TestCase):
+    def test_counts(self):
+        gap_frame = make_frame("C")[:sw.INSERT_START] + "N" * sw.INSERT_LENGTH + make_frame("C")[sw.INSERT_END:]
+        metadata = pd.DataFrame({
+            # NTAB_GENES[0] has two rows and is counted once; the v1 row is ignored
+            "gene_id": [NTAB_GENES[0], NTAB_GENES[0], NTAB_GENES[1], NTAB_GENES[2], ARA_GENES[0]],
+            "species": ["ntab", "ntab", "ntab", "ntab", "arabidopsis"],
+            "reason": ["flowering", "random", "random", "random", "starrseq_v1"],
+            "arm_subset": [True, True, True, False, False],
+            "full_grid_subset": [True, True, False, False, False],
+        })
+        frames = {NTAB_GENES[0]: make_frame("C"), NTAB_GENES[1]: gap_frame, ARA_GENES[0]: make_frame("C")}
+        result = sw.summarize_subsets(metadata, frames).set_index("subset")
+        self.assertEqual(list(result["species"]), ["ntab"] * 3)
+        self.assertEqual(result.loc["baseline", ["genes", "with_frame", "n_free_correct_window"]].tolist(), [3, 2, 1])
+        self.assertEqual(result.loc["arm_subset", ["genes", "with_frame", "n_free_correct_window"]].tolist(), [2, 2, 1])
+        self.assertEqual(result.loc["full_grid_subset", ["genes", "with_frame", "n_free_correct_window"]].tolist(), [1, 1, 1])
 
 
 class TestAssignDirections(unittest.TestCase):
@@ -391,6 +423,17 @@ class TestSplicing(unittest.TestCase):
             list(read_fasta(self.output_path)),
             [f"{self.ntab_header}_off_5", f"{self.ara_header}_off_400"],
         )
+
+    def test_window_past_frame_end_raises(self):
+        metadata = pd.DataFrame({
+            "gene_id": [ARA_GENES[0]],
+            "reason": ["random"],
+            "alternative_start": pd.array([FRAME_LENGTH - 100], dtype="Int64"),
+            "alternative_end": pd.array([FRAME_LENGTH + 70], dtype="Int64"),
+            "full_length_window": [True],
+        })
+        with self.assertRaises(ValueError):
+            sw.splice_off_target_windows(metadata, self.frame_path, self.output_path)
 
     def test_short_window_skipped(self):
         metadata = pd.DataFrame({
