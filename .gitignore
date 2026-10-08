@@ -59,6 +59,7 @@ src/workflows/blamm_tfbs_analysis/*__mutations_*/
 src/workflows/starrseq_v2/**/*.csv
 # starrseq_v2 build artefacts (gene lists, unit files, plan, logs)
 src/workflows/starrseq_v2/build/
+src/workflows/starrseq_v2/probe_analysis/
 
 
 
