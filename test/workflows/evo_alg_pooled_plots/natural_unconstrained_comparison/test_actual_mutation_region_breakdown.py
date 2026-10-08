@@ -11,7 +11,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.container import BarContainer
+from matplotlib.collections import PathCollection
+from matplotlib.colors import to_rgba
+from matplotlib.container import BarContainer, ErrorbarContainer
 import pandas as pd
 
 from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.actual_mutation_region_breakdown import (
@@ -23,6 +25,7 @@ from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.actual_muta
     build_pooled_ci_dataframe,
     plot_actual_mutation_allowance,
     plot_pooled_allowance_bars,
+    plot_pooled_allowance_points,
     pooled_percent_with_bootstrap_ci,
 )
 from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.region_mutation_breakdown import (
@@ -570,6 +573,263 @@ class TestPlotPooledAllowanceBars(unittest.TestCase):
             )
             self.assertIsNone(ax.get_legend())
             self.assertEqual(ax.get_title(), "")
+        finally:
+            plt.close(fig)
+
+
+class TestPlotPooledAllowancePoints(unittest.TestCase):
+    """Behaviour of the dot-and-interval variant of the pooled panel."""
+
+    def _data(self) -> pd.DataFrame:
+        """Two genes per group with different mutation loads per region.
+
+        The second gene carries no mutations at all, so it has no per-gene
+        percentage and must not be scattered, while still contributing to the
+        pooled denominator of zero mutations (it adds nothing to either sum).
+        """
+        rows = []
+        for group, (total, allowed) in (("GOF", (10, 2)), ("LOF", (20, 8))):
+            for gene, gene_total in (("g1", total), ("g2", 0)):
+                for region in REGION_ORDER:
+                    gene_allowed = allowed if gene_total else 0
+                    rows.append(
+                        {
+                            "gene": gene,
+                            "group": group,
+                            "region": region,
+                            "total_mutations": gene_total,
+                            "allowed_mutations": gene_allowed,
+                            "percent_allowed": (
+                                gene_allowed / gene_total * 100
+                                if gene_total
+                                else float("nan")
+                            ),
+                        }
+                    )
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _gene_scatters(ax: plt.Axes) -> list:
+        """Return the per-gene scatter collections, excluding errorbar artists.
+
+        ``ax.collections`` also holds the ``LineCollection`` the errorbar draws
+        for its whiskers, so the scatters are picked out by type.
+        """
+        return [
+            collection
+            for collection in ax.collections
+            if isinstance(collection, PathCollection)
+        ]
+
+    @staticmethod
+    def _pooled_values(ax: plt.Axes) -> list:
+        """Return the y values of the pooled markers drawn by errorbar."""
+        values = []
+        for container in ax.containers:
+            if isinstance(container, ErrorbarContainer):
+                values.extend(container.lines[0].get_ydata())
+        return values
+
+    def test_saves_figure_under_points_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            plot_pooled_allowance_points(
+                self._data(), output_dir, fmt="png", n_resamples=200
+            )
+            self.assertTrue((output_dir / "pooled_allowance_points.png").exists())
+        plt.close("all")
+
+    def test_one_pooled_marker_per_region_and_group(self):
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_points(self._data(), ax=ax, n_resamples=200)
+            self.assertEqual(len(self._pooled_values(ax)), 2 * len(REGION_ORDER))
+        finally:
+            plt.close(fig)
+
+    def test_marker_values_are_pooled_percentages(self):
+        """Markers sit at the ratio of sums, not the mean of per-gene ratios."""
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_points(self._data(), ax=ax, n_resamples=200)
+            values = sorted({round(value, 6) for value in self._pooled_values(ax)})
+            self.assertEqual(values, [20.0, 40.0])
+        finally:
+            plt.close(fig)
+
+    def test_gene_points_exclude_genes_without_mutations(self):
+        """Only genes with a defined percentage are scattered."""
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_points(self._data(), ax=ax, n_resamples=200)
+            scattered = sum(
+                len(collection.get_offsets())
+                for collection in self._gene_scatters(ax)
+            )
+            expected = int(self._data()["percent_allowed"].notna().sum())
+            self.assertEqual(scattered, expected)
+        finally:
+            plt.close(fig)
+
+    def test_gene_points_can_be_disabled(self):
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_points(
+                self._data(), ax=ax, n_resamples=200, show_gene_points=False
+            )
+            self.assertEqual(len(self._gene_scatters(ax)), 0)
+        finally:
+            plt.close(fig)
+
+    def test_gene_markers_all_share_one_area(self):
+        """Mutation count is not encoded in marker size, in any gene set."""
+        data = self._data()
+        heavier = data[data["group"] == "LOF"]  # 20 mutations per region
+        lighter = data[data["group"] == "GOF"]  # 10 mutations per region
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_points(
+                pd.concat([lighter, heavier], ignore_index=True),
+                ax=ax,
+                n_resamples=200,
+            )
+            areas = {
+                area
+                for collection in self._gene_scatters(ax)
+                for area in collection.get_sizes()
+            }
+            self.assertEqual(len(areas), 1)
+        finally:
+            plt.close(fig)
+
+    def test_intervals_are_black(self):
+        """Whisker lines and caps are black, not the gene set's colour.
+
+        In the gene set's colour they would be invisible against the per-gene
+        dots drawn behind them.
+        """
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_points(self._data(), ax=ax, n_resamples=200)
+            black = to_rgba("black")
+            for container in ax.containers:
+                if not isinstance(container, ErrorbarContainer):
+                    continue
+                _markers, caps, bars = container
+                for cap in caps:
+                    self.assertEqual(to_rgba(cap.get_color()), black)
+                for bar in bars:
+                    for color in bar.get_colors():
+                        self.assertEqual(tuple(round(c, 3) for c in color), black)
+        finally:
+            plt.close(fig)
+
+    def test_y_axis_spans_the_full_percentage_range(self):
+        """Per-gene percentages reach 0 and 100, so the axis must show both."""
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_points(self._data(), ax=ax, n_resamples=200)
+            lower, upper = ax.get_ylim()
+            self.assertLessEqual(lower, 0.0)
+            self.assertGreaterEqual(upper, 100.0)
+        finally:
+            plt.close(fig)
+
+    def test_region_ticks_in_fixed_order(self):
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_points(self._data(), ax=ax, n_resamples=200)
+            self.assertEqual(
+                [label.get_text() for label in ax.get_xticklabels()], REGION_ORDER
+            )
+        finally:
+            plt.close(fig)
+
+    def test_groups_are_dodged_apart(self):
+        """The two gene sets' markers do not share an x position."""
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_points(self._data(), ax=ax, n_resamples=200)
+            x_positions = [
+                tuple(container.lines[0].get_xdata())
+                for container in ax.containers
+                if isinstance(container, ErrorbarContainer)
+            ]
+            self.assertEqual(len(x_positions), 2)
+            self.assertNotEqual(x_positions[0], x_positions[1])
+        finally:
+            plt.close(fig)
+
+    def test_intervals_bracket_the_markers(self):
+        """Every whisker spans its own pooled value."""
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_points(self._data(), ax=ax, n_resamples=200)
+            for container in ax.containers:
+                if not isinstance(container, ErrorbarContainer):
+                    continue
+                values = container.lines[0].get_ydata()
+                segments = container.lines[2][0].get_segments()
+                for value, segment in zip(values, segments):
+                    self.assertLessEqual(segment[0][1], value + 1e-9)
+                    self.assertGreaterEqual(segment[1][1], value - 1e-9)
+        finally:
+            plt.close(fig)
+
+    def test_same_seed_reproduces_the_intervals(self):
+        """Two draws with the same seed give identical whiskers."""
+        segments_per_call = []
+        for _ in range(2):
+            fig, ax = plt.subplots()
+            try:
+                plot_pooled_allowance_points(self._data(), ax=ax, n_resamples=200)
+                segments_per_call.append(
+                    [
+                        container.lines[2][0].get_segments()
+                        for container in ax.containers
+                        if isinstance(container, ErrorbarContainer)
+                    ]
+                )
+            finally:
+                plt.close(fig)
+        for first, second in zip(*segments_per_call):
+            for first_segment, second_segment in zip(first, second):
+                np.testing.assert_allclose(first_segment, second_segment)
+
+    @patch("matplotlib.pyplot.savefig")
+    def test_provided_ax_is_returned_and_not_saved(self, mock_savefig):
+        fig, ax = plt.subplots()
+        try:
+            returned_ax = plot_pooled_allowance_points(
+                self._data(), ax=ax, n_resamples=200
+            )
+            self.assertIs(returned_ax, ax)
+            mock_savefig.assert_not_called()
+            self.assertTrue(plt.fignum_exists(fig.number))
+        finally:
+            plt.close(fig)
+
+    def test_legend_and_title_hidden_when_disabled(self):
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_points(
+                self._data(),
+                ax=ax,
+                show_legend=False,
+                show_title=False,
+                n_resamples=200,
+            )
+            self.assertIsNone(ax.get_legend())
+            self.assertEqual(ax.get_title(), "")
+        finally:
+            plt.close(fig)
+
+    def test_legend_labels_are_the_gene_sets(self):
+        fig, ax = plt.subplots()
+        try:
+            plot_pooled_allowance_points(self._data(), ax=ax, n_resamples=200)
+            _handles, labels = ax.get_legend_handles_labels()
+            self.assertEqual(labels, ["GOF", "LOF"])
         finally:
             plt.close(fig)
 
