@@ -119,8 +119,9 @@ grid, and neither. A gene keeps one direction across all its rows.
 
 A v1 gene takes its window from the measured fragment alignment. Every other
 arm-subset gene draws one random 170 bp window, uniformly over
-`RANDOM_WINDOW_STARTS` = `[0, 1330) ∪ [1520, 2850)`, which keeps the window
-clear of the central `N` padding. Rows outside the arm subset keep no window.
+`RANDOM_WINDOW_STARTS` = `[0, 1330) ∪ [1520, 2850)`, restricted to starts whose
+window contains no `N` in the gene's frame (central padding, short-gene padding,
+assembly gaps). Rows outside the arm subset, and genes without a frame, keep no window.
 
 ## Deviations from the design document
 
@@ -153,11 +154,9 @@ clear of the central `N` padding. Rows outside the arm subset keep no window.
   `# TODO: final length check, N counts, duplicates, nuclease sites, etc`, and
   `write_run_script.py` carries the same TODO. The design document asks for
   length 3020, residual `N` == 20, and spliced bytes identical to source.
-* **No `N` check on the insert.** Random windows avoid the central padding by
-  construction, but a v1 window comes from the alignment and is not constrained.
-  An all-`N` mutation window hangs
-  `evolution.mutation.check_indices_to_mutate` (`mutation.py:220-225`). The
-  deleted `old_fragments.native_windows` had this guard.
+* **No `N` check on the correct or v1 insert.** Random windows avoid `N`, but
+  the correct window and v1 windows are spliced as they are. Windows with too
+  many `N` are rejected at config load instead (`max_N`; all-`N` always).
 * **Short v1 windows are dropped, not corrected.** A fragment overlap that is
   not exactly 170 bp fails `full_length_window` and is skipped. The deleted code
   length-corrected it inside the frame instead.
@@ -172,8 +171,7 @@ clear of the central `N` padding. Rows outside the arm subset keep no window.
 ## Notes
 
 * Natural-context frames keep whatever `N` the genome has — some Arabidopsis
-  frames carry hundreds. Only the mutation window matters for
-  `check_indices_to_mutate`.
+  frames carry hundreds. Only the mutation window is checked (`max_N`).
 * One config file per (setting, direction). The split by direction is forced:
   `write_run_script` special-cases `weights`, and a setting's two directions
   need different ones.
