@@ -271,3 +271,4 @@ __marimo__/
 src/workflows/adversarial/**/*.csv
 src/workflows/adversarial/**/*.pdf
 src/workflows/adversarial/**/*.png
+src/workflows/starrseq_v2/selection/output/
