@@ -2,7 +2,7 @@
 
 import unittest
 
-from src.workflows.starrseq_v2.flowering_data.find_nicotiana_orthologs import (
+from workflows.starrseq_v2.run.flowering_data.find_nicotiana_orthologs import (
     best_hits,
     longest_per_gene,
 )

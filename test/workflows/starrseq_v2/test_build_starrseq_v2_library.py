@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from workflows.starrseq_v2 import build_starrseq_v2_library as sw
+from workflows.starrseq_v2.run import build_starrseq_v2_library as sw
 
 FRAME_LENGTH = 3020
 

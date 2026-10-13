@@ -1,8 +1,8 @@
 # Byte-compiled / optimized / DLL files
 .vscode/*
-src/workflows/starrseq_v2/flowering_data/*
-!src/workflows/starrseq_v2/flowering_data/*.py
-!src/workflows/starrseq_v2/flowering_data/*.json
+src/workflows/starrseq_v2/run/flowering_data/*
+!src/workflows/starrseq_v2/run/flowering_data/*.py
+!src/workflows/starrseq_v2/run/flowering_data/*.json
 __pycache__/
 *.py[codz]
 *$py.class
@@ -59,8 +59,8 @@ src/workflows/blamm_tfbs_analysis/*__mutations_*/
 src/workflows/starrseq_v2/**/*.csv
 # starrseq_v2 build artefacts (gene lists, unit files, plan, logs)
 src/workflows/starrseq_v2/build/
-src/workflows/starrseq_v2/probe_analysis/
-
+src/workflows/starrseq_v2/probe_analysis/*
+!src/workflows/starrseq_v2/probe_analysis/*.py
 
 
 # C extensions

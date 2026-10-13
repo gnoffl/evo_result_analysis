@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from workflows.starrseq_v2.probe_analysis import best_fitness, collect_run, normalize_per_gene
+from workflows.starrseq_v2.probe_analysis.probe_analysis import best_fitness, collect_run, normalize_per_gene
 
 FRONT = [["AAA", 0.9, 60.0], ["AAC", 0.7, 20.0], ["AAG", 0.6, 15.0], ["AAT", 0.2, 0.0]]
 
