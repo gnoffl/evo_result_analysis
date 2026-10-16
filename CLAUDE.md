@@ -13,6 +13,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - STAR-seq enrichment analysis
 - Publication figure generation
 
+## Capability index — read before writing code
+
+`CAPABILITIES/README.md` indexes every reusable function in this repo, grouped by folder and by task, with links
+to per-folder detail files (signatures, caveats, known bugs). `CAPABILITIES/DUPLICATES.md` names the preferred
+copy where functionality exists more than once.
+
+- **Before writing any new function, read `CAPABILITIES/README.md`** and the relevant detail file(s). Reuse or
+  extend what exists; if you still write something new, say why the existing option did not fit.
+- **When you add, rename, delete or change a public function/class/constant**, update the matching
+  `CAPABILITIES/*.md` file in the same change (same format). New folders get a new detail file and a README row.
+
 ## Setup & Installation
 
 ```bash
@@ -64,11 +75,11 @@ Shell pipeline entry points in `analysis_scripts/`:
 
 **`analysis/`** — core domain analysis, organized by subdomain:
 
-- `motives/` — TF binding analysis: `deepcis_scanner.py` (TF predictions), `peak_annotation.py` (4-stage peak detection algorithm), `analyze_mapping.py` (EPM→TF mapping, fitness aggregation), `analyze_peaks.py`, `deepcis_annotation.py`, `deepcis_visualize.py`
+- `motives/` — TF binding analysis: `deepcis_scanner.py` (TF predictions), `peak_annotation.py` (4-stage peak detection algorithm), `analyze_mapping.py` (EPM→TF mapping, fitness aggregation), `analyze_peaks.py`, `deepcis_visualize.py`
 - `mutations/` — mutation effect analysis: `analyze_mutations.py`, `summarize_mutations.py`, `genomic_annotation.py`
 - `overview/` — Pareto front statistics, cross-method comparison
 - `starrseq/` — STAR-seq enrichment with Mann-Whitney U tests
-- `utils/` — `io.py` (formatted console output for progress tracking in long-running workflows only; not for general use in scripts), `sequence_processing.py` (exon/intron/UTR extraction)
+- `utils/` — `io.py` (formatted console output for progress tracking in long-running workflows only; not for general use in scripts), `statistics.py` (canonical Wilcoxon vs 0 → BH → significance stars), `sequence_processing.py` (empty stub)
 
 **`workflows/`** — higher-level pipelines and figure generation:
 
@@ -79,7 +90,7 @@ Shell pipeline entry points in `analysis_scripts/`:
 - `mutation_distance_analysis/` — pairwise sequence distance analysis
 - `mutation_distribution_analysis/` — per-position mutation frequency
 - `deepCRE_TPM_correlation/` — deepCRE score vs. TPM expression correlation
-- `figure_composition.py` — assembles multi-panel SVG figures
+- `figure_composition_svg.py` — assembles multi-panel SVG figures
 - `candidate_selection.py`, `update_excel_sheet.py`
 
 ### Data flow
