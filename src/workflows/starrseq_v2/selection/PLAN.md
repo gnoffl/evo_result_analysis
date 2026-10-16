@@ -3,12 +3,15 @@
 Three stages from finished evolution runs to an ordered oligo library.
 
 1. **Pool** every final Pareto front into one overview table (`pool_front_table.py`).
-2. **Choose criteria** on that table — Gernot's call, not implemented here.
-3. **Build the library**: select, add references, deduplicate, screen restriction
-   sites, assign IDs, write the table and the FASTA (`build_library.py`).
+2. **Select** anchors, then the globally best low-mutation entries, then an
+   axis-uniform sample from each front (`select_candidates.py`).
+3. **Build the library**: fetch sequences, screen restriction sites, number,
+   deduplicate, write the table, the upload sheet and the FASTA
+   (`build_library.py`).
 
-Status: **step 1 implemented** (`pool_front_table.py`, cross-checked by
-`verify_pool_front_table_untested.py`); steps 2 and 3 are plan only. Every
+Status: **all three steps implemented** — `pool_front_table.py` (cross-checked by
+`verify_pool_front_table_untested.py`), `select_candidates.py`, and
+`build_library.py` (cross-checked by `verify_build_library_untested.py`). Every
 number below was measured on the actual tree, not estimated.
 
 ## Measured facts
@@ -301,10 +304,184 @@ via the `_gene:` split.
 
 ## Step 2 — selection criteria
 
-Gernot's. Only the interface is fixed here, so step 3 stays criteria-agnostic:
+`select_candidates.py`, producing `selected_keys.csv` with `run_dir`,
+`front_index`, `selection_reason`. Step 3 stays criteria-agnostic.
 
-step 2 produces `selected_keys.csv` with `run_dir`, `front_index`,
-`selection_reason`.
+### The criterion
+
+Selection runs in **three stages**, each masked out of the next, so a slot goes to
+the most specific claim on it.
+
+1. **Anchors.** Every run contributes its reference (0 mutations), its half-max
+   entry and its max-mutation entry.
+2. **Best picks.** `TARGET_BEST = 5_600` entries ranked *globally across all runs*,
+   half by fitness gain at a fixed low mutation count, half by fitness gain per
+   mutation. See below.
+3. **Uniform fill.** The rest of `TARGET` is filled by drawing one further entry
+   per run in **rounds**, so the runs stay within one entry of each other on this
+   stage until a front runs dry. `TARGET = 57_000`.
+
+An entry an earlier stage already took **gains the later stage's reason but does
+not consume its budget**, so each stage adds exactly its quota of new entries and
+the reason field records every claim. This is why `selection_reason` is a `|`-joined
+list and why a label count is not an entry count (measured below).
+
+### Best picks — the two rankings
+
+Both rank across all runs at once; neither caps how much one run may contribute.
+
+**Ranking A, fixed counts.** For each count in
+`BEST_MUTATION_COUNTS = (1, 2, 3, 5, 7, 10, 15)`, take the entries with exactly
+that many mutations and rank them by `fitness_delta_vs_reference`, descending.
+Half of `TARGET_BEST` is split equally over the seven counts (400 each). Reason
+`best_at_<count>`.
+
+Several counts are used because on a Pareto front fitness rises monotonically with
+mutation count, so a single threshold would only ever return the entries at the
+threshold. Ranking separately at each count asks the comparable question seven
+times.
+
+**Ranking B, gain per mutation.** `fitness_delta_vs_reference / n_mutations` over
+every entry with at least one mutation (references would divide by zero and have no
+gain by definition), descending. The other half of `TARGET_BEST`. Reason
+`best_efficiency`. It runs after A, so A's picks no longer consume its budget.
+
+Ranking B exists because A can only ever return entries at seven counts; B fills in
+the counts between them and reaches runs that were strong but never top-400 at any
+single count. Measured, B's picks spread over counts 1–29 rather than clustering.
+
+Ties in either ranking go to the lower `run_dir`, then the lower `front_index`, so
+the rankings are deterministic and no RNG is involved.
+
+**`fitness_delta_vs_reference` is the only legitimate score here** — `fitness`
+itself is not comparable across runs, because `direction` is mixed and the delta is
+already sign-corrected so that positive means the optimisation worked.
+
+**Known and accepted: the rankings are not headroom-corrected.** Fitness lives in
+[0, 1] (measured 0.0087–0.9982) and `start_fitness` spans 0.024–0.994, so a run
+whose reference already sits near the target end of the scale cannot post a large
+delta however well it optimised. The rankings therefore favour runs with room to
+move: at count 3 the top 200 entries have a median `start_fitness` of 0.323 against
+0.150 over all entries at that count. This selects for the largest *measurable*
+effect in the assay, which is the intent, but it is not a ranking of "how well the
+evolution worked".
+
+**A quota can fail even when its ranking is not empty**, because only *new* entries
+count against it. If every run's entry at some target count is already that run's
+half-max anchor, the count contributes nothing and `select_candidates` raises rather
+than silently rebalancing. On the real data no count comes close to saturating.
+
+`TARGET` counts **selected entries, not distinct sequences.** Steps 1 and 2 never
+load sequences, so step 2 cannot deduplicate; step 3 does. The offset is stable
+because the duplicates are almost all references, which are selected at any
+target — measured 1405 duplicates at 57 449 entries and 1403 at 57 000. So set
+`TARGET` to the wanted oligo count plus ~1400.
+
+Where one entry is several anchors at once, the reasons are joined with `|`
+(`half_max|max` on 14 runs, `reference|half_max|max` on the 4 length-1 fronts).
+Where two entries share a mutation count, the **lower front index** wins — fronts
+run from the optimised end to the reference, so the lower index is the more
+optimised entry. This makes the tie-break deterministic; no RNG is involved.
+
+### Sampling uniformly on the count axis, not over the entries
+
+Each draw is `U(1, max_mutations_reached - 1)`, continuous, snapped to the
+nearest entry not yet selected; ties again go to the lower front index. Counts 0
+and `max` are excluded from the range because both are already anchors.
+
+Sampling uniformly over the *entries* would give each entry probability
+`1/|front|`, so the expected number of draws per unit of count axis would follow
+the local entry density — and the density falls off near the cap, where the gaps
+are (counts 50–59 are each missing from 125–173 runs). Snapping instead gives an
+entry probability proportional to its catchment, half the gap to each neighbour,
+so an entry alone in a sparse stretch inherits the whole gap.
+
+Measured on the 1129 runs that reached 60 mutations, the draws land within a few
+percent of the axis-uniform prediction in every 6-count bin, including the
+truncated top bin (predicted 1314 draws, observed 1292). **At this aggregate
+level the correction barely changes anything** — entry-uniform sampling would
+have put ~1330 draws in that bin. It matters per run, on the individual fronts
+with large gaps, which is what the unit test covers.
+
+`SEED = 0`; the selection reproduces exactly.
+
+**Known and accepted: a count can be drawn twice on a tied front.** `available`
+in `draw_one` is per *entry*, so taking one of the two entries at a shared count
+leaves its twin drawable; and where a tie sits at the max or half-max count, the
+anchor takes the lower front index and the twin stays in the pool outright. Only
+the eight tied fronts can be affected, and the two entries are different
+sequences with bitwise-identical fitness, so both are legitimate library
+members. Measured on the current selection: **0 runs** have two selected entries
+at one count — but that is chance, not a guarantee (expected ≈0.8 occurrences),
+so a different `SEED` or `TARGET` may produce one. Making availability per
+mutation count instead of per entry would close it at a cost of ≤8 entries.
+
+### Short fronts
+
+A run that runs out of entries simply stops being drawn from, and the rounds
+carry on over the others — so the ~100 short fronts hand their shortfall to the
+long ones automatically and the target is still met. The runs are visited in a
+**random order**, reshuffled once per selection, so the partial final round does
+not always fall on the same runs.
+
+The order of visits is the only thing separating a run that gets 18 entries from
+one that gets 17; everything else about the two is identical.
+
+### N
+
+Entries containing `N` are excluded from both the anchors and the sampling pool.
+All 852 of them sit in **20 runs where every entry contains `N`**, so this drops
+those 20 runs whole and no run is ever left missing a single anchor.
+
+### Result
+
+At `TARGET = 57_000` and `TARGET_BEST = 5_600`: **57 000 entries from 3262 runs** —
+9764 anchors (3262 × 3 anchor slots, collapsed onto 9764 distinct entries), 5600
+best picks and 41 636 from the uniform fill.
+
+**Label counts are not entry counts.** Because an already-selected entry gains a
+later reason for free, the labels over-count: `best_efficiency` appears 5462 times
+but added only 2800 entries, and the seven `best_at_<count>` labels sum to 2979 for
+2800 added. 6046 distinct entries carry at least one `best_` label; 2696 entries
+carry more than one reason of any kind. The commonest combinations are
+`best_at_<count>|best_efficiency` (2232 entries in total — ranking B re-labels most
+of ranking A) and `half_max|best_efficiency` (267).
+
+**The best picks are concentrated, by design.** A run strong enough to lead at
+several counts enters once per count, and ranking B is uncapped, so:
+
+| | entries | runs | genes | configs | max per run |
+| --- | --- | --- | --- | --- | --- |
+| ranking A (`best_at_*`) | 2979 | 748 | 551 | 50 | 7 |
+| ranking B (`best_efficiency`) | 5462 | 740 | 539 | 51 | **29** |
+| any `best_` label | 6046 | 834 | 609 | 51 | 29 |
+
+609 of the library's 1881 genes carry a best pick. The extreme case is
+`AT4G15880` (delta 0.894 at its best entry), which ranking B labels at **every**
+count from 1 to 29 — a complete mutation ladder on the single strongest responder.
+
+**Best picks are additive, not compensated.** The uniform fill does not know a run
+already won best picks, so those runs end up larger: entries per run now run
+**1 to 44** (median 16), against the flat 17–18 of the anchors-plus-fill design,
+and 247 runs hold more than 25 entries. The old guarantee that "the order of visits
+is the only thing separating a run that gets 18 entries from one that gets 17" now
+holds only *within* the fill stage.
+
+A per-run cap on ranking B is the lever if this is too concentrated: capping it at
+one entry per run was measured at 1400 runs / 961 genes for the same budget, at the
+cost of a lower median gain per mutation (0.031 against 0.047) and the loss of the
+ladders.
+
+Deduplicated on the exact 170 bp string, that is **55 597 distinct sequences** —
+1403 lost, 2.5%. The loss is almost entirely in the references (3262 → 1969);
+the mutated entries are effectively unique (random 47 236 → 47 157, max 3244 →
+3244, half_max 3258 → 3240). The reference collapse is the known one: identical
+natural windows shared across runs and, for 167 of them, across gene ids, which
+is why step 3 must keep every contributing origin.
+
+That leaves ~4.4k of the ~60k budget for controls and for whatever the
+restriction screen drops — neither countable until the enzyme list and the
+control set exist. Raise `TARGET` once they do.
 
 Keying on `front_index` rather than `n_mutations` is what makes the eight tied
 fronts unambiguous.
@@ -328,46 +505,154 @@ and the source window is a `starrseq_v1` metadata window.
 
 ## Step 3 — build the library
 
-`build_library.py`. Takes `selected_keys.csv` + the run tree.
+`build_library.py`. Takes `selected_keys.csv` + `front_table.csv.gz` + the run
+tree, and writes everything needed to order the library.
 
-Read any step-1 table with `float_precision="round_trip"` (see step 2), and
-take fitness values from the fronts themselves when exactness matters.
+Read any step-1 table with `float_precision="round_trip"` (see step 2).
 
-1. **Fetch sequences** by `(run_dir, front_index)`.
-2. **Add references** — for every selected `run_dir`, include its 0-mutation
-   entry if not already selected.
-3. **Drop sequences containing `N`** (852 candidates across the whole pool).
-4. **Deduplicate** on the exact 170 bp string, keeping one by a deterministic
-   sort and recording every collapsed origin in an `origins` column.
-   Magnitude, measured on the references alone: 3282 reference entries are only
-   **1980 distinct sequences**. Note that **167 reference sequences are shared
-   by more than one gene id** — expected for an allotetraploid like
-   N. tabacum (homeologs) and for overlapping annotations. Identical sequences
-   are indistinguishable in the assay, so merging them is right, but the
-   `origins` column must preserve every contributing gene.
-5. **Screen restriction sites** — drop, never repair; repairing would move the
-   sequence off the front it was selected from. Screen each sequence **with the
-   cloning prefix and suffix attached**, then emit the bare 170 bp.
-6. **Assign IDs** — `SQ2_000001…`, numbered after a deterministic sort on
-   `(gene_id, config_name, n_mutations, front_index)`, so a rerun reproduces
-   them.
-7. **Final checks** — every sequence 170 bp and `ACGT`-only, IDs unique,
-   sequences unique, total within the order budget.
+1. **Fetch sequences** by `(run_dir, front_index)`, reading each front once.
+   No separate "add references" step: every run's reference is an anchor in
+   step 2, so it is already selected. Asserted, not assumed.
+2. **Screen restriction sites** — drop, never repair; repairing would move the
+   sequence off the front it was selected from.
+3. **Number the survivors** `1…N` after a deterministic sort on
+   `(config_name, gene_id, run_dir, front_index)`, so one experimental arm is
+   contiguous. The trailing `(run_dir, front_index)` keys the front table, which
+   is what makes the sort total.
+4. **Deduplicate** on the exact 170 bp, representative = lowest number.
+5. **Resolve reference pointers** to each run's reference and to that
+   reference's representative.
+6. **Final checks** — 170 bp and `ACGT`-only, numbers and identifiers unique,
+   representative sequences unique, no reference pointer missing from the sheet.
 
-Outputs: `library_table.csv` (ID + step-1 metadata + sequence + `origins` +
-`selection_reason`) and `library.fasta` (ID → 170 bp).
+`N`-containing entries need no handling here: step 2 already excludes them, and
+all 852 sit in 20 runs where every entry contains `N`, so those runs are gone.
 
-### Step 3 needs four inputs that do not exist yet
+### Numbering before deduplication
 
-None of these are in the repo — the `starrseq_v2/README.md` "Open items"
-section records them as never filled in. Steps 1 and 2 do not depend on them.
+The number is assigned **before** deduplication, so every selected entry stays
+individually addressable in its own run context. The same 170 bp arising from a
+maximize run on one gene and a minimize run on another is one oligo but two
+rows, and both contexts are wanted for analysis.
 
-- **the restriction enzyme recognition sequences** to screen against (as a
-  FASTA, matching what `get_restriction_regexes` expects)
-- **the cloning prefix and suffix** that flank the 170 bp insert in the ordered
-  oligo. Needed because a recognition site can straddle the junction between
-  the insert and its flanks: a sequence clean on its own can still carry a site
-  once the adapters are attached, so screening the bare 170 bp would pass
-  sequences that fail at the bench.
-- **the order budget** — how many sequences the library may contain
-- **which controls go in**, if any
+The consequence has to be stated because it is silent: **several numbers map
+onto one ordered oligo and therefore one measurement.** Join assay results on
+`representative_id`, never on `sequence_number`, or duplicates are counted
+twice. `Number` in the upload sheet is contiguous over representatives; the
+serial inside an identifier is not contiguous there.
+
+This also removes the need for an `origins` column. One row per contributing
+gene already records every origin of a collapsed sequence — relevant because
+167 reference sequences are shared across more than one gene id, expected for
+an allotetraploid like N. tabacum (homeologs) and for overlapping annotations.
+
+### The restriction screen
+
+`GGTCT(C|$)|GAGAC(C|$)` — BsaI and its reverse complement. The `$` alternative
+covers a site the cloning suffix would complete by supplying the final `C`;
+the two patterns being reverse complements of each other is what makes the
+single trailing-edge case sufficient, so the bare 170 bp is screened and no
+second pass with the flanks attached is needed.
+
+**A run whose reference carries a site loses all of its entries.** Without an
+orderable baseline none of its variants can be interpreted, even where a
+mutation happened to destroy the site. Measured: 91 runs, costing 1522 entries
+(91 references and 1431 variants). A further 253 entries were dropped for a
+site of their own.
+
+### The identifier
+
+The upload template's `id` is five `_`-separated fields,
+`GENOME_CHR:START-END_SETUP_AUTHOR_UNIQUE`. Underscores inside a field are
+replaced with `-` and `|` with `+`, because chromosome names and config names
+are full of underscores:
+
+```
+TAIR10_4:12674106-12670896_AT4G24540.config-a.f12.m37.random_GS_000123
+Ntab-TN90_NW-015791515.1-Nicotiana-tabacum:14248-7986_NW-015791515.1-000002.….f03.m08.half-max_GS_000456
+```
+
+`SETUP` is `<gene_id>.<config_name>.f<front_index>.m<n_mutations>.<reason>`,
+both numbers zero-padded to two digits (counts run 0–60). `UNIQUE` is the
+6-digit zero-padded `sequence_number`.
+
+`f` and `m` are both needed: a front is not indexed by mutation count, and on
+the eight tied fronts two entries share a count, so only the front index
+separates them.
+
+**The coordinates are the gene's genomic span, taken verbatim from the record
+name, not the 170 bp window's coordinates.** The window's frame offsets are
+carried in `source_start`/`source_end` instead. This is simply the cheaper
+route — the record name already holds chromosome and span, so nothing has to be
+derived and nothing can be derived wrongly.
+
+(An earlier draft of this section claimed the existing frame→genomic converters
+were broken for genes under 1000 bp. **They are not.** `additional_padding`
+compensates exactly, fixing the TSS at offset 1000 and the TTS at 2020 for every
+gene; the hardcoded 1520 in those converters is an affine anchor, not a block
+boundary. See the vault note `extraction-frame-landmark-invariance`.)
+
+The span is kept in the record name's own order — reversed for minus-strand
+genes, which is how `extract_sequences.py:399-402` encodes the strand.
+
+Genome names verified against the files the extraction used:
+`Arabidopsis_thaliana.TAIR10.dna.toplevel.fa` → `TAIR10`;
+`hlx-Nicotiana_tabacum-GCF_000715135.1-4097.gff` and the FASTA header
+(`… Ntab-TN90 Ntab-TN90_scaffold10 …`) → `Ntab-TN90`.
+
+### Outputs
+
+Into `output/` (already gitignored):
+
+| file | content |
+| --- | --- |
+| `library_table.csv` | one row per surviving selected entry — the source of truth for analysis |
+| `library_upload.ods` | the filled template, five columns, one row per representative |
+| `library.fasta` | representative identifier → 170 bp |
+| `configs_to_copy.txt` | the 68 config source paths to copy into `configs_gernot/` |
+
+The upload sheet is written to a **new file**; the template
+`autoTRAIT_batch_constructs_phase_Sep26.ods` is never modified. Only its first
+sheet (`phase_september`) is filled; `Explainer` and the embedded image are
+carried through untouched, which the verification script checks.
+
+Data cells must name a cell style explicitly. The template declares
+`<table:table-column … table:default-cell-style-name="ce2"/>` for all five
+columns, and `ce2` is the bold `#b2b2b2` header style — so a cell written
+without a style inherits the header's look, which is what made every row grey
+on the first run. Writing `stylename="Default"` overrides the column default;
+the header cells keep no explicit style and so stay styled.
+
+The template's `reference` column expects a literal 170 bp sequence, which
+would repeat every reference on every row. It holds the reference's
+**identifier** instead — a deliberate deviation the recipient has to be told
+about. Reference rows point at themselves.
+
+`path_to_config` is `configs_gernot/<config_name>.json`. The config folder name
+in the run tree equals the config file's basename, so the mapping is direct.
+`configs/starrseq_v2/` holds 138 files but only 68 distinct configs: `bins/` is
+a re-partition of the same 68 into six execution batches, and all 68 are
+**byte-identical** to their namesakes in `arms/baseline/grid/starrseq_v1`, so
+flattening them into one folder is lossless.
+
+### Result
+
+From 57 000 selected entries: 1775 dropped by the screen, leaving **55 225
+entries from 3171 runs over 1853 genes**, which deduplicate to **53 874
+distinct sequences to order**.
+
+That is ~6k under the ~60k budget. Raise `TARGET` in step 2 once the control
+set is decided; the screen and the reference rule cost about 3.1% of whatever
+is selected.
+
+### Validation
+
+`verify_build_library_untested.py` re-reads every selected entry from its
+`pareto_front.json` and re-derives the screen, the numbering, the
+deduplication and the reference pointers independently, then compares them
+against the written table, FASTA and sheet. All checks pass today.
+
+### Still open
+
+- **which controls go in**, if any — the only input still missing. The order
+  budget is no longer blocking, since the library is well under it.
