@@ -12,11 +12,14 @@ def make_front(
     half_max: int,
     run_dir: str = "config/run",
     n_count: Optional[List[int]] = None,
+    gain_per_mutation: float = 0.01,
 ) -> pd.DataFrame:
     """One run's front table rows, in front order (index 0 is the most optimised entry).
 
     Args:
         n_mutations: Mutation count per entry; the maximum becomes max_mutations_reached.
+        gain_per_mutation: Scales fitness_delta_vs_reference, which is count * this, so a
+            larger value makes the whole run rank above a smaller one at every count.
     """
     counts = pd.Series(n_mutations)
     return pd.DataFrame({
@@ -28,11 +31,24 @@ def make_front(
         "is_reference": counts == 0,
         "is_half_max": counts == half_max,
         "is_max_mutations": counts == counts.max(),
+        "fitness_delta_vs_reference": counts * gain_per_mutation,
     })
 
 
 def many_fronts(n_runs: int, counts: List[int], half_max: int) -> pd.DataFrame:
     return pd.concat(make_front(counts, half_max, run_dir=f"config/run{i}") for i in range(n_runs))
+
+
+def graded_fronts(n_runs: int, counts: List[int], half_max: int) -> pd.DataFrame:
+    """Identical fronts whose fitness gain falls with the run number, so run0 is the strongest.
+
+    The gain is linear in the mutation count, so gain per mutation is constant within a
+    run and the runs rank the same way under both best-pick rankings.
+    """
+    return pd.concat(
+        make_front(counts, half_max, run_dir=f"config/run{i}", gain_per_mutation=1.0 - i * 0.01)
+        for i in range(n_runs)
+    )
 
 
 def pool_of(front: pd.DataFrame):
@@ -50,20 +66,20 @@ def pool_of(front: pd.DataFrame):
 class TestAnchorReasons(unittest.TestCase):
     def test_three_distinct_anchors(self):
         front = make_front([10, 5, 0], half_max=5)
-        self.assertEqual(sc.anchor_reasons(front), {0: "max", 1: "half_max", 2: "reference"})
+        self.assertEqual(sc.anchor_reasons(front), {0: ["max"], 1: ["half_max"], 2: ["reference"]})
 
     def test_one_entry_is_every_anchor(self):
         """A front of length 1 — nothing but the reference survived."""
-        self.assertEqual(sc.anchor_reasons(make_front([0], half_max=0)), {0: "reference|half_max|max"})
+        self.assertEqual(sc.anchor_reasons(make_front([0], half_max=0)), {0: ["reference", "half_max", "max"]})
 
     def test_half_max_coincides_with_max(self):
         front = make_front([1, 0], half_max=1)
-        self.assertEqual(sc.anchor_reasons(front), {0: "half_max|max", 1: "reference"})
+        self.assertEqual(sc.anchor_reasons(front), {0: ["half_max", "max"], 1: ["reference"]})
 
     def test_tie_at_a_count_takes_the_lower_front_index(self):
         """Two non-dominated entries at the max count: the more optimised one wins."""
         front = make_front([8, 8, 4, 0], half_max=4)
-        self.assertEqual(sc.anchor_reasons(front)[0], "max")
+        self.assertEqual(sc.anchor_reasons(front)[0], ["max"])
         self.assertNotIn(1, sc.anchor_reasons(front))
 
 
@@ -148,7 +164,7 @@ class TestFillToTarget(unittest.TestCase):
 
     def test_target_below_the_anchor_count_raises(self):
         table = many_fronts(5, list(range(10, -1, -1)), half_max=5)
-        with self.assertRaisesRegex(ValueError, "below the 15 anchor"):
+        with self.assertRaisesRegex(ValueError, "below the 15 entries"):
             sc.select_candidates(table, target=2, seed=0)
 
     def test_selection_is_reproducible(self):
@@ -175,6 +191,141 @@ class TestSelectCandidates(unittest.TestCase):
         anchors = selected[selected["selection_reason"] != "random"]
         self.assertEqual(len(anchors), 12)
         self.assertEqual(anchors.groupby("run_dir").size().tolist(), [3, 3, 3, 3])
+
+
+class TestSplitEvenly(unittest.TestCase):
+    def test_exact_division(self):
+        self.assertEqual(sc.split_evenly(10, 5), [2, 2, 2, 2, 2])
+
+    def test_remainder_goes_to_the_earlier_parts(self):
+        self.assertEqual(sc.split_evenly(11, 3), [4, 4, 3])
+
+    def test_total_is_preserved(self):
+        self.assertEqual(sum(sc.split_evenly(2800, 7)), 2800)
+
+
+class TestRankByScore(unittest.TestCase):
+    def test_orders_by_descending_score(self):
+        front = make_front([5, 4, 3, 0], half_max=2)
+        ranking = sc.rank_by_score(front, pd.Series(front["fitness_delta_vs_reference"]))
+        self.assertEqual([index for _, index in ranking], [0, 1, 2, 3])
+
+    def test_ties_go_to_the_lower_run_then_the_lower_index(self):
+        table = pd.concat([
+            make_front([1, 1], half_max=1, run_dir="config/b"),
+            make_front([1, 1], half_max=1, run_dir="config/a"),
+        ])
+        self.assertEqual(
+            sc.rank_by_score(table, pd.Series(table["fitness_delta_vs_reference"])),
+            [("config/a", 0), ("config/a", 1), ("config/b", 0), ("config/b", 1)],
+        )
+
+    def test_full_function(self):
+        table = pd.concat([
+            make_front([1, 0], half_max=1, run_dir="config/b"),
+            make_front([1, 0], half_max=1, run_dir="config/a"),
+        ])
+        self.assertEqual(
+            sc.rank_by_score(table, pd.Series(table["fitness_delta_vs_reference"])),
+            [("config/a", 0), ("config/b", 0), ("config/a", 1), ("config/b", 1)],
+        )
+
+
+class TestTakeBest(unittest.TestCase):
+    def test_adds_exactly_the_quota(self):
+        reasons = {"config/run": {}}
+        shortfall = sc.take_best([("config/run", i) for i in range(5)], reasons, "best", 3)
+        self.assertEqual(shortfall, 0)
+        self.assertEqual(reasons["config/run"], {0: ["best"], 1: ["best"], 2: ["best"]})
+
+    def test_an_already_selected_entry_gains_the_reason_without_spending_the_quota(self):
+        reasons = {"config/run": {0: ["half_max"]}}
+        ranking = [("config/run", 0), ("config/run", 1), ("config/run", 2)]
+        self.assertEqual(sc.take_best(ranking, reasons, "best", 2), 0)
+        self.assertEqual(reasons["config/run"], {0: ["half_max", "best"], 1: ["best"], 2: ["best"]})
+
+    def test_a_short_ranking_reports_the_shortfall(self):
+        self.assertEqual(sc.take_best([("config/run", 0)], {"config/run": {}}, "best", 3), 2)
+
+
+class TestSelectBest(unittest.TestCase):
+    def empty_reasons(self, table: pd.DataFrame):
+        return {str(run_dir): {} for run_dir in table["run_dir"].unique()}
+
+    def test_the_budget_is_split_evenly_over_the_rankings(self):
+        table = graded_fronts(10, list(range(6, -1, -1)), half_max=3)
+        reasons = self.empty_reasons(table)
+        self.assertEqual(sc.select_best(table, reasons, 8, mutation_counts=(1, 2)), 0)
+        labels = [label for run in reasons.values() for entry in run.values() for label in entry]
+        self.assertEqual(labels.count("best_at_1"), 2)
+        self.assertEqual(labels.count("best_at_2"), 2)
+        self.assertEqual(labels.count("best_efficiency"), 4)
+
+    def test_a_strong_run_wins_at_several_counts(self):
+        """The deliberate ladder: run0 leads at every count, so it enters once per count."""
+        table = graded_fronts(5, list(range(6, -1, -1)), half_max=3)
+        reasons = self.empty_reasons(table)
+        sc.select_best(table, reasons, 6, mutation_counts=(1, 2, 3))
+        at_counts = {
+            label for entry in reasons["config/run0"].values()
+            for label in entry if label.startswith("best_at_")
+        }
+        self.assertEqual(at_counts, {"best_at_1", "best_at_2", "best_at_3"})
+        # only 1 candidate per mutation count can be selected and the first run also has highest efficiency at every count, so no other run will be selected
+        represented_runs = {run for run in reasons if reasons[run]}
+        self.assertEqual(represented_runs, {"config/run0"})
+
+    def test_references_are_never_an_efficiency_pick(self):
+        """Index 2 is the 0-mutation entry; it has no gain per mutation to rank on."""
+        table = graded_fronts(3, [4, 2, 0], half_max=2)
+        reasons = self.empty_reasons(table)
+        sc.select_best(table, reasons, 4, mutation_counts=(2,))
+        for entries in reasons.values():
+            self.assertNotIn(2, entries)
+
+    def test_an_exhausted_ranking_reports_the_shortfall(self):
+        """Both rankings get 10 and can offer only 2 new entries each."""
+        table = graded_fronts(2, [4, 2, 0], half_max=2)
+        self.assertEqual(sc.select_best(table, self.empty_reasons(table), 20, mutation_counts=(2,)), 16)
+
+
+class TestBestPicksInSelection(unittest.TestCase):
+    # half_max avoids BEST_MUTATION_COUNTS, so the anchors do not saturate a target count
+    FRONT = list(range(20, -1, -1))
+
+    def test_target_is_still_exact(self):
+        table = graded_fronts(10, self.FRONT, half_max=9)
+        self.assertEqual(len(sc.select_candidates(table, target=100, seed=0, target_best=20)), 100)
+
+    def test_a_best_pick_is_never_drawn_again_by_the_uniform_fill(self):
+        table = graded_fronts(10, self.FRONT, half_max=9)
+        selected = sc.select_candidates(table, target=100, seed=0, target_best=20)
+        self.assertFalse(selected.duplicated(subset=["run_dir", "front_index"]).any())
+        reason = selected["selection_reason"]
+        self.assertFalse((reason.str.contains("best_") & reason.str.contains("random")).any())
+
+    def test_an_anchor_can_also_be_a_best_pick(self):
+        """run0's half-max sits at count 2, a target count, so that entry carries both reasons."""
+        table = pd.concat([
+            make_front([6, 4, 2, 0], half_max=2, run_dir="config/run0", gain_per_mutation=1.0),
+            make_front([6, 4, 2, 0], half_max=4, run_dir="config/run1", gain_per_mutation=0.5),
+            make_front([6, 4, 2, 0], half_max=4, run_dir="config/run2", gain_per_mutation=0.4),
+        ])
+        selected = sc.select_candidates(table, target=12, seed=0, target_best=2, mutation_counts=(2,))
+        reason_of = dict(zip(zip(selected["run_dir"], selected["front_index"]), selected["selection_reason"]))
+        self.assertEqual(reason_of[("config/run0", 2)], "half_max|best_at_2")
+
+    def test_a_target_count_that_is_an_anchor_in_every_run_raises(self):
+        """Nothing new is left to take at count 2, even though the ranking is not empty."""
+        table = graded_fronts(4, [4, 2, 0], half_max=2)
+        with self.assertRaisesRegex(ValueError, "best picks short"):
+            sc.select_candidates(table, target=12, seed=0, target_best=2, mutation_counts=(2,))
+
+    def test_best_picks_are_reproducible(self):
+        table = graded_fronts(8, self.FRONT, half_max=9)
+        first = sc.select_candidates(table, target=90, seed=3, target_best=20)
+        second = sc.select_candidates(table, target=90, seed=3, target_best=20)
+        pd.testing.assert_frame_equal(first, second)
 
 
 if __name__ == "__main__":
