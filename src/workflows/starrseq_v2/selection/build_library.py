@@ -17,14 +17,10 @@ import re
 from typing import Any, Dict, Iterable, List, Tuple
 
 import pandas as pd
-from odf.opendocument import load
-from odf.table import Table, TableCell, TableRow
-from odf.text import P
 
 RUNS = "/home/gernot/ARCitect/ARCs/dream/assays/Evolution_runs/dataset/starrseq_v2/full_run"
 CONFIGS = "/home/gernot/Code/PhD_Code/Evolution/configs/starrseq_v2"
 OUTPUT = os.path.join(os.path.dirname(__file__), "output")
-TEMPLATE = os.path.join(OUTPUT, "autoTRAIT_batch_constructs_phase_Sep26.ods")
 
 # BsaI and its reverse complement, each also matching at the very end of the insert where
 # the cloning suffix supplies the final C
@@ -32,9 +28,7 @@ RESTRICTION_SITE = re.compile(r"GGTCT(C|$)|GAGAC(C|$)")
 SEQUENCE_LENGTH = 170
 AUTHOR = "GS"
 CONFIG_PREFIX = "configs_gernot/"
-# the template's five columns default to the bold grey header style, so data cells
-# have to name an unstyled one explicitly
-DATA_CELL_STYLE = "Default"
+UPLOAD_COLUMNS = ["Number", "id", "reference", "product", "path_to_config"]
 GENOME_BY_SPECIES = {"arabidopsis": "TAIR10", "ntab": "Ntab-TN90"}
 # bins/ holds a second, byte-identical copy of all 68 configs, partitioned into batches
 CONFIG_FOLDERS = ["baseline", "arms", "grid", "starrseq_v1"]
@@ -201,33 +195,15 @@ def validate(table: pd.DataFrame, representatives: pd.DataFrame) -> None:
         raise ValueError(f"{len(dangling)} reference pointers are absent from the upload sheet")
 
 
-def spreadsheet_row(values: List[str]) -> TableRow:
-    """One spreadsheet row of string cells.
-
-    The cell style is set explicitly because the template's columns default to the
-    bold grey header style; without it every data row inherits the header's look.
-    """
-    row = TableRow()
-    for value in values:
-        cell = TableCell(valuetype="string", stylename=DATA_CELL_STYLE)
-        cell.addElement(P(text=value))
-        row.addElement(cell)
-    return row
-
-
-def write_upload_sheet(representatives: pd.DataFrame, template_path: str, destination: str) -> None:
-    """Append the representatives to the template's first sheet, leaving every other sheet as is."""
-    document = load(template_path)
-    sheet = document.spreadsheet.getElementsByType(Table)[0]
-    for number, entry in enumerate(representatives.to_dict("records"), start=1):
-        sheet.addElement(spreadsheet_row([
-            str(number),
-            entry["identifier"],
-            entry["reference_representative_id"],
-            entry["sequence"],
-            entry["path_to_config"],
-        ]))
-    document.save(destination)
+def write_upload_sheet(representatives: pd.DataFrame, destination: str) -> None:
+    """Write the representatives as the five-column upload CSV, numbered from 1."""
+    pd.DataFrame({
+        "Number": range(1, len(representatives) + 1),
+        "id": list(representatives["identifier"]),
+        "reference": list(representatives["reference_representative_id"]),
+        "product": list(representatives["sequence"]),
+        "path_to_config": list(representatives["path_to_config"]),
+    }, columns=UPLOAD_COLUMNS).to_csv(destination, index=False)
 
 
 def write_fasta(representatives: pd.DataFrame, path: str) -> None:
@@ -266,7 +242,7 @@ def main() -> None:
     validate(table, representatives)
 
     table.to_csv(os.path.join(OUTPUT, "library_table.csv"), index=False)
-    write_upload_sheet(representatives, TEMPLATE, os.path.join(OUTPUT, "library_upload.ods"))
+    write_upload_sheet(representatives, os.path.join(OUTPUT, "library_upload.csv"))
     write_fasta(representatives, os.path.join(OUTPUT, "library.fasta"))
     sources = config_source_paths(table["config_name"].unique(), CONFIGS)
     with open(os.path.join(OUTPUT, "configs_to_copy.txt"), "w") as f:

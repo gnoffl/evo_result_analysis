@@ -4,20 +4,17 @@ Re-reads every selected entry from its pareto_front.json and re-derives the scre
 numbering, the deduplication and the reference pointers, then compares them against the
 written table, FASTA and upload sheet. Prints every failed check. Run after build_library.
 """
+import csv
 import json
 import os
 import re
-import zipfile
 from collections import defaultdict
 from typing import Dict, List
-from xml.etree import ElementTree
 
 import pandas as pd
 
 from workflows.starrseq_v2.selection import build_library as bl
 
-TABLE_NS = "urn:oasis:names:tc:opendocument:xmlns:table:1.0"
-TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0"
 IDENTIFIER = re.compile(r"^(?P<genome>[^_]+)_(?P<chromosome>[^_]+)_(?P<setup>[^_]+)_(?P<author>[^_]+)_(?P<serial>\d{6})$")
 
 failures: List[str] = []
@@ -37,28 +34,6 @@ def raw_sequences(runs_root: str, run_dirs: List[str]) -> Dict[str, List[str]]:
         with open(path) as f:
             fronts[run_dir] = [entry[0].upper() for entry in json.load(f)]
     return fronts
-
-
-def sheet_rows(path: str, sheet_name: str) -> List[List[str]]:
-    """Every row of one sheet of an ODS file, as text."""
-    root = ElementTree.fromstring(zipfile.ZipFile(path).read("content.xml"))
-    for table in root.iter(f"{{{TABLE_NS}}}table"):
-        if table.get(f"{{{TABLE_NS}}}name") != sheet_name:
-            continue
-        rows = []
-        for row in table.iter(f"{{{TABLE_NS}}}table-row"):
-            cells = []
-            for cell in row.findall(f"{{{TABLE_NS}}}table-cell"):
-                repeat = int(cell.get(f"{{{TABLE_NS}}}number-columns-repeated", 1))
-                paragraph = cell.find(f"{{{TEXT_NS}}}p")
-                text = "".join(paragraph.itertext()) if paragraph is not None else ""
-                cells.extend([text] * min(repeat, 8))
-            while cells and cells[-1] == "":
-                cells.pop()
-            if cells:
-                rows.append(cells)
-        return rows
-    raise AssertionError(f"no sheet {sheet_name} in {path}")
 
 
 def read_fasta(path: str) -> Dict[str, str]:
@@ -202,9 +177,10 @@ def check_fasta(table: pd.DataFrame, path: str) -> None:
     check(records == expected, f"FASTA holds {len(records)} records, expected {len(expected)}")
 
 
-def check_upload_sheet(table: pd.DataFrame, path: str, template: str) -> None:
-    """The sheet must hold the representatives in order, and leave the explainer untouched."""
-    rows = sheet_rows(path, "phase_september")
+def check_upload_sheet(table: pd.DataFrame, path: str) -> None:
+    """The sheet must hold the representatives in order."""
+    with open(path, newline="") as f:
+        rows = list(csv.reader(f))
     representatives = table.loc[table["is_representative"]].to_dict("records")
     check(rows[0] == ["Number", "id", "reference", "product", "path_to_config"], "header changed")
     check(len(rows) - 1 == len(representatives), f"{len(rows) - 1} sheet rows for {len(representatives)} representatives")
@@ -219,10 +195,6 @@ def check_upload_sheet(table: pd.DataFrame, path: str, template: str) -> None:
         if written[2] not in identifiers:
             wrong += 1
     check(wrong == 0, f"{wrong} sheet rows disagree with the table")
-    check(
-        sheet_rows(path, "Explainer") == sheet_rows(template, "Explainer"),
-        "the Explainer sheet changed",
-    )
 
 
 def check_config_paths(table: pd.DataFrame) -> None:
@@ -252,7 +224,7 @@ def main() -> None:
     check_reference_pointers(table)
     check_reference_is_the_zero_mutation_entry(table, front_table)
     check_fasta(table, os.path.join(output, "library.fasta"))
-    check_upload_sheet(table, os.path.join(output, "library_upload.ods"), bl.TEMPLATE)
+    check_upload_sheet(table, os.path.join(output, "library_upload.csv"))
     check_config_paths(table)
 
     print(f"entries {len(table)}, representatives {int(table['is_representative'].sum())}")

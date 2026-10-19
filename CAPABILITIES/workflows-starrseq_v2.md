@@ -1,6 +1,6 @@
 # src/workflows/starrseq_v2/
 
-The STARR-seq v2 round, start to finish. `run/` picks the candidate genes for Arabidopsis and N. tabacum (STARR-seq v1, FLOR-ID flowering, GOF/LOF, random), extracts 3020 bp gene frames, splices 170 bp windows into the construct backbone and writes the gene metadata CSV that the config grid in `evolution.write_run_script` reads. `probe_analysis/` checks whether the pilot runs saturate. `selection/` turns the finished full-run Pareto fronts into an ordered oligo library in three steps (pool fronts -> select entries -> build library), writing to `selection/output/` (CSV, FASTA, .ods upload sheet). Paths and parameters are hardcoded module constants; nothing takes a CLI.
+The STARR-seq v2 round, start to finish. `run/` picks the candidate genes for Arabidopsis and N. tabacum (STARR-seq v1, FLOR-ID flowering, GOF/LOF, random), extracts 3020 bp gene frames, splices 170 bp windows into the construct backbone and writes the gene metadata CSV that the config grid in `evolution.write_run_script` reads. `probe_analysis/` checks whether the pilot runs saturate. `selection/` turns the finished full-run Pareto fronts into an ordered oligo library in three steps (pool fronts -> select entries -> build library), writing to `selection/output/` (CSV, FASTA, CSV upload sheet). Paths and parameters are hardcoded module constants; nothing takes a CLI.
 
 Caveats: the run command in `README.md` (`-m src.workflows.starrseq_v2.build_starrseq_v2_library`) is stale, because the module now lives in `run/`. Modules import as `workflows.…`, so `src/` must be on the path.
 
@@ -92,9 +92,10 @@ Step 2: picks `TARGET=57_000` entries from `front_table.csv.gz` in three masked 
 - `select_candidates(front_table: pd.DataFrame, target: int, seed: int, target_best: int = 0, mutation_counts: Sequence[int] = BEST_MUTATION_COUNTS) -> pd.DataFrame` — the three stages in order. Raises if the target is below what the earlier stages took, if a ranking cannot supply its quota of new entries, or if the fronts cannot reach the target.
 
 ## selection/build_library.py  [script]
-Step 3: fetches the sequences of the selected entries and screens for BsaI. A run whose reference has a site loses all its entries. Survivors are numbered, deduplicated on the exact sequence and given reference pointers, then validated. Writes `library_table.csv`, `library_upload.ods` (appended to the autoTRAIT template via `odfpy`), `library.fasta` and `configs_to_copy.txt`.
+Step 3: fetches the sequences of the selected entries and screens for BsaI. A run whose reference has a site loses all its entries. Survivors are numbered, deduplicated on the exact sequence and given reference pointers, then validated. Writes `library_table.csv`, `library_upload.csv` (the five upload columns), `library.fasta` and `configs_to_copy.txt`.
 
-- `RUNS`, `CONFIGS`, `OUTPUT`, `TEMPLATE` — the run tree, the Evolution `configs/starrseq_v2`, the output dir and the `.ods` template.
+- `RUNS`, `CONFIGS`, `OUTPUT` — the run tree, the Evolution `configs/starrseq_v2` and the output dir.
+- `UPLOAD_COLUMNS` — the five upload-sheet column names.
 - `RESTRICTION_SITE` — regex for BsaI `GGTCTC` and its reverse complement `GAGACC`, which also matches `GGTCT`/`GAGAC` at the end of the sequence (the cloning suffix supplies the final C).
 - `GENOME_BY_SPECIES` — `{"arabidopsis": "TAIR10", "ntab": "Ntab-TN90"}`. `SEQUENCE_LENGTH=170`, `AUTHOR`, `CONFIG_PREFIX`, `CONFIG_FOLDERS`, `SORT_KEY`.
 - `load_json(path: str) -> Any` — reads one JSON file (duplicate of the one in `pool_front_table`).
@@ -110,8 +111,7 @@ Step 3: fetches the sequences of the selected entries and screens for BsaI. A ru
 - `add_reference_pointers(table: pd.DataFrame) -> pd.DataFrame` — adds `reference_id` and `reference_representative_id` per run.
 - `config_source_paths(config_names: Iterable[str], configs_root: str) -> Dict[str, str]` — config name → JSON path under `CONFIG_FOLDERS`, skipping the `bins/` copies. Raises if a config is missing.
 - `validate(table: pd.DataFrame, representatives: pd.DataFrame) -> None` — raises on wrong length, non-ACGT bases, non-unique numbers/ids/representative sequences, or dangling reference pointers.
-- `spreadsheet_row(values: List[str]) -> TableRow` — an odfpy row of string cells in the "Default" style.
-- `write_upload_sheet(representatives: pd.DataFrame, template_path: str, destination: str) -> None` — appends rows (n, id, reference id, sequence, config path) to the template's first sheet.
+- `write_upload_sheet(representatives: pd.DataFrame, destination: str) -> None` — writes the upload CSV (n, id, reference id, sequence, config path).
 - `write_fasta(representatives: pd.DataFrame, path: str) -> None` — one `>identifier` record per representative.
 - `build_library(selected: pd.DataFrame, front_table: pd.DataFrame, runs_root: str) -> Tuple[pd.DataFrame, Dict[str, int]]` — the whole step 3, from merge through reference pointers and `path_to_config`.
 
@@ -119,4 +119,4 @@ Step 3: fetches the sequences of the selected entries and screens for BsaI. A ru
 Independent cross-check of `pool_front_table` outputs against every raw source (folder names, parameters.json, fronts, stats, metadata, FASTAs). Prints the failed checks.
 
 ## selection/verify_build_library_untested.py  [one-off]
-Independent cross-check of `build_library` outputs (screen, numbering, dedup, reference pointers, FASTA and .ods) against the raw fronts.
+Independent cross-check of `build_library` outputs (screen, numbering, dedup, reference pointers, FASTA and upload CSV) against the raw fronts.

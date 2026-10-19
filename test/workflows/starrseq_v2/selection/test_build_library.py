@@ -6,14 +6,11 @@ import unittest
 from typing import Any, Dict, List
 
 import pandas as pd
-from odf.opendocument import OpenDocumentSpreadsheet, load
-from odf.table import Table, TableCell, TableRow
-from odf.text import P
 
 from workflows.starrseq_v2.selection.build_library import (
-    DATA_CELL_STYLE,
     SEQUENCE_LENGTH,
     SORT_KEY,
+    UPLOAD_COLUMNS,
     add_reference_pointers,
     assign_numbers,
     attach_sequences,
@@ -352,94 +349,28 @@ class TestAttachSequences(unittest.TestCase):
             self.assertEqual(list(result["sequence"]), [sequence_of("CCCC"), sequence_of("AAAA")])
 
 
-def minimal_template(path: str) -> None:
-    """A two-sheet spreadsheet standing in for the upload template."""
-    document = OpenDocumentSpreadsheet()
-    for name in ["phase_september", "Explainer"]:
-        sheet = Table(name=name)
-        row = TableRow()
-        for value in ["Number", "id", "reference", "product", "path_to_config"]:
-            cell = TableCell(valuetype="string")
-            cell.addElement(P(text=value))
-            row.addElement(cell)
-        sheet.addElement(row)
-        document.spreadsheet.addElement(sheet)
-    document.save(path)
-
-
-def sheet_rows(path: str, sheet_name: str) -> List[List[str]]:
-    """Read back the text of one sheet, for assertions."""
-    document = load(path)
-    for sheet in document.spreadsheet.getElementsByType(Table):
-        if sheet.getAttribute("name") != sheet_name:
-            continue
-        rows = []
-        for row in sheet.getElementsByType(TableRow):
-            rows.append([str(cell) for cell in row.getElementsByType(TableCell)])
-        return rows
-    raise AssertionError(f"no sheet {sheet_name}")
-
-
 class TestWriteUploadSheet(unittest.TestCase):
-    def test_appends_to_the_first_sheet_and_leaves_the_second_alone(self) -> None:
+    def test_writes_the_five_columns_in_order(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            template = os.path.join(directory, "template.ods")
-            destination = os.path.join(directory, "filled.ods")
-            minimal_template(template)
+            destination = os.path.join(directory, "upload.csv")
             representatives = pd.DataFrame([{
                 "identifier": "ID_ONE",
                 "reference_representative_id": "REF_ONE",
                 "sequence": sequence_of("ACGT"),
                 "path_to_config": "configs_gernot/config_a.json",
             }])
-            write_upload_sheet(representatives, template, destination)
+            write_upload_sheet(representatives, destination)
 
-            filled = sheet_rows(destination, "phase_september")
-            self.assertEqual(len(filled), 2)
-            self.assertEqual(filled[1][:3], ["1", "ID_ONE", "REF_ONE"])
-            self.assertEqual(filled[1][4], "configs_gernot/config_a.json")
-            self.assertEqual(sheet_rows(destination, "Explainer"), sheet_rows(template, "Explainer"))
-
-    def test_data_cells_override_the_column_default_style(self) -> None:
-        """The template's columns default to the bold grey header style; data must not inherit it."""
-        with tempfile.TemporaryDirectory() as directory:
-            template = os.path.join(directory, "template.ods")
-            destination = os.path.join(directory, "filled.ods")
-            minimal_template(template)
-            representatives = pd.DataFrame([{
-                "identifier": "ID_ONE",
-                "reference_representative_id": "REF_ONE",
-                "sequence": sequence_of("ACGT"),
-                "path_to_config": "configs_gernot/config_a.json",
-            }])
-            write_upload_sheet(representatives, template, destination)
-
-            sheet = load(destination).spreadsheet.getElementsByType(Table)[0]
-            rows = sheet.getElementsByType(TableRow)
-            header_styles = [c.getAttribute("stylename") for c in rows[0].getElementsByType(TableCell)]
-            data_styles = [c.getAttribute("stylename") for c in rows[1].getElementsByType(TableCell)]
-            self.assertEqual(header_styles, [None] * 5)
-            self.assertEqual(data_styles, [DATA_CELL_STYLE] * 5)
-
-    def test_the_template_file_is_not_modified(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            template = os.path.join(directory, "template.ods")
-            minimal_template(template)
-            before = open(template, "rb").read()
-            representatives = pd.DataFrame([{
-                "identifier": "ID_ONE",
-                "reference_representative_id": "REF_ONE",
-                "sequence": sequence_of("ACGT"),
-                "path_to_config": "configs_gernot/config_a.json",
-            }])
-            write_upload_sheet(representatives, template, os.path.join(directory, "filled.ods"))
-            self.assertEqual(open(template, "rb").read(), before)
+            written = pd.read_csv(destination, dtype=str)
+            self.assertEqual(list(written.columns), UPLOAD_COLUMNS)
+            self.assertEqual(
+                list(written.iloc[0]),
+                ["1", "ID_ONE", "REF_ONE", sequence_of("ACGT"), "configs_gernot/config_a.json"],
+            )
 
     def test_numbering_is_contiguous_over_the_representatives(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            template = os.path.join(directory, "template.ods")
-            destination = os.path.join(directory, "filled.ods")
-            minimal_template(template)
+            destination = os.path.join(directory, "upload.csv")
             representatives = pd.DataFrame([
                 {
                     "identifier": f"ID_{i}",
@@ -449,9 +380,8 @@ class TestWriteUploadSheet(unittest.TestCase):
                 }
                 for i in range(3)
             ])
-            write_upload_sheet(representatives, template, destination)
-            rows = sheet_rows(destination, "phase_september")
-            self.assertEqual([row[0] for row in rows[1:]], ["1", "2", "3"])
+            write_upload_sheet(representatives, destination)
+            self.assertEqual(list(pd.read_csv(destination)["Number"]), [1, 2, 3])
 
 
 class TestWriteFasta(unittest.TestCase):
