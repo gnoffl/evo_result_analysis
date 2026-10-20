@@ -616,7 +616,8 @@ independently, then compares them against the written table and sheet.
 
 ## Step 4 — pooled cleaning of all contributors' sheets
 
-`qa/check_upload_sheets.py <configs_root> <out_dir> <sheet.csv>...`. Every
+`qa/check_upload_sheets.py <configs_root> <out_dir> <sheet>...`. Sheets are
+.csv or .ods (first sheet read). Every
 contributor delivers a sheet in the five template columns, with identifiers in
 `reference`. All sheets are pooled first, so the screen and the deduplication
 run once over everything that is ordered.

@@ -79,6 +79,15 @@ class TestLoadSheets(SheetTestCase):
         self.assertEqual(list(table["Number"]), [1, 2, 3])
         self.assertEqual(table["product"].iloc[1], padded("AATT"))
 
+    def test_ods_is_read_from_its_first_sheet(self) -> None:
+        path = os.path.join(self.directory, "sheet.ods")
+        with pd.ExcelWriter(path, engine="odf") as writer:
+            pd.DataFrame([row("ref", "ref", padded("AAAA"))])[UPLOAD_COLUMNS].to_excel(writer, sheet_name="upload", index=False)
+            pd.DataFrame({"id": ["ignored"]}).to_excel(writer, sheet_name="notes", index=False)
+        table = load_sheets([path])
+        self.assertEqual(list(table["id"]), ["ref"])
+        self.assertEqual(list(table["source_file"]), ["sheet"])
+
     def test_wrong_columns_rejected(self) -> None:
         path = os.path.join(self.directory, "bad.csv")
         pd.DataFrame({"id": ["x"]}).to_csv(path, index=False)

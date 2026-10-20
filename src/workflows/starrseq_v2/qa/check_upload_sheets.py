@@ -35,6 +35,13 @@ def has_restriction_site(sequence: str) -> bool:
     return RESTRICTION_SITE.search(sequence) is not None
 
 
+def read_sheet(path: str) -> pd.DataFrame:
+    """Read a .csv, or the first sheet of an .ods, as strings with NA values turned into ""."""
+    if path.endswith(".ods"):
+        return pd.read_excel(path, sheet_name=0, engine="odf", dtype=str).fillna("")
+    return pd.read_csv(path, dtype=str).fillna("")
+
+
 def load_sheets(paths: List[str]) -> pd.DataFrame:
     """Concatenate the sheets, record each row's `source_file` and renumber `Number` 1..N.
 
@@ -43,7 +50,7 @@ def load_sheets(paths: List[str]) -> pd.DataFrame:
     """
     sheets = []
     for path in paths:
-        sheet = pd.read_csv(path, dtype=str).fillna("")
+        sheet = read_sheet(path)
         if list(sheet.columns) != UPLOAD_COLUMNS:
             raise ValueError(f"{path} has columns {list(sheet.columns)}")
         sheets.append(sheet.assign(source_file=os.path.splitext(os.path.basename(path))[0]))
