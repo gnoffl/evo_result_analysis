@@ -627,7 +627,7 @@ run once over everything that is ordered.
 2. **Row-level drops.** Nothing aborts the run; a failing row is dropped and
    every reason it fails is recorded, `|`-joined, in `drop_reasons`:
    `empty_id` and `empty_reference` (empty, whitespace, or any pandas default NA value),
-   `duplicate_id` (every row carrying that id), `not_acgt`, `wrong_length`
+   `whitespace_in_id`, `whitespace_in_reference`, `duplicate_id` (every row carrying that id), `not_acgt`, `wrong_length`
    (≠ 170), `restriction_site`, `reference_missing` (the reference id is in no
    sheet), `unresolved_config` (`path_to_config` is not a file under
    `configs_root`).

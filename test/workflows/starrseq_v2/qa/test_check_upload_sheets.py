@@ -128,6 +128,24 @@ class TestDropReasons(SheetTestCase):
         result = self.cleaned([row("ref", "ref", padded("AAAA")), row(" ", "ref", padded("CCCC"))])
         self.assertIn("empty_id", result["drop_reasons"].iloc[1].split("|"))
 
+    def test_whitespace_in_id_and_in_references_to_it(self) -> None:
+        result = self.cleaned([
+            row("ref", "ref", padded("AAAA")),
+            row("bad\tid", "bad\tid", padded("CCCC")),
+            row("variant", "bad\tid", padded("GGGG")),
+            row("trailing ", "ref", padded("TTTT")),
+        ])
+        self.assertEqual(list(result["drop_reasons"]), [
+            "",
+            "whitespace_in_id|whitespace_in_reference",
+            "whitespace_in_reference",
+            "whitespace_in_id",
+        ])
+
+    def test_whitespace_in_reference_is_named_explicitly(self) -> None:
+        result = self.cleaned([row("ref", "ref", padded("AAAA")), row("variant", "ref ", padded("CCCC"))])
+        self.assertIn("whitespace_in_reference", result["drop_reasons"].iloc[1].split("|"))
+
     def test_na_values_count_as_blank(self) -> None:
         result = self.cleaned([row("ref", "ref", padded("AAAA")), row("N/A", "ref", padded("CCCC"))])
         self.assertEqual(list(result["drop_reasons"]), ["", "empty_id"])

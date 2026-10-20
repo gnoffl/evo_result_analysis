@@ -71,6 +71,8 @@ def own_drop_reasons(table: pd.DataFrame, configs_root: str) -> pd.DataFrame:
     return pd.DataFrame({
         "empty_id": is_blank(table, "id"),
         "empty_reference": is_blank(table, "reference"),
+        "whitespace_in_id": table["id"].str.contains(r"\s"),
+        "whitespace_in_reference": table["reference"].str.contains(r"\s"),
         "duplicate_id": table["id"].duplicated(keep=False),
         "not_acgt": ~table["product"].str.fullmatch("[ACGT]+"),
         "wrong_length": table["product"].str.len() != SEQUENCE_LENGTH,

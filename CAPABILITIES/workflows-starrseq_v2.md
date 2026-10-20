@@ -117,7 +117,7 @@ Step 4: cleans the pooled upload sheets of all contributors, .csv or .ods (CLI: 
 - `read_sheet(path: str) -> pd.DataFrame` — a .csv, or the first sheet of an .ods (odf engine), as str with NA → "".
 - `load_sheets(paths: List[str]) -> pd.DataFrame` — concatenates sheets (via `read_sheet`) (all as str, default NA values → ""), adds `source_file`, upper-cases `product`, rewrites `Number` to 1..N over the pooled rows. Raises unless the columns equal `UPLOAD_COLUMNS`.
 - `is_blank(table: pd.DataFrame, column: str) -> pd.Series` — empty or whitespace; `load_sheets` has already turned pandas' default NA values into empty strings.
-- `own_drop_reasons(table: pd.DataFrame, configs_root: str) -> pd.DataFrame` — one boolean column per row-level reason: `empty_id`, `empty_reference`, `duplicate_id` (every copy), `not_acgt`, `wrong_length`, `restriction_site`, `reference_missing`, `unresolved_config`.
+- `own_drop_reasons(table: pd.DataFrame, configs_root: str) -> pd.DataFrame` — one boolean column per row-level reason: `empty_id`, `empty_reference`, `whitespace_in_id`, `whitespace_in_reference`, `duplicate_id` (every copy), `not_acgt`, `wrong_length`, `restriction_site`, `reference_missing`, `unresolved_config`.
 - `reference_dropped(table: pd.DataFrame, dropped: pd.Series) -> pd.Series` — rows not dropped themselves whose reference chain reaches a dropped row (iterated to a fixpoint).
 - `drop_reason_flags(table: pd.DataFrame, configs_root: str) -> pd.DataFrame` — `own_drop_reasons` plus the `reference_dropped` column.
 - `join_reasons(flags: pd.DataFrame) -> pd.Series` — `|`-joined reason names per row, empty for kept rows.
