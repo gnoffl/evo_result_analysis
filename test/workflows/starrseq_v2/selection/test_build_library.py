@@ -7,10 +7,8 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
+from workflows.starrseq_v2.qa.check_upload_sheets import SEQUENCE_LENGTH, UPLOAD_COLUMNS
 from workflows.starrseq_v2.selection.build_library import (
-    SEQUENCE_LENGTH,
-    SORT_KEY,
-    UPLOAD_COLUMNS,
     add_reference_pointers,
     assign_numbers,
     attach_sequences,
@@ -18,12 +16,7 @@ from workflows.starrseq_v2.selection.build_library import (
     build_library,
     check_references_selected,
     config_source_paths,
-    deduplicate,
-    drop_restriction_sites,
-    has_restriction_site,
     parse_record_name,
-    validate,
-    write_fasta,
     write_upload_sheet,
 )
 
@@ -137,57 +130,6 @@ class TestBuildIdentifier(unittest.TestCase):
         self.assertEqual(len(identifier.split("_")), 5)
 
 
-class TestHasRestrictionSite(unittest.TestCase):
-    def test_clean_sequence(self) -> None:
-        self.assertFalse(has_restriction_site("ACGTACGTACGT"))
-
-    def test_internal_site_and_its_reverse_complement(self) -> None:
-        self.assertTrue(has_restriction_site("ACGGTCTCACG"))
-        self.assertTrue(has_restriction_site("ACGAGACCACG"))
-
-    def test_site_completed_by_the_cloning_suffix_at_the_end(self) -> None:
-        """Only the trailing C is missing, so the flank completes the site."""
-        self.assertTrue(has_restriction_site("ACGTGGTCT"))
-        self.assertTrue(has_restriction_site("ACGTGAGAC"))
-
-    def test_partial_site_in_the_middle_is_not_a_hit(self) -> None:
-        self.assertFalse(has_restriction_site("ACGTGGTCTAAA"))
-        self.assertFalse(has_restriction_site("ACGTGAGACAAA"))
-
-
-class TestDropRestrictionSites(unittest.TestCase):
-    def test_entry_with_its_own_site_is_dropped_alone(self) -> None:
-        table = frame([
-            entry(front_index=0, sequence=sequence_of("ACGT")),
-            entry(front_index=1, is_reference=False, sequence=sequence_of("GGTCTC")),
-            entry(front_index=2, is_reference=False, sequence=sequence_of("TTTT")),
-        ])
-        survivors, dropped = drop_restriction_sites(table)
-        self.assertEqual(sorted(survivors["front_index"]), [0, 2])
-        self.assertEqual(dropped["entries_dropped_for_their_own_site"], 1)
-        self.assertEqual(dropped["runs_without_an_orderable_reference"], 0)
-
-    def test_run_whose_reference_carries_a_site_loses_every_entry(self) -> None:
-        table = frame([
-            entry(run_dir="bad", front_index=0, sequence=sequence_of("GGTCTC")),
-            entry(run_dir="bad", front_index=1, is_reference=False, sequence=sequence_of("TTTT")),
-            entry(run_dir="good", front_index=0, sequence=sequence_of("ACGT")),
-        ])
-        survivors, dropped = drop_restriction_sites(table)
-        self.assertEqual(list(survivors["run_dir"]), ["good"])
-        self.assertEqual(dropped["runs_without_an_orderable_reference"], 1)
-        self.assertEqual(dropped["entries_lost_with_their_reference"], 2)
-
-    def test_a_clean_variant_of_an_unusable_reference_is_still_dropped(self) -> None:
-        """A mutation may destroy the site, but the baseline is gone either way."""
-        table = frame([
-            entry(run_dir="bad", front_index=0, sequence=sequence_of("GGTCTC")),
-            entry(run_dir="bad", front_index=1, is_reference=False, sequence=sequence_of("AAAA")),
-        ])
-        survivors, _ = drop_restriction_sites(table)
-        self.assertTrue(survivors.empty)
-
-
 class TestCheckReferencesSelected(unittest.TestCase):
     def test_passes_with_one_reference_per_run(self) -> None:
         check_references_selected(frame([
@@ -231,81 +173,21 @@ class TestAssignNumbers(unittest.TestCase):
         self.assertEqual(list(first["identifier"]), list(second["identifier"]))
 
 
-class TestDeduplicate(unittest.TestCase):
-    def test_lowest_number_represents_the_group(self) -> None:
-        shared = sequence_of("TTTT")
-        table = assign_numbers(frame([
-            entry(front_index=0, sequence=shared),
-            entry(front_index=1, is_reference=False, sequence=sequence_of("GGGG")),
-            entry(front_index=2, is_reference=False, sequence=shared),
-        ]))
-        result = deduplicate(table)
-        self.assertEqual(list(result["representative_number"]), [1, 2, 1])
-        self.assertEqual(list(result["is_representative"]), [True, True, False])
-        self.assertEqual(result["representative_id"].iloc[2], result["identifier"].iloc[0])
-
-    def test_every_entry_keeps_its_own_number(self) -> None:
-        """Numbering before deduplication is what keeps duplicate entries addressable."""
-        shared = sequence_of("TTTT")
-        table = assign_numbers(frame([
-            entry(front_index=0, sequence=shared),
-            entry(front_index=1, is_reference=False, sequence=shared),
-        ]))
-        result = deduplicate(table)
-        self.assertEqual(list(result["sequence_number"]), [1, 2])
-        self.assertEqual(result["identifier"].nunique(), 2)
-
-
 class TestReferencePointers(unittest.TestCase):
-    def test_pointer_resolves_through_deduplication(self) -> None:
-        shared = sequence_of("TTTT")
-        table = deduplicate(assign_numbers(frame([
-            entry(run_dir="a", front_index=0, sequence=shared),
-            entry(run_dir="b", front_index=0, sequence=shared),
-            entry(run_dir="b", front_index=1, is_reference=False, sequence=sequence_of("GGGG")),
-        ])))
+    def test_variant_points_at_its_own_runs_reference(self) -> None:
+        table = assign_numbers(frame([
+            entry(run_dir="a", front_index=0),
+            entry(run_dir="b", front_index=0),
+            entry(run_dir="b", front_index=1, is_reference=False),
+        ]))
         result = add_reference_pointers(table)
-        reference_a = result[result["run_dir"] == "a"].iloc[0]
         reference_b = result[(result["run_dir"] == "b") & (result["front_index"] == 0)].iloc[0]
         variant = result[result["front_index"] == 1].iloc[0]
-        # run b's own reference is a duplicate of run a's, so the representative pointer leads to run a's entry
         self.assertEqual(variant["reference_id"], reference_b["identifier"])
-        self.assertEqual(variant["reference_representative_id"], reference_a["identifier"])
 
     def test_reference_points_at_itself(self) -> None:
-        table = deduplicate(assign_numbers(frame([entry(run_dir="a", front_index=0)])))
-        result = add_reference_pointers(table)
+        result = add_reference_pointers(assign_numbers(frame([entry(run_dir="a", front_index=0)])))
         self.assertEqual(result["reference_id"].iloc[0], result["identifier"].iloc[0])
-
-
-class TestValidate(unittest.TestCase):
-    def _complete(self, rows: List[Dict[str, Any]]) -> pd.DataFrame:
-        return add_reference_pointers(deduplicate(assign_numbers(frame(rows))))
-
-    def test_accepts_a_consistent_table(self) -> None:
-        table = self._complete([
-            entry(front_index=0),
-            entry(front_index=1, is_reference=False, sequence=sequence_of("GGGG")),
-        ])
-        validate(table, table.loc[table["is_representative"]])
-
-    def test_rejects_a_wrong_length(self) -> None:
-        table = self._complete([entry()])
-        table["sequence"] = "ACGT"
-        with self.assertRaises(ValueError):
-            validate(table, table)
-
-    def test_rejects_a_non_acgt_base(self) -> None:
-        table = self._complete([entry()])
-        table["sequence"] = "N" + sequence_of("ACGT")[1:]
-        with self.assertRaises(ValueError):
-            validate(table, table)
-
-    def test_rejects_a_dangling_reference_pointer(self) -> None:
-        table = self._complete([entry()])
-        table["reference_representative_id"] = "not_in_the_sheet"
-        with self.assertRaises(ValueError):
-            validate(table, table.loc[table["is_representative"]])
 
 
 class TestConfigSourcePaths(unittest.TestCase):
@@ -350,52 +232,27 @@ class TestAttachSequences(unittest.TestCase):
 
 
 class TestWriteUploadSheet(unittest.TestCase):
-    def test_writes_the_five_columns_in_order(self) -> None:
+    def test_writes_every_entry_as_the_five_columns_in_order(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             destination = os.path.join(directory, "upload.csv")
-            representatives = pd.DataFrame([{
-                "identifier": "ID_ONE",
-                "reference_representative_id": "REF_ONE",
-                "sequence": sequence_of("ACGT"),
-                "path_to_config": "configs_gernot/config_a.json",
-            }])
-            write_upload_sheet(representatives, destination)
+            table = pd.DataFrame([
+                {
+                    "sequence_number": number,
+                    "identifier": f"ID_{number}",
+                    "reference_id": "ID_1",
+                    "sequence": sequence_of("ACGT"),
+                    "path_to_config": "configs_gernot/config_a.json",
+                }
+                for number in [1, 2]
+            ])
+            write_upload_sheet(table, destination)
 
             written = pd.read_csv(destination, dtype=str)
             self.assertEqual(list(written.columns), UPLOAD_COLUMNS)
             self.assertEqual(
-                list(written.iloc[0]),
-                ["1", "ID_ONE", "REF_ONE", sequence_of("ACGT"), "configs_gernot/config_a.json"],
+                list(written.iloc[1]),
+                ["2", "ID_2", "ID_1", sequence_of("ACGT"), "configs_gernot/config_a.json"],
             )
-
-    def test_numbering_is_contiguous_over_the_representatives(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            destination = os.path.join(directory, "upload.csv")
-            representatives = pd.DataFrame([
-                {
-                    "identifier": f"ID_{i}",
-                    "reference_representative_id": "REF",
-                    "sequence": sequence_of("ACGT"),
-                    "path_to_config": "configs_gernot/config_a.json",
-                }
-                for i in range(3)
-            ])
-            write_upload_sheet(representatives, destination)
-            self.assertEqual(list(pd.read_csv(destination)["Number"]), [1, 2, 3])
-
-
-class TestWriteFasta(unittest.TestCase):
-    def test_one_record_per_representative(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "library.fasta")
-            write_fasta(pd.DataFrame([
-                {"identifier": "ID_ONE", "sequence": sequence_of("AAAA")},
-                {"identifier": "ID_TWO", "sequence": sequence_of("CCCC")},
-            ]), path)
-            lines = open(path).read().splitlines()
-            self.assertEqual(lines[0], ">ID_ONE")
-            self.assertEqual(lines[1], sequence_of("AAAA"))
-            self.assertEqual(lines[2], ">ID_TWO")
 
 
 class TestBuildLibraryEndToEnd(unittest.TestCase):
@@ -430,34 +287,19 @@ class TestBuildLibraryEndToEnd(unittest.TestCase):
         front_table = table.drop(columns=["selection_reason"])
         return selected, front_table
 
-    def test_pipeline(self) -> None:
+    def test_every_entry_is_kept_numbered_and_pointed_at_its_reference(self) -> None:
+        """Screening and deduplication happen in the pooled QA, so nothing is dropped here."""
         with tempfile.TemporaryDirectory() as runs_root:
             self._tree(runs_root)
             selected, front_table = self._inputs()
-            table, dropped = build_library(selected, front_table, runs_root)
+            table = build_library(selected, front_table, runs_root)
 
-            self.assertEqual(dropped["runs_without_an_orderable_reference"], 1)
-            self.assertEqual(dropped["entries_lost_with_their_reference"], 2)
-            self.assertEqual(sorted(table["run_dir"].unique()), ["run_good", "run_shared"])
-
-            # the two runs share their reference sequence, so four entries become three oligos
-            self.assertEqual(len(table), 4)
-            representatives = table.loc[table["is_representative"]]
-            self.assertEqual(len(representatives), 3)
-            validate(table, representatives)
-
+            self.assertEqual(len(table), 6)
+            self.assertEqual(list(table["sequence_number"]), [1, 2, 3, 4, 5, 6])
+            self.assertEqual(table["identifier"].nunique(), 6)
             self.assertTrue((table["path_to_config"] == "configs_gernot/config_a.json").all())
-            self.assertEqual(list(table["sequence_number"]), [1, 2, 3, 4])
-
-    def test_shared_reference_collapses_but_both_entries_survive(self) -> None:
-        with tempfile.TemporaryDirectory() as runs_root:
-            self._tree(runs_root)
-            selected, front_table = self._inputs()
-            table, _ = build_library(selected, front_table, runs_root)
-            references = table.loc[table["is_reference"]]
-            self.assertEqual(len(references), 2)
-            self.assertEqual(references["representative_id"].nunique(), 1)
-            self.assertEqual(references["identifier"].nunique(), 2)
+            references = table.loc[table["is_reference"]].set_index("run_dir")["identifier"]
+            self.assertEqual(list(table["reference_id"]), list(table["run_dir"].map(references)))
 
 
 if __name__ == "__main__":
