@@ -36,7 +36,7 @@ genuinely reusable (not workflow glue). Private `_helpers` are not indexed.
 | workflows/paper_plots | Publication style module + main/supplementary figure composition (ax-injected panels) | [workflows-paper_plots.md](workflows-paper_plots.md) |
 | workflows/evo_alg_pooled_plots | Cross-run analyses: TF comparison heatmaps, runtime benchmarks, natural vs unconstrained, example-gene fronts | [workflows-evo_alg_pooled_plots.md](workflows-evo_alg_pooled_plots.md) |
 | workflows/overlap_analysis | STARR-seq × deepCRE agreement (fragment → 3020 bp window, correlation by position/model/species) | [workflows-overlap_analysis.md](workflows-overlap_analysis.md) |
-| workflows/starrseq_v2 | STARR-seq v2: gene/window selection for runs, then front pooling → candidate selection → oligo library | [workflows-starrseq_v2.md](workflows-starrseq_v2.md) |
+| workflows/starrseq_v2 | STARR-seq v2: gene/window selection for runs, then front pooling → candidate selection → oligo library → QA of the pooled upload sheets | [workflows-starrseq_v2.md](workflows-starrseq_v2.md) |
 | workflows/mutation_distribution_analysis | Null model: random baseline sequences with matched SNP counts (conditional-Poisson sampler), scored by deepCRE | [workflows-mutation_distribution_analysis.md](workflows-mutation_distribution_analysis.md) |
 | workflows/mutation_distance_analysis | Inter-mutation distances vs random null (KS, Wasserstein) | [workflows-mutation_distance_analysis.md](workflows-mutation_distance_analysis.md) |
 | workflows/adversarial | Rescore fronts with sibling MSR models (adversarial check) + plots | [workflows-adversarial.md](workflows-adversarial.md) |
@@ -68,7 +68,7 @@ Paths are relative to `src/`. ⚠ marks a caveat explained in the detail file.
 - Sliding windows / N-padding detection: `deepcis_scanner.slide_windows`, `find_padding_region`
 - Assign position to promoter/UTR/... region: `evo_alg_pooled_plots/natural_unconstrained_comparison/region_mutation_breakdown.assign_region`, `REGIONS`
 - Reverse complement, Hamming distance: `overlap_analysis/_common.reverse_complement`, `compare_sequences`
-- Restriction sites: `workflows/candidate_selection.get_restriction_regexes`, `get_sequences_without_restriction_sites` (generic); `starrseq_v2/selection/build_library.has_restriction_site` (BsaI incl. cloning suffix)
+- Restriction sites: `workflows/candidate_selection.get_restriction_regexes`, `get_sequences_without_restriction_sites` (generic); `starrseq_v2/qa/check_upload_sheets.has_restriction_site` (BsaI incl. cloning suffix)
 - Extract gene frames from a genome: `starrseq_v2/run/build_starrseq_v2_library.extract_genes` (wraps `evolution.extract_sequences.find_genes` / `extract_string`), `splice`
 - VCF positions: `workflows/mutation_distribution_analysis/natural_variation_in_window.read_vcf_positions`
 - FASTA writing: `analysis/blamm/blamm_tfbs_counts.write_fasta` (list of tuples); reading: use `pyfaidx.Fasta`
@@ -116,7 +116,7 @@ Paths are relative to `src/`. ⚠ marks a caveat explained in the detail file.
 ### STARR-seq
 - Fragment → deepCRE window mapping and deltas: `overlap_analysis/_common.map_starrseq_to_deepcre`, `merge_with_starrseq_results`, `calculate_deltas`
 - Enrichment tables: `overlap_analysis/starrseq_deepcre_correlation_WRKY.prepare_wrky_enrichment_df`, `starrseq_deepcre_correlation_bHLH.prepare_bhlh_enrichment_df`
-- v2 library pipeline: `starrseq_v2/selection/pool_front_table` → `select_candidates.select_candidates` → `build_library` (`deduplicate`, `write_upload_sheet`)
+- v2 library pipeline: `starrseq_v2/selection/pool_front_table` → `select_candidates.select_candidates` → `build_library` (`write_upload_sheet`) → `qa/check_upload_sheets` (screen, cascade, dedup, FASTA)
 
 ### Provenance and misc
 - Checksums, git commit, input record: `workflows/adversarial/reevaluate.compute_file_checksum`, `get_analysis_commit`, `write_input_record`; `analysis/blamm/blamm_tfbs_counts.collect_provenance`

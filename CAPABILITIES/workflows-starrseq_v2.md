@@ -92,31 +92,42 @@ Step 2: picks `TARGET=57_000` entries from `front_table.csv.gz` in three masked 
 - `select_candidates(front_table: pd.DataFrame, target: int, seed: int, target_best: int = 0, mutation_counts: Sequence[int] = BEST_MUTATION_COUNTS) -> pd.DataFrame` — the three stages in order. Raises if the target is below what the earlier stages took, if a ranking cannot supply its quota of new entries, or if the fronts cannot reach the target.
 
 ## selection/build_library.py  [script]
-Step 3: fetches the sequences of the selected entries and screens for BsaI. A run whose reference has a site loses all its entries. Survivors are numbered, deduplicated on the exact sequence and given reference pointers, then validated. Writes `library_table.csv`, `library_upload.csv` (the five upload columns), `library.fasta` and `configs_to_copy.txt`.
+Step 3: fetches the sequences of the selected entries, numbers them and gives them reference pointers. Nothing is screened or deduplicated here; that happens in `qa/check_upload_sheets.py`. Writes `library_table.csv`, `library_upload.csv` (the five upload columns, one row per entry) and `configs_to_copy.txt`.
 
 - `RUNS`, `CONFIGS`, `OUTPUT` — the run tree, the Evolution `configs/starrseq_v2` and the output dir.
-- `UPLOAD_COLUMNS` — the five upload-sheet column names.
-- `RESTRICTION_SITE` — regex for BsaI `GGTCTC` and its reverse complement `GAGACC`, which also matches `GGTCT`/`GAGAC` at the end of the sequence (the cloning suffix supplies the final C).
-- `GENOME_BY_SPECIES` — `{"arabidopsis": "TAIR10", "ntab": "Ntab-TN90"}`. `SEQUENCE_LENGTH=170`, `AUTHOR`, `CONFIG_PREFIX`, `CONFIG_FOLDERS`, `SORT_KEY`.
+- `GENOME_BY_SPECIES` — `{"arabidopsis": "TAIR10", "ntab": "Ntab-TN90"}`. `AUTHOR`, `CONFIG_PREFIX`, `CONFIG_FOLDERS`, `SORT_KEY`.
 - `load_json(path: str) -> Any` — reads one JSON file (duplicate of the one in `pool_front_table`).
 - `flatten_field(value: str) -> str` — `_`→`-` and `|`→`+`, for use in identifier fields.
 - `parse_record_name(record_name: str, gene_id: str) -> Tuple[str, str]` — `(chromosome, "start-end" span)` from `<chrom>_<gene>_gene:<s>-<e>[_off_<n>]`. It splits on the known gene id, so it is safe with `_` in chromosome names. A reversed span means the minus strand.
 - `build_identifier(entry: Dict[str, Any], serial: int) -> str` — the five-field upload identifier `<genome>_<chrom>:<span>_<gene.config.fNN.mNN.reason>_GS_<serial:06d>`.
 - `attach_sequences(selected: pd.DataFrame, runs_root: str) -> pd.DataFrame` — adds the upper-cased `sequence` by reading each `pareto_front.json` once and indexing by `front_index`.
 - `check_references_selected(table: pd.DataFrame) -> None` — raises unless every run has exactly one `is_reference` row.
-- `has_restriction_site(sequence: str) -> bool` — whether `RESTRICTION_SITE` matches.
-- `drop_restriction_sites(table: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, int]]` — drops site-carrying entries and whole runs whose reference carries a site. Returns the drop counts.
 - `assign_numbers(table: pd.DataFrame) -> pd.DataFrame` — stable sort by `SORT_KEY`, `sequence_number` from 1, and `identifier`.
-- `deduplicate(table: pd.DataFrame) -> pd.DataFrame` — adds `representative_number`, `representative_id` and `is_representative` (the lowest number per distinct sequence).
-- `add_reference_pointers(table: pd.DataFrame) -> pd.DataFrame` — adds `reference_id` and `reference_representative_id` per run.
+- `add_reference_pointers(table: pd.DataFrame) -> pd.DataFrame` — adds `reference_id`, the identifier of the run's reference.
 - `config_source_paths(config_names: Iterable[str], configs_root: str) -> Dict[str, str]` — config name → JSON path under `CONFIG_FOLDERS`, skipping the `bins/` copies. Raises if a config is missing.
-- `validate(table: pd.DataFrame, representatives: pd.DataFrame) -> None` — raises on wrong length, non-ACGT bases, non-unique numbers/ids/representative sequences, or dangling reference pointers.
-- `write_upload_sheet(representatives: pd.DataFrame, destination: str) -> None` — writes the upload CSV (n, id, reference id, sequence, config path).
-- `write_fasta(representatives: pd.DataFrame, path: str) -> None` — one `>identifier` record per representative.
-- `build_library(selected: pd.DataFrame, front_table: pd.DataFrame, runs_root: str) -> Tuple[pd.DataFrame, Dict[str, int]]` — the whole step 3, from merge through reference pointers and `path_to_config`.
+- `write_upload_sheet(table: pd.DataFrame, destination: str) -> None` — writes every entry as an upload CSV row (sequence number, id, reference id, sequence, config path).
+- `build_library(selected: pd.DataFrame, front_table: pd.DataFrame, runs_root: str) -> pd.DataFrame` — the whole step 3, from merge through reference pointers and `path_to_config`.
+
+## qa/check_upload_sheets.py  [script]
+Step 4: cleans the pooled upload sheets of all contributors (CLI: `<configs_root> <out_dir> <sheet.csv>...`). Drops failing rows with their reasons, cascades the drops along `reference`, and deduplicates the survivors on `product`. Duplicates stay in the table but are not ordered. Writes `library_full_table.csv` (`FULL_TABLE_COLUMNS`), `removed_<sheet>.csv` per input sheet and `library.fasta` (representatives only). Prints drop counts per sheet and the oligo count against `BUDGET`.
+
+- `UPLOAD_COLUMNS` — the five template column names. `FULL_TABLE_COLUMNS` — those plus `source_file`, `drop_reasons`, `representative_id`.
+- `SEQUENCE_LENGTH=170`. `RESTRICTION_SITE` — regex for BsaI `GGTCTC` and its reverse complement `GAGACC`, which also matches `GGTCT`/`GAGAC` at the end of the sequence (the cloning suffix supplies the final C). `BUDGET=100_000` (only reported).
+- `has_restriction_site(sequence: str) -> bool` — whether `RESTRICTION_SITE` matches.
+- `load_sheets(paths: List[str]) -> pd.DataFrame` — concatenates sheets (all as str, default NA values → ""), adds `source_file`, upper-cases `product`, rewrites `Number` to 1..N over the pooled rows. Raises unless the columns equal `UPLOAD_COLUMNS`.
+- `is_blank(table: pd.DataFrame, column: str) -> pd.Series` — empty or whitespace; `load_sheets` has already turned pandas' default NA values into empty strings.
+- `own_drop_reasons(table: pd.DataFrame, configs_root: str) -> pd.DataFrame` — one boolean column per row-level reason: `empty_id`, `empty_reference`, `duplicate_id` (every copy), `not_acgt`, `wrong_length`, `restriction_site`, `reference_missing`, `unresolved_config`.
+- `reference_dropped(table: pd.DataFrame, dropped: pd.Series) -> pd.Series` — rows not dropped themselves whose reference chain reaches a dropped row (iterated to a fixpoint).
+- `drop_reason_flags(table: pd.DataFrame, configs_root: str) -> pd.DataFrame` — `own_drop_reasons` plus the `reference_dropped` column.
+- `join_reasons(flags: pd.DataFrame) -> pd.Series` — `|`-joined reason names per row, empty for kept rows.
+- `assign_representatives(table: pd.DataFrame, kept: pd.Series) -> pd.Series` — id of the lowest-`Number` kept row with the same product, empty for dropped rows.
+- `validate(full_table: pd.DataFrame) -> None` — raises unless `Number` is 1..N, representative sequences are unique, and every kept row's representative and reference are kept.
+- `clean(table: pd.DataFrame, flags: pd.DataFrame) -> pd.DataFrame` — adds `drop_reasons` and `representative_id`, then validates.
+- `write_fasta(table: pd.DataFrame, path: str) -> None` — one `>id` record per row.
+- `write_outputs(full_table: pd.DataFrame, out_dir: str) -> None` — the full table, one removed-rows CSV per source file (empty if nothing was removed), and the representatives' FASTA.
 
 ## selection/verify_pool_front_table_untested.py  [one-off]
 Independent cross-check of `pool_front_table` outputs against every raw source (folder names, parameters.json, fronts, stats, metadata, FASTAs). Prints the failed checks.
 
 ## selection/verify_build_library_untested.py  [one-off]
-Independent cross-check of `build_library` outputs (screen, numbering, dedup, reference pointers, FASTA and upload CSV) against the raw fronts.
+Independent cross-check of `build_library` outputs (all selected entries written, numbering, reference pointers, upload CSV) against the raw fronts.

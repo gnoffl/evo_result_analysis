@@ -1,14 +1,13 @@
 """Cross-check the built library against the raw fronts, independently of build_library.
 
-Re-reads every selected entry from its pareto_front.json and re-derives the screen, the
-numbering, the deduplication and the reference pointers, then compares them against the
-written table, FASTA and upload sheet. Prints every failed check. Run after build_library.
+Re-reads every selected entry from its pareto_front.json and re-derives the numbering and
+the reference pointers, then compares them against the written table and upload sheet.
+Prints every failed check. Run after build_library.
 """
 import csv
 import json
 import os
 import re
-from collections import defaultdict
 from typing import Dict, List
 
 import pandas as pd
@@ -36,20 +35,6 @@ def raw_sequences(runs_root: str, run_dirs: List[str]) -> Dict[str, List[str]]:
     return fronts
 
 
-def read_fasta(path: str) -> Dict[str, str]:
-    """Identifier to sequence."""
-    records: Dict[str, str] = {}
-    name = None
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith(">"):
-                name = line[1:]
-            elif name is not None:
-                records[name] = line
-    return records
-
-
 def check_sequences_against_the_fronts(table: pd.DataFrame, fronts: Dict[str, List[str]]) -> None:
     """Every written sequence must be the raw front entry it claims to come from."""
     wrong = sum(
@@ -57,33 +42,22 @@ def check_sequences_against_the_fronts(table: pd.DataFrame, fronts: Dict[str, Li
         for row in table.to_dict("records")
     )
     check(wrong == 0, f"{wrong} sequences do not match their raw front entry")
-    lengths = {len(sequence) for sequence in table["sequence"]}
-    check(lengths == {bl.SEQUENCE_LENGTH}, f"sequence lengths present: {sorted(lengths)}")
 
 
-def check_the_screen(selected: pd.DataFrame, fronts: Dict[str, List[str]], table: pd.DataFrame) -> None:
-    """Re-derive which entries the screen should have kept, from the raw sequences."""
-    carries = {
-        (row["run_dir"], row["front_index"]): bl.has_restriction_site(
-            fronts[row["run_dir"]][row["front_index"]]
-        )
-        for row in selected.to_dict("records")
-    }
+def check_every_selected_entry_written(selected: pd.DataFrame, table: pd.DataFrame) -> None:
+    """Nothing is dropped before the pooled QA, so the table must hold exactly the selected keys."""
     references = {
-        row["run_dir"]: row["front_index"]
-        for row in selected.to_dict("records")
+        row["run_dir"] for row in selected.to_dict("records")
         if row["selection_reason"].startswith("reference")
     }
     check(
         len(references) == selected["run_dir"].nunique(),
         "not every selected run contributes a reference",
     )
-    unusable = {run_dir for run_dir, index in references.items() if carries[(run_dir, index)]}
-    expected = {key for key, hit in carries.items() if not hit and key[0] not in unusable}
+    expected = set(zip(selected["run_dir"], selected["front_index"]))
     written = set(zip(table["run_dir"], table["front_index"]))
-    check(expected == written, f"screen kept {len(written)} entries, expected {len(expected)}")
-    still_carrying = sum(bl.has_restriction_site(sequence) for sequence in table["sequence"])
-    check(still_carrying == 0, f"{still_carrying} written sequences still carry a site")
+    check(expected == written and len(table) == len(selected),
+          f"table holds {len(table)} entries, expected {len(selected)}")
 
 
 def check_numbering(table: pd.DataFrame) -> None:
@@ -114,49 +88,15 @@ def check_numbering(table: pd.DataFrame) -> None:
     check(wrong_setup == 0, f"{wrong_setup} identifiers carry the wrong front index or mutation count")
 
 
-def check_deduplication(table: pd.DataFrame) -> None:
-    """Each group of identical sequences must be represented by its lowest-numbered entry."""
-    groups: Dict[str, List[int]] = defaultdict(list)
-    for sequence, number in zip(table["sequence"], table["sequence_number"]):
-        groups[sequence].append(number)
-    expected = {
-        number: min(numbers) for numbers in groups.values() for number in numbers
-    }
-    written = dict(zip(table["sequence_number"], table["representative_number"]))
-    check(expected == written, "representatives are not the lowest-numbered entry of their group")
-    representatives = table.loc[table["is_representative"]]
-    check(
-        len(representatives) == len(groups),
-        f"{len(representatives)} representatives for {len(groups)} distinct sequences",
-    )
-    identifier_by_number = dict(zip(table["sequence_number"], table["identifier"]))
-    mismatched = sum(
-        identifier_by_number[row["representative_number"]] != row["representative_id"]
-        for row in table.to_dict("records")
-    )
-    check(mismatched == 0, f"{mismatched} representative_id values do not match their number")
-
-
 def check_reference_pointers(table: pd.DataFrame) -> None:
-    """Every entry must point at the 0-mutation entry of its own run, and at its representative."""
+    """Every entry must point at the reference entry of its own run."""
     by_run = {
-        row["run_dir"]: row
+        row["run_dir"]: row["identifier"]
         for row in table.to_dict("records")
         if row["selection_reason"].startswith("reference")
     }
-    wrong_id = 0
-    wrong_representative = 0
-    for row in table.to_dict("records"):
-        reference = by_run.get(row["run_dir"])
-        if reference is None:
-            wrong_id += 1
-            continue
-        if reference["identifier"] != row["reference_id"]:
-            wrong_id += 1
-        if reference["representative_id"] != row["reference_representative_id"]:
-            wrong_representative += 1
-    check(wrong_id == 0, f"{wrong_id} entries point at the wrong reference")
-    check(wrong_representative == 0, f"{wrong_representative} entries point at the wrong representative")
+    wrong = sum(by_run.get(row["run_dir"]) != row["reference_id"] for row in table.to_dict("records"))
+    check(wrong == 0, f"{wrong} entries point at the wrong reference")
 
 
 def check_reference_is_the_zero_mutation_entry(table: pd.DataFrame, front_table: pd.DataFrame) -> None:
@@ -169,26 +109,18 @@ def check_reference_is_the_zero_mutation_entry(table: pd.DataFrame, front_table:
     check(wrong == 0, f"{wrong} reference rows do not have 0 mutations")
 
 
-def check_fasta(table: pd.DataFrame, path: str) -> None:
-    """The FASTA must hold exactly the representatives."""
-    records = read_fasta(path)
-    representatives = table.loc[table["is_representative"]]
-    expected = dict(zip(representatives["identifier"], representatives["sequence"]))
-    check(records == expected, f"FASTA holds {len(records)} records, expected {len(expected)}")
-
-
 def check_upload_sheet(table: pd.DataFrame, path: str) -> None:
-    """The sheet must hold the representatives in order."""
+    """The sheet must hold every entry in order."""
     with open(path, newline="") as f:
         rows = list(csv.reader(f))
-    representatives = table.loc[table["is_representative"]].to_dict("records")
+    entries = table.to_dict("records")
     check(rows[0] == ["Number", "id", "reference", "product", "path_to_config"], "header changed")
-    check(len(rows) - 1 == len(representatives), f"{len(rows) - 1} sheet rows for {len(representatives)} representatives")
-    identifiers = {row["identifier"] for row in table.to_dict("records") if row["is_representative"]}
+    check(len(rows) - 1 == len(entries), f"{len(rows) - 1} sheet rows for {len(entries)} entries")
+    identifiers = set(table["identifier"])
     wrong = 0
-    for position, (written, entry) in enumerate(zip(rows[1:], representatives), start=1):
+    for position, (written, entry) in enumerate(zip(rows[1:], entries), start=1):
         if written != [
-            str(position), entry["identifier"], entry["reference_representative_id"],
+            str(position), entry["identifier"], entry["reference_id"],
             entry["sequence"], entry["path_to_config"],
         ]:
             wrong += 1
@@ -218,16 +150,14 @@ def main() -> None:
     fronts = raw_sequences(bl.RUNS, sorted(set(selected["run_dir"])))
 
     check_sequences_against_the_fronts(table, fronts)
-    check_the_screen(selected, fronts, table)
+    check_every_selected_entry_written(selected, table)
     check_numbering(table)
-    check_deduplication(table)
     check_reference_pointers(table)
     check_reference_is_the_zero_mutation_entry(table, front_table)
-    check_fasta(table, os.path.join(output, "library.fasta"))
     check_upload_sheet(table, os.path.join(output, "library_upload.csv"))
     check_config_paths(table)
 
-    print(f"entries {len(table)}, representatives {int(table['is_representative'].sum())}")
+    print(f"entries {len(table)}")
     print(f"runs {table['run_dir'].nunique()}, genes {table['gene_id'].nunique()}")
     if failures:
         print(f"\n{len(failures)} FAILED CHECKS")

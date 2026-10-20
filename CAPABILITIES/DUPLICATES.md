@@ -29,7 +29,7 @@ Found while building the index. Nothing here has been consolidated. When you nee
 - FASTA I/O: `write_fasta` exists 3 times with different input types (dict, DataFrame, list of tuples), and `read_fasta` is hand-rolled twice. Elsewhere the code uses `pyfaidx.Fasta`.
 - "Load .h5 model → one-hot → predict" is repeated in about 7 places. The one-hot encoder comes from `deepCRE.utils.one_hot_encode` in some and `evolution.sequences.one_hot_encode` in others.
 - Applying (pos, src, new) SNPs to a sequence: private `_apply_mutations` in both baseline_sampler and summarize_mutations.
-- Restriction-site screening: `candidate_selection` (generic, driven by a FASTA of sites) vs `build_library.has_restriction_site` (BsaI plus a cloning-suffix rule).
+- Restriction-site screening: `candidate_selection` (generic, driven by a FASTA of sites) vs `qa/check_upload_sheets.has_restriction_site` (BsaI plus a cloning-suffix rule).
 - Linear fit on a scatter: done three ways, in overlap_analysis/_common (polyfit + Spearman), analyze_in_true_background (linregress + Pearson) and deepCRE_TPM_correlation/correlate.
 - Front "area" (Σ fitness of the expanded front): computed separately in compare_methods `calculate_differences_between_fronts`, `get_best_area` and `get_area`.
 - `adversarial/plot.expand_gene_front` is a row-level version of `simple_result_stats.expand_pareto_front`.

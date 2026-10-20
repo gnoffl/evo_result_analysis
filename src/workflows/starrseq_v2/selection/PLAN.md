@@ -1,17 +1,20 @@
 # STARR-seq v2 candidate selection
 
-Three stages from finished evolution runs to an ordered oligo library.
+Four stages from finished evolution runs to an ordered oligo library.
 
 1. **Pool** every final Pareto front into one overview table (`pool_front_table.py`).
 2. **Select** anchors, then the globally best low-mutation entries, then an
    axis-uniform sample from each front (`select_candidates.py`).
-3. **Build the library**: fetch sequences, screen restriction sites, number,
-   deduplicate, write the table, the upload sheet and the FASTA
-   (`build_library.py`).
+3. **Build my sheet**: fetch sequences, number, point at references, write the
+   table and the per-entry upload sheet (`build_library.py`).
+4. **Clean all contributors' sheets together**: drop failing rows with their
+   reasons, deduplicate, write the full table, per-sheet removal lists and the
+   FASTA (`../qa/check_upload_sheets.py`).
 
-Status: **all three steps implemented** — `pool_front_table.py` (cross-checked by
-`verify_pool_front_table_untested.py`), `select_candidates.py`, and
-`build_library.py` (cross-checked by `verify_build_library_untested.py`). Every
+Status: **all four steps implemented** — `pool_front_table.py` (cross-checked by
+`verify_pool_front_table_untested.py`), `select_candidates.py`,
+`build_library.py` (cross-checked by `verify_build_library_untested.py`) and
+`check_upload_sheets.py` (unit-tested only, not yet run on real sheets). Every
 number below was measured on the actual tree, not estimated.
 
 ## Measured facts
@@ -372,7 +375,7 @@ half-max anchor, the count contributes nothing and `select_candidates` raises ra
 than silently rebalancing. On the real data no count comes close to saturating.
 
 `TARGET` counts **selected entries, not distinct sequences.** Steps 1 and 2 never
-load sequences, so step 2 cannot deduplicate; step 3 does. The offset is stable
+load sequences, so step 2 cannot deduplicate; step 4 does. The offset is stable
 because the duplicates are almost all references, which are selected at any
 target — measured 1405 duplicates at 57 449 entries and 1403 at 57 000. So set
 `TARGET` to the wanted oligo count plus ~1400.
@@ -479,9 +482,10 @@ the mutated entries are effectively unique (random 47 236 → 47 157, max 3244 �
 natural windows shared across runs and, for 167 of them, across gene ids, which
 is why step 3 must keep every contributing origin.
 
-That leaves ~4.4k of the ~60k budget for controls and for whatever the
-restriction screen drops — neither countable until the enzyme list and the
-control set exist. Raise `TARGET` once they do.
+That left ~4.4k of what was then a ~60k budget for controls and for whatever
+the restriction screen drops. The budget is now **100k oligos, shared with the
+other contributors' sheets** (step 4), so `TARGET` is set against what remains
+after their contribution.
 
 Keying on `front_index` rather than `n_mutations` is what makes the eight tied
 fronts unambiguous.
@@ -506,24 +510,21 @@ and the source window is a `starrseq_v1` metadata window.
 ## Step 3 — build the library
 
 `build_library.py`. Takes `selected_keys.csv` + `front_table.csv.gz` + the run
-tree, and writes everything needed to order the library.
+tree, and writes my raw upload sheet — **one row per selected entry**, not yet
+screened or deduplicated. Both happen in step 4, pooled with the other
+contributors' sheets, so there is exactly one screen and one deduplication.
 
 Read any step-1 table with `float_precision="round_trip"` (see step 2).
 
 1. **Fetch sequences** by `(run_dir, front_index)`, reading each front once.
    No separate "add references" step: every run's reference is an anchor in
    step 2, so it is already selected. Asserted, not assumed.
-2. **Screen restriction sites** — drop, never repair; repairing would move the
-   sequence off the front it was selected from.
-3. **Number the survivors** `1…N` after a deterministic sort on
+2. **Number the entries** `1…N` after a deterministic sort on
    `(config_name, gene_id, run_dir, front_index)`, so one experimental arm is
    contiguous. The trailing `(run_dir, front_index)` keys the front table, which
    is what makes the sort total.
-4. **Deduplicate** on the exact 170 bp, representative = lowest number.
-5. **Resolve reference pointers** to each run's reference and to that
-   reference's representative.
-6. **Final checks** — 170 bp and `ACGT`-only, numbers and identifiers unique,
-   representative sequences unique, no reference pointer missing from the sheet.
+3. **Reference pointers** — each entry's `reference_id` is the identifier of its
+   run's reference. Reference rows point at themselves.
 
 `N`-containing entries need no handling here: step 2 already excludes them, and
 all 852 sit in 20 runs where every entry contains `N`, so those runs are gone.
@@ -535,30 +536,15 @@ individually addressable in its own run context. The same 170 bp arising from a
 maximize run on one gene and a minimize run on another is one oligo but two
 rows, and both contexts are wanted for analysis.
 
-The consequence has to be stated because it is silent: **several numbers map
-onto one ordered oligo and therefore one measurement.** Join assay results on
-`representative_id`, never on `sequence_number`, or duplicates are counted
-twice. `Number` in the upload sheet is contiguous over representatives; the
-serial inside an identifier is not contiguous there.
+The consequence has to be stated because it is silent: **several identifiers
+map onto one ordered oligo and therefore one measurement.** Join assay results
+on step 4's `representative_id`, never on `sequence_number`, or duplicates are
+counted twice.
 
 This also removes the need for an `origins` column. One row per contributing
 gene already records every origin of a collapsed sequence — relevant because
 167 reference sequences are shared across more than one gene id, expected for
 an allotetraploid like N. tabacum (homeologs) and for overlapping annotations.
-
-### The restriction screen
-
-`GGTCT(C|$)|GAGAC(C|$)` — BsaI and its reverse complement. The `$` alternative
-covers a site the cloning suffix would complete by supplying the final `C`;
-the two patterns being reverse complements of each other is what makes the
-single trailing-edge case sufficient, so the bare 170 bp is screened and no
-second pass with the flanks attached is needed.
-
-**A run whose reference carries a site loses all of its entries.** Without an
-orderable baseline none of its variants can be interpreted, even where a
-mutation happened to destroy the site. Measured: 91 runs, costing 1522 entries
-(91 references and 1431 variants). A further 253 entries were dropped for a
-site of their own.
 
 ### The identifier
 
@@ -606,27 +592,14 @@ Into `output/` (already gitignored):
 
 | file | content |
 | --- | --- |
-| `library_table.csv` | one row per surviving selected entry — the source of truth for analysis |
-| `library_upload.ods` | the filled template, five columns, one row per representative |
-| `library.fasta` | representative identifier → 170 bp |
+| `library_table.csv` | one row per selected entry — my run context for analysis, joined to step 4's full table on `identifier` = `id` |
+| `library_upload.csv` | the five template columns (`Number, id, reference, product, path_to_config`), one row per entry — my input to step 4 |
 | `configs_to_copy.txt` | the 68 config source paths to copy into `configs_gernot/` |
 
-The upload sheet is written to a **new file**; the template
-`autoTRAIT_batch_constructs_phase_Sep26.ods` is never modified. Only its first
-sheet (`phase_september`) is filled; `Explainer` and the embedded image are
-carried through untouched, which the verification script checks.
-
-Data cells must name a cell style explicitly. The template declares
-`<table:table-column … table:default-cell-style-name="ce2"/>` for all five
-columns, and `ce2` is the bold `#b2b2b2` header style — so a cell written
-without a style inherits the header's look, which is what made every row grey
-on the first run. Writing `stylename="Default"` overrides the column default;
-the header cells keep no explicit style and so stay styled.
-
 The template's `reference` column expects a literal 170 bp sequence, which
-would repeat every reference on every row. It holds the reference's
-**identifier** instead — a deliberate deviation the recipient has to be told
-about. Reference rows point at themselves.
+would repeat every reference on every row. Every contributor puts the
+reference's **identifier** there instead — a deliberate deviation the recipient
+has to be told about.
 
 `path_to_config` is `configs_gernot/<config_name>.json`. The config folder name
 in the run tree equals the config file's basename, so the mapping is direct.
@@ -635,24 +608,82 @@ a re-partition of the same 68 into six execution batches, and all 68 are
 **byte-identical** to their namesakes in `arms/baseline/grid/starrseq_v1`, so
 flattening them into one folder is lossless.
 
-### Result
-
-From 57 000 selected entries: 1775 dropped by the screen, leaving **55 225
-entries from 3171 runs over 1853 genes**, which deduplicate to **53 874
-distinct sequences to order**.
-
-That is ~6k under the ~60k budget. Raise `TARGET` in step 2 once the control
-set is decided; the screen and the reference rule cost about 3.1% of whatever
-is selected.
-
 ### Validation
 
 `verify_build_library_untested.py` re-reads every selected entry from its
-`pareto_front.json` and re-derives the screen, the numbering, the
-deduplication and the reference pointers independently, then compares them
-against the written table, FASTA and sheet. All checks pass today.
+`pareto_front.json` and re-derives the numbering and the reference pointers
+independently, then compares them against the written table and sheet.
+
+## Step 4 — pooled cleaning of all contributors' sheets
+
+`qa/check_upload_sheets.py <configs_root> <out_dir> <sheet.csv>...`. Every
+contributor delivers a sheet in the five template columns, with identifiers in
+`reference`. All sheets are pooled first, so the screen and the deduplication
+run once over everything that is ordered.
+
+1. **Load and renumber.** `source_file` records the input sheet. `Number` is
+   rewritten to `1…N` over the pooled rows, in the order the sheets are given.
+2. **Row-level drops.** Nothing aborts the run; a failing row is dropped and
+   every reason it fails is recorded, `|`-joined, in `drop_reasons`:
+   `empty_id` and `empty_reference` (empty, whitespace, or any pandas default NA value),
+   `duplicate_id` (every row carrying that id), `not_acgt`, `wrong_length`
+   (≠ 170), `restriction_site`, `reference_missing` (the reference id is in no
+   sheet), `unresolved_config` (`path_to_config` is not a file under
+   `configs_root`).
+3. **Reference cascade.** A row whose reference was dropped is dropped as
+   `reference_dropped`, repeated until nothing changes, so chained references
+   are followed. Without an orderable baseline none of its variants can be
+   interpreted, even where a mutation destroyed the site. For my sheet this is
+   exactly the earlier "a run whose reference carries a site loses all of its
+   entries", since every entry points at its run's reference. A row that fails
+   a check of its own is listed under that reason only.
+4. **Deduplicate** the kept rows on the exact 170 bp. The representative is the
+   kept row with the lowest `Number` — the first occurrence in sheet order.
+   Dropped rows never represent. Duplicates are **not** removed: they stay in
+   the table with `representative_id` pointing at the oligo that measures them.
+5. **Final checks**, raising on failure: `Number` is `1…N` without gaps or
+   duplicates, representative sequences are unique, and every kept row's
+   representative and reference are kept.
+
+`reference` is never rewritten. A row's baseline measurement is two lookups:
+`reference` → that row's `representative_id`. The cascade guarantees it
+resolves for every kept row.
+
+### The restriction screen
+
+`GGTCT(C|$)|GAGAC(C|$)` — BsaI and its reverse complement. The `$` alternative
+covers a site the cloning suffix would complete by supplying the final `C`;
+the two patterns being reverse complements of each other is what makes the
+single trailing-edge case sufficient, so the bare 170 bp is screened and no
+second pass with the flanks attached is needed. Drop, never repair: repairing
+would move the sequence off the front it was selected from.
+
+### Outputs
+
+Into `<out_dir>`:
+
+| file | content |
+| --- | --- |
+| `library_full_table.csv` | every input row: the five template columns, `source_file`, `drop_reasons` (empty = kept), `representative_id` (empty = dropped) |
+| `removed_<sheet>.csv` | per input sheet, its dropped rows with their reasons — to hand back to the author. Written even when empty. Duplicates are not listed. |
+| `library.fasta` | the representatives only, `id` → 170 bp — what is ordered |
+
+There is no separate representatives-only sheet: the FASTA headers are ids, and
+joining on `id` against the full table gives everything else. The run prints
+the drop counts per reason and sheet, and the oligo count against the 100k
+budget; the count is only reported, never enforced.
+
+### Result
+
+Measured under the earlier single-contributor pipeline, whose screen and
+deduplication rules are the ones step 4 now applies: from 57 000 selected
+entries, 1775 dropped by the screen (91 runs lost with their reference, costing
+1522 entries; 253 for a site of their own), leaving **55 225 entries from 3171
+runs over 1853 genes**, which deduplicate to **53 874 distinct sequences**. Not
+yet re-measured on the pooled sheets.
 
 ### Still open
 
-- **which controls go in**, if any — the only input still missing. The order
-  budget is no longer blocking, since the library is well under it.
+- **which controls go in**, if any.
+- the other contributors' sheets — the pooled oligo count against the 100k
+  budget is known only once they are in.
