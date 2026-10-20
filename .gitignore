@@ -272,3 +272,5 @@ src/workflows/adversarial/**/*.csv
 src/workflows/adversarial/**/*.pdf
 src/workflows/adversarial/**/*.png
 src/workflows/starrseq_v2/selection/output/
+src/workflows/starrseq_v2/qa/output/
+src/workflows/starrseq_v2/qa/input/
