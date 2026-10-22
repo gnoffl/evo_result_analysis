@@ -4,8 +4,8 @@ from tensorflow.keras.models import load_model #type:ignore
 from pyfaidx import Fasta
 from deepCRE.utils import one_hot_encode
 
-ZEA_MSR_PATH = "/home/gernot/Code/PhD_Code/Evolution/models/MSR_atha_bvul_bole_csat_cqui_ccum_dcar_gmax_osat_slyc_sbic_zmay_M0X0.75dP7K25f_A_thaliana_msr_train_models_250705_070641.h5"
-ARA_MSR_PATH = "/home/gernot/Code/PhD_Code/Evolution/models/MSR_atha_bvul_bole_csat_cqui_ccum_dcar_gmax_osat_slyc_sbic_zmay_M0X0.75dP7K25f_Z_mays_msr_train_models_250705_070641.h5"
+ZEA_MSR_PATH = "/home/gernot/Code/PhD_Code/Evolution/models/MSR_atha_bvul_bole_csat_cqui_ccum_dcar_gmax_osat_slyc_sbic_zmay_M0X0.75dP7K25f_Z_mays_msr_train_models_250705_070641.h5"
+ARA_MSR_PATH = "/home/gernot/Code/PhD_Code/Evolution/models/MSR_atha_bvul_bole_csat_cqui_ccum_dcar_gmax_osat_slyc_sbic_zmay_M0X0.75dP7K25f_A_thaliana_msr_train_models_250705_070641.h5"
 ZEA_MUTATED_PATH = "src/workflows/mutation_distribution_analysis/mutated_sequences/zea_random_mutated.fa"
 ARA_MUTATED_PATH = "src/workflows/mutation_distribution_analysis/mutated_sequences/ara_random_mutated.fa"
 

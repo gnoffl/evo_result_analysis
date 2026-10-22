@@ -36,7 +36,7 @@ Sampled distribution: for target gene with wildtype W, keep only pool rows (from
 - `parse_args() -> argparse.Namespace` — CLI parsing (validates input file exists).
 
 ## evaluate_sequences.py  [script]
-Step 4: one-hot (`deepCRE.utils.one_hot_encode`) + Keras `.h5` predict of every record in a FASTA, writes CSV `sequence_name,prediction`. Run directly, hard-wired paths, no CLI. **[possibly broken]** `ZEA_MSR_PATH` points at the `..._A_thaliana_msr_train_models...h5` and `ARA_MSR_PATH` at the `..._Z_mays_msr...h5` model, whereas `Evolution/src/evolution/write_run_script.py` pairs A_thaliana model with Arabidopsis runs and Z_mays with maize — species/model look swapped (unverified).
+Step 4: one-hot (`deepCRE.utils.one_hot_encode`) + Keras `.h5` predict of every record in a FASTA, writes CSV `sequence_name,prediction`. Run directly, hard-wired paths, no CLI. `ZEA_MSR_PATH`/`ARA_MSR_PATH` are the `Z_mays_msr`/`A_thaliana_msr` models used by the `{zea,ara}_msr_max_single` paper runs (were swapped until 2026-10-22; prediction CSVs from before that date used the wrong model per species).
 
 - `evaluate_sequences(model_path: str, fasta_path: str, output_path: str) -> None` — predict all FASTA records with one model, save CSV.
 
