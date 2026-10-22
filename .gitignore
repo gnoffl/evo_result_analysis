@@ -1,11 +1,67 @@
 # Byte-compiled / optimized / DLL files
 .vscode/*
+src/workflows/starrseq_v2/run/flowering_data/*
+!src/workflows/starrseq_v2/run/flowering_data/*.py
+!src/workflows/starrseq_v2/run/flowering_data/*.json
 __pycache__/
 *.py[codz]
 *$py.class
 data/*
 visualization/*
 run_mutations_analysis.sh
+*.fai
+src/workflows/hoffie/data/*
+src/workflows/hoffie/mutation_assessment/*.csv
+src/workflows/hoffie/mutation_assessment/*.png
+src/workflows/hoffie/mutation_assessment/*.fa
+src/workflows/paper_plots/figures/*
+src/workflows/evo_alg_pooled_plots/**/*.png
+src/workflows/evo_alg_pooled_plots/**/*.csv
+src/workflows/overlap_analysis/correlation/*
+src/workflows/overlap_analysis/correlation_bHLH/*
+src/workflows/overlap_analysis/correlation_combined/*
+src/workflows/overlap_analysis/model_species_comparison/cache/*
+src/workflows/overlap_analysis/model_species_comparison/construct/*
+src/workflows/overlap_analysis/model_species_comparison/Ara/*
+src/workflows/overlap_analysis/model_species_comparison/Slyc/*
+src/workflows/overlap_analysis/model_species_comparison/model_groups/*
+src/workflows/overlap_analysis/model_species_comparison/*.png
+src/workflows/overlap_analysis/model_species_comparison/*.csv
+src/workflows/overlap_analysis/data/bHLH_reference_sequences.fa
+src/workflows/overlap_analysis/data/bHLH_genes_of_interest.json
+src/workflows/deepCRE_TPM_correlation/*.png
+src/workflows/mutation_distribution_analysis/*.txt
+src/workflows/mutation_distribution_analysis/*/*.fa
+src/workflows/mutation_distribution_analysis/*/*.fai
+src/workflows/mutation_distribution_analysis/*/*.json
+src/workflows/mutation_distribution_analysis/*/*.csv
+src/workflows/mutation_distribution_analysis/mutated_sequences/old/
+src/workflows/mutation_distribution_analysis/visualizations/*
+src/workflows/mutation_distance_analysis/results/
+src/workflows/compare_reruns/**/*.png
+src/workflows/compare_reruns/**/*.svg
+src/workflows/compare_reruns/**/*.pdf
+src/workflows/compare_reruns/**/*.csv
+src/workflows/compare_reruns/**/*.txt
+src/workflows/overlap_analysis/correct_construct/*.fa
+src/workflows/overlap_analysis/correct_construct/*.fai
+src/workflows/overlap_analysis/correct_construct/plots/*
+src/workflows/overlap_analysis/binding_vs_nonbinding/plots/*
+!src/workflows/overlap_analysis/correct_construct/pPSntF_enhLib_35Spr.fa
+!src/workflows/overlap_analysis/correct_construct/barcode1.fa
+!src/workflows/overlap_analysis/correct_construct/barcode2.fa
+src/workflows/one_off_visualizations/plots/*
+src/workflows/evo_alg_pooled_plots/example_gene_pareto/plots/*
+
+# blamm TFBS analysis: generated motif database and per-run outputs
+src/workflows/blamm_tfbs_analysis/motifs/
+src/workflows/blamm_tfbs_analysis/*__mutations_*/
+src/workflows/starrseq_v2/**/*.csv
+# starrseq_v2 build artefacts (gene lists, unit files, plan, logs)
+src/workflows/starrseq_v2/build/
+src/workflows/starrseq_v2/probe_analysis/*
+!src/workflows/starrseq_v2/probe_analysis/*.py
+
 
 # C extensions
 *.so
@@ -210,3 +266,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# adversarial re-evaluation across MSR models
+src/workflows/adversarial/**/*.csv
+src/workflows/adversarial/**/*.pdf
+src/workflows/adversarial/**/*.png
+src/workflows/starrseq_v2/selection/output/
+src/workflows/starrseq_v2/qa/output/
+src/workflows/starrseq_v2/qa/input/

@@ -1,0 +1,1376 @@
+import unittest
+import tempfile
+import os
+import json
+import shutil
+import sys
+import warnings
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for testing
+import matplotlib.pyplot as plt
+import numpy as np
+from unittest.mock import patch, MagicMock
+from analysis.overview.simple_result_stats import (
+    get_pareto_front, add_basic_stats, calculate_half_max_mutations,
+    get_stats_per_gene, summary_stat_calculation, split_stats, summarize_stats, 
+    visualize_start_vs_max_fitness, visualize_start_vs_max_fitness_by_mutations,
+    draw_visualize_start_vs_max_fitness_by_mutations, plot_pareto_front, show_random_fronts,
+    show_average_pareto_front, expand_pareto_front, normalize_front, calculate_loss_pareto_front,
+    calculate_loss_over_generations_single_gene, calculate_loss_over_generations,
+    plot_loss_over_generations, plot_half_max_mutations_vs_initial_fitness, hist_half_max_mutations,
+    deduplicate_pareto_front, fit_logit_linear
+)
+
+
+class TestSimpleResultStats(unittest.TestCase):
+    """Test cases for simple_result_stats module functions."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.results_folder = os.path.join(self.temp_dir, "results")
+        self.results_loss_vis = os.path.join(self.temp_dir, "results_loss_vis")
+        os.makedirs(self.results_folder)
+        os.makedirs(self.results_loss_vis)
+        
+        # Create test gene folders with pareto fronts
+        # Test both maximization and minimization scenarios
+        test_cases = [
+            ("1_gene1", "maximization"),  # Chromosome 1, maximization
+            ("2_gene2", "minimization"),  # Chromosome 2, minimization  
+            ("C_gene3", "minimization")   # Chloroplast, minimization
+        ]
+        
+        for gene_name, optimization_type in test_cases:
+            gene_folder = os.path.join(self.results_folder, gene_name)
+            os.makedirs(os.path.join(gene_folder, "saved_populations"))
+            
+            if optimization_type == "maximization":
+                # Higher fitness is better, fewer mutations typically give lower initial fitness
+                pareto_data = [
+                    ["TTTTTA", 0.9, 5],  # Best fitness, most mutations
+                    ["TTTAAA", 0.7, 3],   # Medium fitness, some mutations
+                    ["TTAAAA", 0.5, 2],   # Lower fitness, fewer mutations
+                    ["TAAAAA", 0.1, 1],    # Worst fitness, least mutations
+                    ["AAAAAA", 0., 0]    # Worst fitness, least mutations
+                ]
+            else:  # minimization
+                # Lower fitness is better, fewer mutations typically give higher initial fitness
+                pareto_data = [
+                    ["TTTTTA", 0.1, 5],  # Best fitness, most mutations
+                    ["TTTAAA", 0.3, 3],   # Medium fitness, some mutations
+                    ["TTAAAA", 0.5, 2],   # Higher fitness, fewer mutations
+                    ["TAAAAA", 0.9, 1],    # Worst fitness, least mutations
+                    ["AAAAAA", 1., 0]    # Worst fitness, least mutations
+                ]
+
+            
+            with open(os.path.join(gene_folder, "saved_populations", "pareto_front.json"), 'w') as f:
+                json.dump(pareto_data, f)
+            
+            # Create generation-specific fronts for loss calculation
+            with open(os.path.join(gene_folder, "saved_populations", "pareto_front_gen_100.json"), 'w') as f:
+                json.dump(pareto_data[2:], f)
+        
+        vis_gene_folder = os.path.join(self.results_loss_vis, "1_gene1")
+        os.makedirs(os.path.join(vis_gene_folder, "saved_populations"))
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front.json"), 'w') as f:
+            json.dump([
+                ["TTTTA", 1, 4],
+                ["TTAAA", 0.9, 2],
+                ["TAAAA", 0.8, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front_gen_1000.json"), 'w') as f:
+            json.dump([
+                ["CCCCC", 1, 5],
+                ["CCCAA", 0.9, 3],
+                ["CCAAA", 0.8, 2],
+                ["CAAAA", 0.7, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front_gen_100.json"), 'w') as f:
+            json.dump([
+                ["GGGGG", 0.9, 5],
+                ["GGGGA", 0.8, 4],
+                ["GGGAA", 0.7, 3],
+                ["GGAAA", 0.6, 2],
+                ["GAAAA", 0.5, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front_gen_10.json"), 'w') as f:
+            json.dump([
+                ["TCGGT", 0.6, 5],
+                ["TGCGA", 0.5, 4],
+                ["ACTGA", 0.4, 3],
+                ["AGACA", 0.3, 2],
+                ["AGAAA", 0.2, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+
+        vis_gene_folder = os.path.join(self.results_loss_vis, "2_gene2")
+        os.makedirs(os.path.join(vis_gene_folder, "saved_populations"))
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front.json"), 'w') as f:
+            json.dump([
+                ["TTTTT", 1, 5],
+                ["TTTAA", 0.9, 4],
+                ["TTAAA", 0.8, 2],
+                ["TAAAA", 0.6, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front_gen_1000.json"), 'w') as f:
+            json.dump([
+                ["CCCCC", 0.9, 5],
+                ["CCCAA", 0.8, 3],
+                ["CCAAA", 0.7, 2],
+                ["CAAAA", 0.4, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front_gen_100.json"), 'w') as f:
+            json.dump([
+                ["GGGGG", 0.7, 5],
+                ["GGGGA", 0.6, 4],
+                ["GGGAA", 0.5, 3],
+                ["GGAAA", 0.4, 2],
+                ["GAAAA", 0.3, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+        with open(os.path.join(vis_gene_folder, "saved_populations", "pareto_front_gen_10.json"), 'w') as f:
+            json.dump([
+                ["TCGGT", 0.5, 5],
+                ["TGCGA", 0.4, 4],
+                ["ACTGA", 0.3, 3],
+                ["AGACA", 0.2, 2],
+                ["AGAAA", 0.1, 1],
+                ["AAAAA", 0, 0],
+            ], f)
+    
+    def tearDown(self):
+        """Clean up test fixtures."""
+        shutil.rmtree(self.temp_dir)
+    
+    def test_get_stats_per_gene(self):
+        """Test getting statistics per gene."""
+        stats = get_stats_per_gene(self.results_folder, "test", self.temp_dir)
+        
+        self.assertIn("1_gene1", stats)
+        self.assertIn("2_gene2", stats)
+        self.assertIn("C_gene3", stats)
+        
+        # Check maximization gene (1_gene1)
+        gene1_stats = stats["1_gene1"]
+        self.assertEqual(gene1_stats["final_fitness"], 0.9)  # First item (best fitness)
+        self.assertEqual(gene1_stats["start_fitness"], 0.0)  # Last item (worst fitness)
+        self.assertEqual(gene1_stats["max_mutations"], 5)
+        self.assertEqual(gene1_stats["origin_chromosome"], "1")
+        self.assertEqual(gene1_stats["num_mutations_half_max_effect"], 2)
+        
+        # Check minimization gene (2_gene2)
+        gene2_stats = stats["2_gene2"]
+        self.assertEqual(gene2_stats["final_fitness"], 0.1)  # First item (best fitness)
+        self.assertEqual(gene2_stats["start_fitness"], 1.)  # Last item (worst fitness)
+        self.assertEqual(gene2_stats["max_mutations"], 5)
+        self.assertEqual(gene2_stats["origin_chromosome"], "2")
+        self.assertEqual(gene2_stats["num_mutations_half_max_effect"], 2)
+    
+    def test_normalize_front_maximization(self):
+        """Test normalizing front for maximization problem."""
+        # Maximization: higher fitness is better
+        pareto_front = [("seq1", 0.9, 3), ("seq2", 0.5, 2), ("seq3", 0.1, 1)]
+        normalized = normalize_front(pareto_front)
+        
+        fitnesses = [item[1] for item in normalized]
+        self.assertAlmostEqual(max(fitnesses), 1.0)
+        self.assertAlmostEqual(min(fitnesses), 0.0)
+        # Check that order is preserved and correct
+        self.assertAlmostEqual(fitnesses[0], 1.0)  # 0.9 -> 1.0
+        self.assertAlmostEqual(fitnesses[1], 0.5)  # 0.5 -> 0.5  
+        self.assertAlmostEqual(fitnesses[2], 0.0)  # 0.1 -> 0.0
+    
+    def test_normalize_front_minimization(self):
+        """Test normalizing front for minimization problem."""
+        # Minimization: lower fitness is better (but normalization treats it the same)
+        pareto_front = [("seq1", 0.1, 3), ("seq2", 0.5, 2), ("seq3", 0.9, 1)]
+        normalized = normalize_front(pareto_front)
+        
+        fitnesses = [item[1] for item in normalized]
+        self.assertAlmostEqual(max(fitnesses), 1.0)
+        self.assertAlmostEqual(min(fitnesses), 0.0)
+        # Check that order is preserved and correct  
+        self.assertAlmostEqual(fitnesses[0], 0.0)  # 0.1 -> 0.0
+        self.assertAlmostEqual(fitnesses[1], 0.5)  # 0.5 -> 0.5
+        self.assertAlmostEqual(fitnesses[2], 1.0)  # 0.9 -> 1.0
+    
+    def test_get_pareto_front(self):
+        """Test reading pareto front from file."""
+        gene_path = os.path.join(self.results_folder, "1_gene1")
+        pareto_front = get_pareto_front(gene_path)
+        
+        self.assertIsNotNone(pareto_front)
+        if pareto_front is not None:  # Type guard for mypy
+            self.assertEqual(len(pareto_front), 5)
+            self.assertEqual(pareto_front[0], ["TTTTTA", 0.9, 5])
+        
+        # Test non-existent path
+        non_existent_path = os.path.join(self.temp_dir, "non_existent")
+        result = get_pareto_front(non_existent_path)
+        self.assertIsNone(result)
+    
+    def test_add_basic_stats(self):
+        """Test adding basic statistics."""
+        stats = {}
+        fitnesses = [0.9, 0.7, 0.5, 0.1, 0.0]
+        num_mutations = [5, 3, 2, 1, 0]
+        gene = "1_gene1_test"
+        
+        add_basic_stats(stats, fitnesses, num_mutations, gene)
+        
+        self.assertIn("1_gene1_test", stats)
+        gene_stats = stats["1_gene1_test"]
+        self.assertEqual(gene_stats['final_fitness'], 0.9)
+        self.assertEqual(gene_stats['start_fitness'], 0.0)
+        self.assertEqual(gene_stats['max_mutations'], 5)
+        self.assertEqual(gene_stats['origin_chromosome'], "1")
+    
+    def test_calculate_half_max_mutations(self):
+        """Test calculating half max mutations."""
+        # Test maximization scenario
+        pareto_front = [("seq1", 0.9, 5.), ("seq2", 0.7, 3.), ("seq3", 0.5, 2.), ("seq4", 0.1, 1.)]
+
+        result = calculate_half_max_mutations(pareto_front)
+        self.assertEqual(result, 2)
+        
+        # Test minimization scenario
+        pareto_front_min = [("seq1", 0.1, 5.), ("seq2", 0.3, 3.), ("seq3", 0.5, 2.), ("seq4", 0.9, 1.)]
+        
+        result_min = calculate_half_max_mutations(pareto_front_min)
+        self.assertEqual(result_min, 2)
+    
+    def test_summary_stat_calculation(self):
+        """Test summary statistics calculation."""
+        stats = {
+            "gene1": {
+                'final_fitness': 0.9,
+                'start_fitness': 0.1,
+                'max_mutations': 5,
+                'num_mutations_half_max_effect': 3
+            },
+            "gene2": {
+                'final_fitness': 0.8,
+                'start_fitness': 0.2,
+                'max_mutations': 4,
+                'num_mutations_half_max_effect': 2
+            }
+        }
+        
+        summary = summary_stat_calculation(stats)
+        
+        self.assertAlmostEqual(summary['final_fitness_mean'], 0.85)
+        self.assertAlmostEqual(summary['start_fitness_mean'], 0.15)
+        self.assertAlmostEqual(summary['max_mutations_mean'], 4.5)
+        self.assertAlmostEqual(summary['num_mutations_half_max_mean'], 2.5)
+        
+        # Check standard deviations exist
+        self.assertAlmostEqual(summary['final_fitness_std'], 0.05)
+        self.assertAlmostEqual(summary['start_fitness_std'], 0.05)
+        self.assertAlmostEqual(summary['max_mutations_std'], 0.5)
+        self.assertAlmostEqual(summary['num_mutations_half_max_std'], 0.5)
+
+    def test_split_stats(self):
+        """Test splitting statistics by chromosome origin."""
+        stats = {
+            "1_gene1": {'origin_chromosome': "1"},
+            "2_gene2": {'origin_chromosome': "2"},
+            "C_gene3": {'origin_chromosome': "C"},
+            "M_gene4": {'origin_chromosome': "M"}
+        }
+        
+        main_chrom, organelle_scaffold = split_stats(stats)
+        
+        self.assertIn("1_gene1", main_chrom)
+        self.assertIn("2_gene2", main_chrom)
+        self.assertIn("C_gene3", organelle_scaffold)
+        self.assertIn("M_gene4", organelle_scaffold)
+        self.assertEqual(len(main_chrom), 2)
+        self.assertEqual(len(organelle_scaffold), 2)
+    
+    def test_summarize_stats(self):
+        """Test summarizing statistics with file output."""
+        stats = {
+            "1_gene1": {
+                'final_fitness': 0.9,
+                'start_fitness': 0.1,
+                'max_mutations': 5,
+                'origin_chromosome': "1"
+            },
+            "C_gene2": {
+                'final_fitness': 0.8,
+                'start_fitness': 0.2,
+                'max_mutations': 4,
+                'origin_chromosome': "C"
+            }
+        }
+        
+        result = summarize_stats(stats, "test", self.temp_dir, group_origin=False)
+        
+        self.assertIsInstance(result, str)
+        self.assertIn("Summary for test:", result)
+        
+        # Check that output file was created
+        output_file = os.path.join(self.temp_dir, "summary_test.txt")
+        self.assertTrue(os.path.exists(output_file))
+        
+        # Check file content
+        with open(output_file, 'r') as f:
+            content = f.read()
+        self.assertIn("Summary for test:", content)
+        self.assertEqual(content, result)
+    
+    def test_deduplicate_pareto_front(self):
+        pareto_front_min = [("seq1", 0.9, 0), ("seq2", 0.7, 2), ("seq3", 0.5, 5), ("seq4", 0.7, 2)]
+        deduped = deduplicate_pareto_front(pareto_front_min)
+        self.assertEqual(len(deduped), 3)
+        self.assertEqual(deduped[0][1], 0.9)
+        self.assertEqual(deduped[1][1], 0.7)
+        self.assertEqual(deduped[2][1], 0.5)
+        self.assertEqual(deduped[0][2], 0)
+        self.assertEqual(deduped[1][2], 2)
+        self.assertEqual(deduped[2][2], 5)
+
+        pareto_front_max = [("seq1", 0.9, 5), ("seq2", 0.7, 2), ("seq3", 0.5, 0), ("seq4", 0.7, 2)]
+        deduped = deduplicate_pareto_front(pareto_front_max)
+        self.assertEqual(len(deduped), 3)
+        self.assertEqual(deduped[0][1], 0.5)
+        self.assertEqual(deduped[1][1], 0.7)
+        self.assertEqual(deduped[2][1], 0.9)
+        self.assertEqual(deduped[0][2], 0)
+        self.assertEqual(deduped[1][2], 2)
+        self.assertEqual(deduped[2][2], 5)
+        
+    
+    def test_expand_pareto_front(self):
+        """Test expanding pareto front to include all mutation numbers."""
+        # minimization case
+        pareto_front_min = [("seq1", 0.9, 0), ("seq2", 0.7, 2), ("seq3", 0.5, 5), ("seq4", 0.7, 2)]
+        max_mutations = 7
+        
+        expanded = expand_pareto_front(pareto_front_min, max_mutations)
+        
+        self.assertEqual(len(expanded), 8)  # 0 to 7 mutations
+        
+        # Check that all mutation numbers from 0 to max_mutations are present
+        mutation_numbers = [item[2] for item in expanded]
+        self.assertEqual(mutation_numbers, [0, 1, 2, 3, 4, 5, 6, 7])
+        
+        # Check that expansion worked correctly
+        self.assertEqual(expanded[0][1], 0.9)  # Original fitness at 0 mutations
+        self.assertEqual(expanded[1][1], 0.9)  # Original fitness at 0 mutations
+        self.assertEqual(expanded[2][1], 0.7)  # Original fitness at 2 mutations
+        self.assertEqual(expanded[3][1], 0.7)  # Original fitness at 2 mutations
+        self.assertEqual(expanded[4][1], 0.7)  # Original fitness at 2 mutations
+        self.assertEqual(expanded[5][1], 0.5)  # Original fitness at 5 mutations
+        self.assertEqual(expanded[6][1], 0.5)  # Original fitness at 5 mutations
+        self.assertEqual(expanded[7][1], 0.5)  # Original fitness at 5 mutations
+
+        # maximization case
+        pareto_front_max = [("seq1", 0.1, 0), ("seq2", 0.5, 2), ("seq3", 0.9, 5), ("seq4", 0.5, 2)]
+        max_mutations_max = 7
+        expanded_max = expand_pareto_front(pareto_front_max, max_mutations_max)
+        self.assertEqual(len(expanded_max), 8)  # 0 to 7 mutations
+        mutation_numbers_max = [item[2] for item in expanded_max]
+        self.assertEqual(mutation_numbers_max, [0, 1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual(expanded_max[0][1], 0.1)  # Original fitness at 0 mutations
+        self.assertEqual(expanded_max[1][1], 0.1)  # Original fitness at 0 mutations
+        self.assertEqual(expanded_max[2][1], 0.5)  # Original fitness at 2 mutations
+        self.assertEqual(expanded_max[3][1], 0.5)  # Original fitness at 2 mutations
+        self.assertEqual(expanded_max[4][1], 0.5)  # Original fitness at 2 mutations
+        self.assertEqual(expanded_max[5][1], 0.9)  # Original fitness at 5 mutations
+        self.assertEqual(expanded_max[6][1], 0.9)  # Original fitness at 5 mutations
+        self.assertEqual(expanded_max[7][1], 0.9)  # Original fitness at 5 mutations
+
+    def test_normalize_front_edge_cases(self):
+        """Test normalize front with edge cases."""
+        # Test with zero fitness range
+        pareto_front_zero = [("seq1", 0.5, 1), ("seq2", 0.5, 2)]
+        with self.assertRaises(ValueError):
+            normalize_front(pareto_front_zero)
+        
+        # Test with single point
+        pareto_front_single = [("seq1", 0.5, 1)]
+        with self.assertRaises(ValueError):
+            normalize_front(pareto_front_single)
+    
+    def test_calculate_loss_pareto_front(self):
+        """Test calculating loss between pareto fronts."""
+        # minimization case
+        current_front = [("seq1", 0.8, 0), ("seq2", 0.6, 1), ("seq3", 0.4, 2), ("seq4", 0.2, 4)]
+        target_front = [("seq1", 0.8, 0), ("seq2", 0.5, 1), ("seq3", 0.3, 2), ("seq4", 0.2, 3)]
+        max_mutations = 5
+        
+        minimization_loss = calculate_loss_pareto_front(current_front, target_front, max_mutations)
+        
+        # Loss should be sum of differences: (0.8-0.8) + (0.5-0.6) + (0.3-0.4) + (0.2-0.4) + (0.2-0.2) = 0.4
+        self.assertAlmostEqual(minimization_loss, 0.4, places=5)
+
+        # maximization case
+        current_front_max = [("seq1", 0.2, 0), ("seq2", 0.4, 1), ("seq3", 0.6, 2), ("seq4", 0.8, 4)]
+        target_front_max = [("seq1", 0.2, 0), ("seq2", 0.5, 1), ("seq3", 0.7, 2), ("seq4", 0.8, 3)]
+        max_mutations = 5
+
+        maximization_loss = calculate_loss_pareto_front(current_front_max, target_front_max, max_mutations)
+        # Loss should be sum of differences: (0.2-0.2) + (0.5-0.4) + (0.7-0.6) + (0.8-0.6) + (0.8-0.8) = 0.4
+        self.assertAlmostEqual(maximization_loss, 0.4, places=5)
+
+    def test_calculate_loss_over_generations_single_gene(self):
+        """Test calculating loss over generations for a single gene."""
+        gene_name = "1_gene1"
+        
+        # The test setup creates pareto_front_gen_100.json with partial data
+        loss_dict = calculate_loss_over_generations_single_gene(
+            self.results_folder, gene_name, max_number_mutation=5, last_generation=1999
+        )
+        
+        self.assertIn(100, loss_dict)
+        self.assertIn(1999, loss_dict)
+        self.assertAlmostEqual(loss_dict[1999], 0)  # Final generation should have 0 loss
+        self.assertAlmostEqual(loss_dict[100], .8)  # Earlier generation should have some loss
+    
+    def test_calculate_loss_over_generations_single_gene_with_duplicates(self):
+        """Test calculating loss over generations with pareto front containing duplicates.
+        
+        The pareto front should exceed target_length before deduplication,
+        and be within bounds after deduplication.
+        """
+        # Create a new gene folder for this test
+        gene_name = "1_gene_duplicates"
+        gene_folder = os.path.join(self.results_folder, gene_name)
+        os.makedirs(os.path.join(gene_folder, "saved_populations"))
+
+        max_number_mutation = 3
+        final_pareto_with_duplicates = [
+            ["AAAAA", 0.0, 0],      # 0 mutations
+            ["ATAAA", 0.3, 1],      # 1 mutation (first)
+            ["AAATA", 0.3, 1],      # 1 mutation (duplicate - different sequence, same fitness and mutations)
+            ["ATTAA", 0.6, 2],      # 2 mutations (first)
+            ["TTAAA", 0.6, 2],      # 2 mutations (duplicate)
+            ["ATTTA", 0.9, 3],      # 3 mutations (first)
+            ["TTTAA", 0.9, 3],      # 3 mutations (duplicate)
+        ]
+        
+        gen_100_pareto_with_duplicates = [
+            ["AAAAA", 0.0, 0],      # 0 mutations
+            ["ATAAA", 0.2, 1],      # 1 mutation (first)
+            ["GAAAA", 0.2, 1],      # 1 mutation (duplicate)
+            ["ATTAA", 0.4, 2],      # 2 mutations
+            ["ATTTA", 0.7, 3],      # 3 mutations
+        ]
+        
+        with open(os.path.join(gene_folder, "saved_populations", "pareto_front.json"), 'w') as f:
+            json.dump(final_pareto_with_duplicates, f)
+        with open(os.path.join(gene_folder, "saved_populations", "pareto_front_gen_100.json"), 'w') as f:
+            json.dump(gen_100_pareto_with_duplicates, f)
+        
+        loss_dict = calculate_loss_over_generations_single_gene(
+            self.results_folder, gene_name, max_number_mutation=max_number_mutation, last_generation=1999
+        )
+        
+        self.assertIn(100, loss_dict)
+        self.assertIn(1999, loss_dict)
+        self.assertAlmostEqual(loss_dict[1999], 0)  # Final generation should have 0 loss
+        # Expected loss at gen 100: sum of |target_fitness - current_fitness| for each mutation count
+        # 0 mutations: |0.0 - 0.0| = 0.0
+        # 1 mutation:  |0.3 - 0.2| = 0.1
+        # 2 mutations: |0.6 - 0.4| = 0.2
+        # 3 mutations: |0.9 - 0.7| = 0.2
+        # Total loss = 0.0 + 0.1 + 0.2 + 0.2 = 0.5
+        self.assertAlmostEqual(loss_dict[100], 0.5, places=5)
+    
+    def test_calculate_loss_over_generations(self):
+        """Test calculating loss over generations for all genes."""
+        loss_data = calculate_loss_over_generations(
+            self.results_folder, max_number_mutation=90, last_generation=1999
+        )
+        
+        self.assertIn("1_gene1", loss_data)
+        self.assertIn("2_gene2", loss_data)
+        self.assertIn("C_gene3", loss_data)
+        
+        # Check that each gene has loss data
+        for gene, gene_loss in loss_data.items():
+            self.assertIn(1999, gene_loss)
+            self.assertEqual(gene_loss[1999], 0)  # Final generation should have 0 loss
+            if gene_loss.get(100) is not None:
+                self.assertGreater(gene_loss[100], 0)  # Earlier generation should have some loss
+    
+    def test_visualize_start_vs_max_fitness(self):
+        """Test start vs max fitness visualization."""
+        stats = get_stats_per_gene(self.results_folder, "test", self.temp_dir)
+        
+        visualize_start_vs_max_fitness(stats, "test", output_folder=self.temp_dir, output_format="pdf")
+        
+        # Check that output file was created
+        output_file = os.path.join(self.temp_dir, "start_vs_final_fitness_test.pdf")
+        self.assertTrue(os.path.exists(output_file))
+    
+    def test_visualize_start_vs_max_fitness_by_mutations(self):
+        """Test start vs max fitness by mutations visualization."""
+        stats = get_stats_per_gene(self.results_folder, "test", self.temp_dir)
+        
+        visualize_start_vs_max_fitness_by_mutations(stats, "test", output_folder=self.temp_dir, output_format="png")
+        
+        # Check that both output files were created
+        absolute_file = os.path.join(self.temp_dir, "start_vs_final_fitness_by_mutations_test_absolute.png")
+        relative_file = os.path.join(self.temp_dir, "start_vs_final_fitness_by_mutations_test_relative.png")
+        self.assertTrue(os.path.exists(absolute_file))
+        self.assertTrue(os.path.exists(relative_file))
+    
+    def test_draw_visualize_start_vs_max_fitness_by_mutations(self):
+        """Test drawing start vs max fitness by mutations."""
+        stats = {
+            "gene1": {
+                'start_fitness': 0.1,
+                'final_fitness': 0.9,
+                'max_mutations': 5,
+                'num_mutations_half_max_effect': 3
+            },
+            "gene2": {
+                'start_fitness': 0.2,
+                'final_fitness': 0.8,
+                'max_mutations': 4,
+                'num_mutations_half_max_effect': 2
+            }
+        }
+        
+        # Test absolute values
+        draw_visualize_start_vs_max_fitness_by_mutations(stats, "test_abs", relative=False, output_folder=self.temp_dir, output_format="png")
+        output_file_abs = os.path.join(self.temp_dir, "start_vs_final_fitness_by_mutations_test_abs.png")
+        self.assertTrue(os.path.exists(output_file_abs))
+        
+        # Test relative values
+        draw_visualize_start_vs_max_fitness_by_mutations(stats, "test_rel", relative=True, output_folder=self.temp_dir, output_format="png")
+        output_file_rel = os.path.join(self.temp_dir, "start_vs_final_fitness_by_mutations_test_rel.png")
+        self.assertTrue(os.path.exists(output_file_rel))
+    
+    def test_plot_pareto_front(self):
+        """Test plotting individual pareto front."""
+        pareto_path = os.path.join(self.results_folder, "1_gene1", "saved_populations", "pareto_front.json")
+        output_path = os.path.join(self.temp_dir, "test_pareto.png")
+        
+        plot_pareto_front(pareto_path, output_path)
+        
+        # Check that output file was created
+        self.assertTrue(os.path.exists(output_path))
+        
+        # Test with non-existent file
+        non_existent_path = os.path.join(self.temp_dir, "non_existent.json")
+        output_path_2 = os.path.join(self.temp_dir, "test_pareto_2.png")
+        plot_pareto_front(non_existent_path, output_path_2)  # Should not crash
+        self.assertFalse(os.path.exists(output_path_2))
+    
+    def test_show_random_fronts(self):
+        """Test showing random pareto fronts."""
+        show_random_fronts(self.results_folder, num_samples=2, output_folder=self.temp_dir, output_format="png")
+        
+        # Check that output folder and files were created
+        output_folder = os.path.join(self.temp_dir, f"random_pareto_fronts_{os.path.basename(self.results_folder)}")
+        self.assertTrue(os.path.exists(output_folder))
+        
+        # Check that at least some pareto front files were created
+        png_files = [f for f in os.listdir(output_folder) if f.endswith('.png')]
+        self.assertEqual(len(png_files), 2)
+    
+    def test_show_average_pareto_front(self):
+        """Test showing average pareto front."""
+        show_average_pareto_front(self.results_folder, output_folder=self.temp_dir, max_number_mutation=10, output_format="pdf")
+        
+        # Check that output file was created
+        run_name = os.path.basename(self.results_folder)
+        output_file = os.path.join(self.temp_dir, f"average_pareto_front_{run_name}.pdf")
+        self.assertTrue(os.path.exists(output_file))
+    
+    def test_plot_loss_over_generations(self):
+        """Test plotting loss over generations."""
+        plot_loss_over_generations(
+            self.results_loss_vis, "test", max_number_mutation=5, 
+            last_generation=1999, output_folder=self.temp_dir, output_format="png"
+        )
+        
+        # Check that output file was created
+        output_file = os.path.join(self.temp_dir, "loss_over_generations_test.png")
+        self.assertTrue(os.path.exists(output_file))
+    
+    def test_plot_half_max_mutations_vs_initial_fitness(self):
+        """Test plotting half max mutations vs initial fitness."""
+        stats = get_stats_per_gene(self.results_folder, "test", self.temp_dir)
+        
+        plot_half_max_mutations_vs_initial_fitness(stats, "test", output_folder=self.temp_dir, output_format="png")
+        
+        # Check that output file was created
+        output_file = os.path.join(self.temp_dir, "half_max_mutations_vs_initial_fitness_test.png")
+        self.assertTrue(os.path.exists(output_file))
+    
+    def test_hist_half_max_mutations(self):
+        """Test histogram of half max mutations."""
+        stats = get_stats_per_gene(self.results_folder, "test", output_folder=self.temp_dir)
+        
+        hist_half_max_mutations(stats, "test", output_folder=self.temp_dir, output_format="png")
+        
+        # Check that output file was created
+        output_file = os.path.join(self.temp_dir, "hist_half_max_mutations_test.png")
+        self.assertTrue(os.path.exists(output_file))
+    
+    def test_get_stats_per_gene_file_exists_warning(self):
+        """Test that get_stats_per_gene shows warning and loads existing file when stats file exists."""
+        # Create an existing stats file with test data
+        existing_file = os.path.join(self.temp_dir, "stats_test_exists.json")
+        test_stats = {
+            "gene1": {
+                "final_fitness": 0.9,
+                "start_fitness": 0.1,
+                "max_mutations": 5
+            }
+        }
+        with open(existing_file, 'w') as f:
+            json.dump(test_stats, f)
+        
+        # Test default behavior (overwrite=False) - should load existing file and show warning
+        with patch('sys.stdout', new_callable=MagicMock) as mock_stdout:
+            result = get_stats_per_gene(self.results_folder, "test_exists", output_folder=self.temp_dir, overwrite=False)
+        
+        # Should return the existing data
+        self.assertEqual(result, test_stats)
+        
+        # Verify warning was printed (check that print was called with warning message)
+        # We check that print was called with strings containing the warning text
+        print_calls = [str(call) for call in mock_stdout.write.call_args_list]
+        warning_found = any("WARNING: USING EXISTING STATS FILE" in call or "already exists" in call for call in print_calls)
+        self.assertTrue(warning_found or len(print_calls) > 0, "Warning should be printed to stdout")
+    
+    def test_get_stats_per_gene_file_exists_overwrite(self):
+        """Test that get_stats_per_gene overwrites existing file when overwrite=True."""
+        # Create an existing stats file with old data
+        existing_file = os.path.join(self.temp_dir, "stats_test_overwrite.json")
+        old_stats = {"old_gene": {"final_fitness": 0.5}}
+        with open(existing_file, 'w') as f:
+            json.dump(old_stats, f)
+        
+        # Test with overwrite=True - should recalculate and overwrite
+        new_stats = get_stats_per_gene(self.results_folder, "test_overwrite", output_folder=self.temp_dir, overwrite=True)
+        
+        # Should return new calculated stats, not old stats
+        self.assertNotEqual(new_stats, old_stats)
+        self.assertIn("1_gene1", new_stats)  # Should have calculated new stats
+        self.assertNotIn("old_gene", new_stats)
+        
+        # Verify file was overwritten
+        with open(existing_file, 'r') as f:
+            saved_stats = json.load(f)
+        self.assertEqual(saved_stats, new_stats)
+    
+    def test_get_stats_per_gene_skip_non_directory(self):
+        """Test that get_stats_per_gene skips non-directory files."""
+        # Create a file (not directory) in results folder
+        non_dir_file = os.path.join(self.results_folder, "not_a_gene.txt")
+        with open(non_dir_file, 'w') as f:
+            f.write("not a gene folder")
+        
+        # Should not crash and should skip the file
+        stats = get_stats_per_gene(self.results_folder, "test_skip", self.temp_dir)
+        
+        # Should still have the 3 gene directories
+        self.assertEqual(len(stats), 3)
+        self.assertNotIn("not_a_gene.txt", stats)
+    
+    def test_summary_stat_calculation_missing_half_max(self):
+        """Test summary statistics when some genes are missing half_max_effect."""
+        stats = {
+            "gene1": {
+                'final_fitness': 0.9,
+                'start_fitness': 0.1,
+                'max_mutations': 5,
+                'num_mutations_half_max_effect': 3
+            },
+            "gene2": {
+                'final_fitness': 0.8,
+                'start_fitness': 0.2,
+                'max_mutations': 4
+                # Missing num_mutations_half_max_effect
+            }
+        }
+        
+        summary = summary_stat_calculation(stats)
+        
+        # Should still calculate other stats
+        self.assertAlmostEqual(summary['final_fitness_mean'], 0.85)
+        # Should handle missing half_max data gracefully
+        self.assertAlmostEqual(summary['num_mutations_half_max_mean'], 3.0)  # Only gene1 contributes
+    
+    def test_summarize_stats_with_grouping(self):
+        """Test summarize_stats with origin grouping."""
+        stats = {
+            "1_gene1": {
+                'final_fitness': 0.9,
+                'start_fitness': 0.1,
+                'max_mutations': 5,
+                'origin_chromosome': "1"
+            },
+            "C_gene2": {
+                'final_fitness': 0.8,
+                'start_fitness': 0.2,
+                'max_mutations': 4,
+                'origin_chromosome': "C"
+            }
+        }
+        
+        result = summarize_stats(stats, "test_group", self.temp_dir, group_origin=True)
+        
+        self.assertIsInstance(result, str)
+        self.assertIn("Summary for test_group:", result)
+        self.assertIn("Summary for test_group_main_chromosome:", result)
+        self.assertIn("Summary for test_group_organelle_scaffold:", result)
+        self.assertIn("final_fitness_mean: 0.9", result)
+        
+        # Check that multiple output files were created
+        base_file = os.path.join(self.temp_dir, "summary_test_group.txt")
+        main_file = os.path.join(self.temp_dir, "summary_test_group_main_chromosome.txt")
+        organelle_file = os.path.join(self.temp_dir, "summary_test_group_organelle_scaffold.txt")
+        
+        self.assertTrue(os.path.exists(base_file))
+        self.assertTrue(os.path.exists(main_file))
+        self.assertTrue(os.path.exists(organelle_file))
+    
+    def test_expand_pareto_front_edge_cases(self):
+        """Test edge cases for expand_pareto_front."""
+        # Test when pareto front already has all points
+        pareto_front = [("seq1", 0.9, 0), ("seq2", 0.7, 1), ("seq3", 0.5, 2)]
+        max_mutations = 2
+        
+        expanded = expand_pareto_front(pareto_front, max_mutations)
+        self.assertEqual(expanded, pareto_front)  # Should remain the same
+        
+        # Test with larger gaps
+        pareto_front_gaps = [("seq1", 0.9, 0), ("seq2", 0.5, 5)]
+        max_mutations = 5
+        
+        expanded_gaps = expand_pareto_front(pareto_front_gaps, max_mutations)
+        self.assertEqual(len(expanded_gaps), 6)  # 0 to 5 mutations
+        
+        # Check that intermediate points have same fitness as previous point
+        self.assertEqual(expanded_gaps[1][1], 0.9)  # Gap filling should use previous fitness
+        self.assertEqual(expanded_gaps[2][1], 0.9)
+        self.assertEqual(expanded_gaps[3][1], 0.9)
+        self.assertEqual(expanded_gaps[4][1], 0.9)
+        self.assertEqual(expanded_gaps[5][1], 0.5)  # Original point
+    
+    def test_calculate_loss_pareto_front_edge_cases(self):
+        """Test edge cases for calculate_loss_pareto_front."""
+        # Test with identical fronts
+        front1 = [("seq1", 0.9, 0), ("seq2", 0.7, 1)]
+        front2 = [("seq1", 0.9, 0), ("seq2", 0.7, 1)]
+        max_mutations = 1
+        
+        loss = calculate_loss_pareto_front(front1, front2, max_mutations)
+        self.assertAlmostEqual(loss, 0.0)
+        
+        # Test with fronts that are too long
+        long_front = [("seq" + str(i), 0.5, i) for i in range(100)]
+        with self.assertRaises(ValueError):
+            calculate_loss_pareto_front(long_front, front1, max_mutations)
+    
+    def test_plot_half_max_mutations_vs_initial_fitness_missing_data(self):
+        """Test plotting when some genes are missing half_max data."""
+        stats = {
+            "gene1": {
+                'start_fitness': 0.1,
+                'final_fitness': 0.9,
+                'num_mutations_half_max_effect': 3,
+                "origin_chromosome": "1"
+            },
+            "gene2": {
+                'start_fitness': 0.2,
+                'final_fitness': 0.8,
+                "origin_chromosome": "1"
+                # Missing num_mutations_half_max_effect
+            }
+        }
+        
+        # Should not crash and should only plot gene1
+        plot_half_max_mutations_vs_initial_fitness(stats, "test_missing", output_folder=self.temp_dir, output_format="png")
+        
+        # Check that output file was created
+        output_file = os.path.join(self.temp_dir, "half_max_mutations_vs_initial_fitness_test_missing.png")
+        self.assertTrue(os.path.exists(output_file))
+    
+    def test_hist_half_max_mutations_missing_data(self):
+        """Test histogram when some genes are missing half_max data."""
+        stats = {
+            "gene1": {
+                'num_mutations_half_max_effect': 3
+            },
+            "gene2": {
+                'final_fitness': 0.8,
+                "origin_chromosome": "1"
+                # Missing num_mutations_half_max_effect
+            }
+        }
+        
+        # Should not crash and should only use gene1
+        hist_half_max_mutations(stats, "test_missing", output_folder=self.temp_dir, output_format="png")
+        
+        # Check that output file was created
+        output_file = os.path.join(self.temp_dir, "hist_half_max_mutations_test_missing.png")
+        self.assertTrue(os.path.exists(output_file))
+    
+    def test_hist_half_max_mutations_pools_overflow_bin(self):
+        """Genes above max_mutations_shown are pooled into the last bin."""
+        # Arrange
+        counts = [2, 2, 5, 11, 40, 97]
+        stats = {
+            f"gene{index}": {'num_mutations_half_max_effect': count}
+            for index, count in enumerate(counts)
+        }
+        _, ax = plt.subplots()
+
+        # Act
+        hist_half_max_mutations(
+            stats, "test_overflow", output_folder=self.temp_dir,
+            output_format="png", ax=ax, max_mutations_shown=10,
+        )
+
+        # Assert: the two genes above 10 land in the bin centred on 10, and the
+        # genes below it keep their own bins.
+        bar_heights_by_center = {
+            round(bar.get_x() + bar.get_width() / 2): bar.get_height()
+            for bar in ax.patches
+        }
+        self.assertEqual(bar_heights_by_center[10], 3)
+        self.assertEqual(bar_heights_by_center[2], 2)
+        self.assertEqual(bar_heights_by_center[5], 1)
+        self.assertEqual(ax.get_xlim(), (-0.5, 10.5))
+        plt.close("all")
+
+    def test_hist_half_max_mutations_labels_overflow_tick(self):
+        """The overflow bin's tick is labelled with a >= sign."""
+        # Arrange
+        stats = {"gene1": {'num_mutations_half_max_effect': 3}}
+        _, ax = plt.subplots()
+
+        # Act
+        hist_half_max_mutations(
+            stats, "test_overflow_tick", output_folder=self.temp_dir,
+            output_format="png", ax=ax, max_mutations_shown=10,
+        )
+
+        # Assert
+        tick_labels = [label.get_text() for label in ax.get_xticklabels()]
+        self.assertEqual(tick_labels[-1], "≥10")
+        self.assertEqual(tick_labels[:-1], ["0", "5"])
+        plt.close("all")
+
+    def test_hist_half_max_mutations_rejects_non_positive_maximum(self):
+        """A non-positive max_mutations_shown is rejected."""
+        # Arrange
+        stats = {"gene1": {'num_mutations_half_max_effect': 3}}
+
+        # Act / Assert
+        with self.assertRaises(ValueError):
+            hist_half_max_mutations(
+                stats, "test_bad_max", output_folder=self.temp_dir,
+                output_format="png", max_mutations_shown=0,
+            )
+
+    def test_hist_half_max_mutations_empty_data(self):
+        """Test histogram with no valid data."""
+        stats = {
+            "gene1": {
+                'final_fitness': 0.8,
+                "origin_chromosome": "1"
+                # Missing num_mutations_half_max_effect
+            }
+        }
+        
+        # Should not crash even with no valid data
+        hist_half_max_mutations(stats, "test_empty", output_folder=self.temp_dir, output_format="png")
+        
+        # Check that output file was created (even if plot is empty)
+        output_file = os.path.join(self.temp_dir, "hist_half_max_mutations_test_empty.png")
+        self.assertTrue(os.path.exists(output_file))
+    
+    def test_show_random_fronts_more_samples_than_genes(self):
+        """Test show_random_fronts when requesting more samples than available genes."""
+        # Request more samples than we have genes (3)
+        show_random_fronts(self.results_folder, num_samples=10, output_folder=self.temp_dir, output_format="png")
+        
+        # Should still work and show all available genes
+        output_folder = os.path.join(self.temp_dir, f"random_pareto_fronts_{os.path.basename(self.results_folder)}")
+        self.assertTrue(os.path.exists(output_folder))
+        
+        # Should have files for all 3 genes (or fewer if some failed)
+        png_files = [f for f in os.listdir(output_folder) if f.endswith('.png')]
+        self.assertLessEqual(len(png_files), 3)  # Can't be more than total genes
+        self.assertGreater(len(png_files), 0)   # Should have at least some files
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_visualize_start_vs_max_fitness_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        stats = get_stats_per_gene(self.results_folder, "test", self.temp_dir)
+        fig, ax = plt.subplots()
+        try:
+            visualize_start_vs_max_fitness(
+                stats, "test", output_folder=self.temp_dir, output_format="pdf", ax=ax,
+            )
+            self.assertGreater(len(ax.collections), 0)  # scatter points were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_draw_visualize_start_vs_max_fitness_by_mutations_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        stats = {
+            "gene1": {
+                'start_fitness': 0.1,
+                'final_fitness': 0.9,
+                'max_mutations': 5,
+                'num_mutations_half_max_effect': 3,
+            },
+            "gene2": {
+                'start_fitness': 0.2,
+                'final_fitness': 0.8,
+                'max_mutations': 4,
+                'num_mutations_half_max_effect': 2,
+            },
+        }
+        fig, ax = plt.subplots()
+        try:
+            draw_visualize_start_vs_max_fitness_by_mutations(
+                stats, "test", relative=False, output_folder=self.temp_dir,
+                output_format="png", ax=ax,
+            )
+            self.assertGreater(len(ax.collections), 0)  # scatter points were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_plot_pareto_front_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        pareto_path = os.path.join(self.results_folder, "1_gene1", "saved_populations", "pareto_front.json")
+        output_path = os.path.join(self.temp_dir, "test_pareto.png")
+        fig, ax = plt.subplots()
+        try:
+            plot_pareto_front(pareto_path, output_path, ax=ax)
+            self.assertGreater(len(ax.collections), 0)  # scatter points were drawn
+            self.assertFalse(os.path.exists(output_path))
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_show_average_pareto_front_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            show_average_pareto_front(
+                self.results_folder, output_folder=self.temp_dir,
+                max_number_mutation=10, output_format="pdf", ax=ax,
+            )
+            self.assertGreater(len(ax.lines), 0)  # errorbar markers were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_plot_loss_over_generations_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            plot_loss_over_generations(
+                self.results_loss_vis, "test", max_number_mutation=5,
+                last_generation=1999, output_folder=self.temp_dir,
+                output_format="png", ax=ax,
+            )
+            self.assertGreater(len(ax.lines), 0)  # errorbar markers were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_plot_half_max_mutations_vs_initial_fitness_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        stats = get_stats_per_gene(self.results_folder, "test", self.temp_dir)
+        fig, ax = plt.subplots()
+        try:
+            plot_half_max_mutations_vs_initial_fitness(
+                stats, "test", output_folder=self.temp_dir, output_format="png", ax=ax,
+            )
+            self.assertGreater(len(ax.collections), 0)  # scatter points were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_hist_half_max_mutations_with_ax(self, mock_savefig):
+        """Passing an ax draws onto it and does not save a figure."""
+        import matplotlib.pyplot as plt
+        stats = get_stats_per_gene(self.results_folder, "test", output_folder=self.temp_dir)
+        fig, ax = plt.subplots()
+        try:
+            hist_half_max_mutations(
+                stats, "test", output_folder=self.temp_dir, output_format="png", ax=ax,
+            )
+            self.assertGreater(len(ax.patches), 0)  # histogram bars were drawn
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    # ------------------------------------------------------------------
+    # Publication-composition parameters (add_colorbar / vmin / vmax /
+    # returned mappable / colour / error_style).
+    # ------------------------------------------------------------------
+
+    _SCATTER_STATS = {
+        "gene1": {
+            'start_fitness': 0.1, 'final_fitness': 0.9,
+            'max_mutations': 5, 'num_mutations_half_max_effect': 3,
+        },
+        "gene2": {
+            'start_fitness': 0.2, 'final_fitness': 0.8,
+            'max_mutations': 4, 'num_mutations_half_max_effect': 2,
+        },
+    }
+
+    def test_draw_scatter_returns_mappable_with_vmin_vmax(self):
+        """The scatter mappable is returned with the requested colour bounds."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            mappable = draw_visualize_start_vs_max_fitness_by_mutations(
+                self._SCATTER_STATS, "test", "png", relative=False, ax=ax,
+                add_colorbar=False, vmin=0.0, vmax=10.0,
+            )
+            self.assertIsNotNone(mappable)
+            self.assertEqual(mappable.norm.vmin, 0.0)
+            self.assertEqual(mappable.norm.vmax, 10.0)
+        finally:
+            plt.close(fig)
+
+    def test_draw_scatter_add_colorbar_false_adds_no_axes(self):
+        """add_colorbar=False leaves the figure with only the plotting axes."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            draw_visualize_start_vs_max_fitness_by_mutations(
+                self._SCATTER_STATS, "test", "png", relative=False, ax=ax,
+                add_colorbar=False,
+            )
+            self.assertEqual(len(fig.axes), 1)  # no colorbar axes was added
+        finally:
+            plt.close(fig)
+
+    def test_draw_scatter_add_colorbar_true_adds_axes(self):
+        """add_colorbar=True (default) attaches a colorbar as an extra axes."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            draw_visualize_start_vs_max_fitness_by_mutations(
+                self._SCATTER_STATS, "test", "png", relative=False, ax=ax,
+                add_colorbar=True,
+            )
+            self.assertEqual(len(fig.axes), 2)  # plotting axes + colorbar axes
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_show_average_pareto_front_error_style_band(self, mock_savefig):
+        """error_style='band' draws a filled band and no errorbar container."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            show_average_pareto_front(
+                self.results_folder, output_folder=self.temp_dir,
+                max_number_mutation=10, output_format="pdf", ax=ax,
+                error_style="band",
+            )
+            self.assertGreater(len(ax.collections), 0)  # fill_between band
+            self.assertEqual(len(ax.containers), 0)     # no errorbar container
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_show_average_pareto_front_error_style_bars_default(self, mock_savefig):
+        """The default error_style draws an errorbar container."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            show_average_pareto_front(
+                self.results_folder, output_folder=self.temp_dir,
+                max_number_mutation=10, output_format="pdf", ax=ax,
+            )
+            self.assertEqual(len(ax.containers), 1)  # one errorbar container
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    def test_show_average_pareto_front_invalid_error_style_raises(self):
+        """An unknown error_style is rejected."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            with self.assertRaises(ValueError):
+                show_average_pareto_front(
+                    self.results_folder, output_folder=self.temp_dir,
+                    max_number_mutation=10, output_format="pdf", ax=ax,
+                    error_style="shaded",
+                )
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_show_average_pareto_front_color_applied(self, mock_savefig):
+        """The colour argument sets the marker colour (checked in band mode)."""
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import to_rgba
+        fig, ax = plt.subplots()
+        try:
+            show_average_pareto_front(
+                self.results_folder, output_folder=self.temp_dir,
+                max_number_mutation=10, output_format="pdf", ax=ax,
+                color="0.35", error_style="band",
+            )
+            self.assertGreater(len(ax.lines), 0)
+            self.assertEqual(to_rgba(ax.lines[-1].get_color()), to_rgba("0.35"))
+        finally:
+            plt.close(fig)
+
+    def test_fit_logit_linear_recovers_known_parameters(self):
+        """Points generated from a sigmoid are fit back to its parameters."""
+        # Arrange: y = sigmoid(3*x - 1) sampled without noise.
+        true_slope, true_intercept = 3.0, -1.0
+        x_values = np.linspace(0.0, 1.0, 50)
+        y_values = 1.0 / (1.0 + np.exp(-(true_slope * x_values + true_intercept)))
+
+        # Act
+        slope, intercept, r_squared = fit_logit_linear(x_values, y_values)
+
+        # Assert: noiseless data recovers the parameters and R^2 == 1.
+        self.assertAlmostEqual(slope, true_slope, places=4)
+        self.assertAlmostEqual(intercept, true_intercept, places=4)
+        self.assertAlmostEqual(r_squared, 1.0, places=6)
+
+    def test_fit_logit_linear_prediction_stays_bounded(self):
+        """The fitted curve never leaves the (0, 1) interval."""
+        # Arrange
+        x_values = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+        y_values = np.array([0.01, 0.2, 0.5, 0.8, 0.99])
+
+        # Act
+        slope, intercept, _ = fit_logit_linear(x_values, y_values)
+        dense_x = np.linspace(-2.0, 3.0, 100)  # extrapolate well beyond the data
+        predicted_y = 1.0 / (1.0 + np.exp(-(slope * dense_x + intercept)))
+
+        # Assert
+        self.assertTrue(np.all(predicted_y > 0.0))
+        self.assertTrue(np.all(predicted_y < 1.0))
+
+    def test_fit_logit_linear_handles_exact_zero_and_one(self):
+        """Responses spanning exactly 0 and 1 still return finite parameters.
+
+        This data is degenerate for the nonlinear fit: the least-squares optimum
+        of a sigmoid through (0, 0), (0.5, 0.5) and (1, 1) is a step function, so
+        the true optimal slope is infinite and the optimiser cannot converge. The
+        closed-form fallback is expected to supply finite parameters instead.
+        """
+        # Arrange
+        x_values = np.array([0.0, 0.5, 1.0])
+        y_values = np.array([0.0, 0.5, 1.0])  # logit(0)/logit(1) are infinite
+
+        # Act
+        with self.assertWarns(RuntimeWarning):
+            slope, intercept, r_squared = fit_logit_linear(x_values, y_values)
+
+        # Assert
+        self.assertTrue(np.isfinite(slope))
+        self.assertTrue(np.isfinite(intercept))
+        self.assertTrue(np.isfinite(r_squared))
+
+    def test_fit_logit_linear_handles_endpoint_response_without_fallback(self):
+        """A single response at exactly 1.0 fits normally, with no clipping needed."""
+        # Arrange: unlike the degenerate case above, a finite optimum exists here.
+        x_values = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+        y_values = np.array([0.10, 0.30, 0.60, 0.90, 1.0])
+
+        # Act
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            slope, intercept, r_squared = fit_logit_linear(x_values, y_values)
+
+        # Assert
+        self.assertGreater(slope, 0.0)
+        self.assertTrue(np.isfinite(intercept))
+        self.assertGreater(r_squared, 0.9)
+
+    def test_fit_logit_linear_initial_guess_epsilon_does_not_change_fit(self):
+        """The clip only seeds the optimiser, so it must not move the parameters."""
+        # Arrange: includes an exact endpoint, where the clip is actually active.
+        x_values = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+        y_values = np.array([0.02, 0.2, 0.5, 0.85, 1.0])
+
+        # Act
+        loose = fit_logit_linear(x_values, y_values, initial_guess_epsilon=1e-2)
+        tight = fit_logit_linear(x_values, y_values, initial_guess_epsilon=1e-9)
+
+        # Assert: same optimum reached from very different starting points.
+        for loose_value, tight_value in zip(loose, tight):
+            self.assertAlmostEqual(loose_value, tight_value, places=5)
+
+    def test_fit_logit_linear_beats_logit_space_least_squares(self):
+        """The fit minimises squared error on the original scale, not in logit space."""
+        # Arrange: an endpoint response at 1.0 is where the two criteria diverge
+        # most, since its clipped logit is an extreme leverage point.
+        x_values = np.array([0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+        y_values = np.array([0.10, 0.25, 0.45, 0.70, 0.90, 1.0])
+
+        def residual_sum_of_squares(slope: float, intercept: float) -> float:
+            predicted = 1.0 / (1.0 + np.exp(-(slope * x_values + intercept)))
+            return float(np.sum((y_values - predicted) ** 2))
+
+        # Act: the fitted parameters vs. the plain logit-space polyfit they replace.
+        slope, intercept, _ = fit_logit_linear(x_values, y_values)
+        clipped_y = np.clip(y_values, 1e-6, 1.0 - 1e-6)
+        logit_slope, logit_intercept = np.polyfit(
+            x_values, np.log(clipped_y / (1.0 - clipped_y)), 1
+        )
+
+        # Assert
+        self.assertLess(
+            residual_sum_of_squares(slope, intercept),
+            residual_sum_of_squares(logit_slope, logit_intercept),
+        )
+
+    def test_fit_logit_linear_ignores_non_finite_points(self):
+        """NaN/inf inputs are dropped rather than poisoning the fit."""
+        # Arrange: noiseless sigmoid data with two unusable points appended.
+        true_slope, true_intercept = 2.0, -0.5
+        clean_x = np.linspace(0.0, 1.0, 20)
+        clean_y = 1.0 / (1.0 + np.exp(-(true_slope * clean_x + true_intercept)))
+        x_values = np.concatenate([clean_x, [np.nan, 0.5]])
+        y_values = np.concatenate([clean_y, [0.5, np.inf]])
+
+        # Act
+        slope, intercept, r_squared = fit_logit_linear(x_values, y_values)
+
+        # Assert
+        self.assertAlmostEqual(slope, true_slope, places=4)
+        self.assertAlmostEqual(intercept, true_intercept, places=4)
+        self.assertAlmostEqual(r_squared, 1.0, places=6)
+
+    @patch('analysis.overview.simple_result_stats.curve_fit')
+    def test_fit_logit_linear_falls_back_when_optimiser_fails(self, mock_curve_fit):
+        """A non-converging fit degrades to the closed-form logit-space estimate."""
+        # Arrange
+        mock_curve_fit.side_effect = RuntimeError("maxfev exceeded")
+        x_values = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+        y_values = np.array([0.05, 0.2, 0.5, 0.8, 0.95])
+        expected_slope, expected_intercept = np.polyfit(
+            x_values, np.log(y_values / (1.0 - y_values)), 1
+        )
+
+        # Act
+        with self.assertWarns(RuntimeWarning) as warning_context:
+            slope, intercept, r_squared = fit_logit_linear(x_values, y_values)
+
+        # Assert
+        self.assertAlmostEqual(slope, float(expected_slope), places=6)
+        self.assertAlmostEqual(intercept, float(expected_intercept), places=6)
+        self.assertTrue(np.isfinite(r_squared))
+        self.assertIn("did not", str(warning_context.warning))
+
+    def test_fit_logit_linear_too_few_points_raises(self):
+        """Fewer than two finite points cannot define a line."""
+        with self.assertRaises(ValueError):
+            fit_logit_linear(np.array([0.5]), np.array([0.5]))
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_draw_scatter_mean_start_line_drawn(self, mock_savefig):
+        """mean_start_line=True adds a vertical line at the mean start fitness."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            draw_visualize_start_vs_max_fitness_by_mutations(
+                self._SCATTER_STATS, "test", "png", relative=False, ax=ax,
+                add_colorbar=False, mean_start_line=True,
+            )
+            # One line for the mean-start marker; its x sits at the mean start.
+            self.assertEqual(len(ax.lines), 1)
+            expected_mean = np.mean([0.1, 0.2])
+            line_x = ax.lines[0].get_xdata()
+            self.assertAlmostEqual(float(line_x[0]), expected_mean, places=6)
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_draw_scatter_fit_line_drawn(self, mock_savefig):
+        """fit_line=True overlays a bounded fit curve as a plotted line."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            draw_visualize_start_vs_max_fitness_by_mutations(
+                self._SCATTER_STATS, "test", "png", relative=False, ax=ax,
+                add_colorbar=False, fit_line=True,
+            )
+            self.assertEqual(len(ax.lines), 1)  # the fit curve
+            fit_y = ax.lines[0].get_ydata()
+            self.assertTrue(np.all(fit_y > 0.0))
+            self.assertTrue(np.all(fit_y < 1.0))
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_draw_scatter_no_overlays_by_default(self, mock_savefig):
+        """With both overlays off (default), no extra lines are drawn."""
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            draw_visualize_start_vs_max_fitness_by_mutations(
+                self._SCATTER_STATS, "test", "png", relative=False, ax=ax,
+                add_colorbar=False,
+            )
+            self.assertEqual(len(ax.lines), 0)
+            mock_savefig.assert_not_called()
+        finally:
+            plt.close(fig)
+
+    @patch('matplotlib.pyplot.savefig')
+    def test_hist_half_max_mutations_color_applied(self, mock_savefig):
+        """The colour argument sets the histogram bar face colour."""
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import to_rgba
+        stats = get_stats_per_gene(self.results_folder, "test", output_folder=self.temp_dir)
+        fig, ax = plt.subplots()
+        try:
+            hist_half_max_mutations(
+                stats, "test", output_folder=self.temp_dir, output_format="png",
+                ax=ax, color="0.35",
+            )
+            self.assertGreater(len(ax.patches), 0)
+            self.assertEqual(ax.patches[0].get_facecolor()[:3], to_rgba("0.35")[:3])
+        finally:
+            plt.close(fig)
+
+
+if __name__ == '__main__':
+    unittest.main()
+    # suite = unittest.TestSuite()
+    # suite.addTest(TestSimpleResultStats("test_calculate_loss_over_generations_single_gene_with_duplicates"))
+    # runner = unittest.TextTestRunner()
+    # runner.run(suite)

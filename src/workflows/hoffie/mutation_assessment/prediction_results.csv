@@ -1,0 +1,8 @@
+condition,variant,length,prediction
+zma_min,original,3020,0.04912063
+zma_min,lab_variant,3020,0.051787082
+zma_max_nat,original,3020,0.9341766
+zma_max_nat,lab_variant,3020,0.9329172
+zma_min_nat,original,3020,0.80517435
+zma_min_nat,lab_variant,3020,0.8152758
+zma_max,original,3020,0.9997389

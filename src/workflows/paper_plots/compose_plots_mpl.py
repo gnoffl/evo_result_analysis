@@ -1,0 +1,1538 @@
+"""Render-time matplotlib compositions of publication figures.
+
+Each figure is one function with hardcoded input paths, so the exact data
+backing every published panel is recorded in version control and never lost.
+Unlike ``compose_plots_svg.py`` (which scales pre-rendered SVGs to fit a page),
+these functions build a single matplotlib figure under one shared stylesheet and
+call the existing ``src/analysis`` / ``src/workflows`` plot functions with an
+``ax`` handed to them, so typography and geometry are uniform by construction.
+
+Run directly::
+
+    conda run -n deepCREshap python src/workflows/paper_plots/compose_plots_mpl.py
+"""
+
+import json
+import os
+from typing import Any, Dict, List, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib import colormaps
+from matplotlib.lines import Line2D
+
+from analysis.motives.deepcis_visualize import MUTATION_MARKER_COLOR, _plot_gene_tf
+from analysis.mutations.analyze_mutations import (
+    COLORS,
+    calculate_net_nucleotide_change,
+    calculate_positional_nucleotide_change,
+    make_line_plot_rolling_window,
+    plot_net_nucleotide_change,
+)
+from analysis.overview.simple_result_stats import (
+    draw_visualize_start_vs_max_fitness_by_mutations,
+    hist_half_max_mutations,
+    show_average_pareto_front,
+)
+from workflows.evo_alg_pooled_plots.tf_comparison.tf_comparison_calc import (
+    TF_COLUMN,
+    build_matrix,
+    order_tfs_by_group_contrast,
+    paired_tf_significance,
+    single_run_tf_significance,
+)
+from workflows.evo_alg_pooled_plots.tf_comparison.tf_comparison_plot import (
+    plot_heatmap,
+    q_to_stars,
+)
+from workflows.mutation_distance_analysis.mutation_distance_analysis import (
+    _to_proportions,
+    compute_random_distances,
+    compute_real_distances,
+    plot_difference,
+)
+from workflows.evo_alg_pooled_plots.example_gene_pareto.mutation_locations import (
+    FINAL_GENERATION,
+    GENE_RUN_DIR,
+    find_front_member,
+)
+from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.actual_mutation_region_breakdown import (
+    GOF_UNCONSTRAINED_RUN_DIR,
+    LOF_UNCONSTRAINED_RUN_DIR,
+    build_group_dataframe,
+    collect_actual_mutation_region_counts,
+    load_vcf_positions_by_gene,
+    plot_pooled_allowance_points,
+)
+from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.natural_unconstrained_mutation_vis import (
+    LOF_VCF_DIR,
+)
+from workflows.evo_alg_pooled_plots.natural_unconstrained_comparison.region_mutation_breakdown import (
+    GOF_RUN_DIR,
+    GOF_VCF_DIR,
+    build_region_dataframe,
+    collect_unconstrained_region_counts,
+    collect_vcf_region_counts,
+    plot_region_breakdown_boxes,
+)
+from analysis.mutations.summarize_mutations import MutationsGene
+from workflows.mutation_distribution_analysis.mutation_pool import MutationPool
+from workflows.overlap_analysis._common import (
+    HIGHLIGHT_WINDOW_CENTER,
+    POSITION_SERIES_COLORS,
+    compute_correlation_by_position,
+    plot_overlay_highlight_correlation,
+    simply_plot_multi,
+)
+from workflows.overlap_analysis.starrseq_deepcre_correlation_bHLH import (
+    prepare_bhlh_enrichment_df,
+)
+from workflows.overlap_analysis.starrseq_deepcre_correlation_WRKY import (
+    prepare_wrky_enrichment_df,
+)
+from workflows.paper_plots.style import (
+    DOUBLE_COLUMN_MM,
+    broken_y_axes,
+    figure_size_inches,
+    panel_label,
+    publication_style,
+    save_publication_figure,
+    sync_axis_limits,
+)
+
+OUTPUT_DIR = "src/workflows/paper_plots/figures/mpl_compositions"
+
+# Unused-but-required positional args for the plot functions: when an ``ax`` is
+# provided, nothing is saved, so ``name``/``output_format`` are never consumed.
+_UNUSED_NAME = "composed"
+_UNUSED_FORMAT = "svg"
+
+# Neutral grey for the Pareto markers and histogram bars (more subdued than the
+# default matplotlib blue for print).
+_NEUTRAL_COLOR = "0.35"
+
+# Bar transparency. Matches ``hist_half_max_mutations`` (alpha=0.7 in
+# simple_result_stats.py) so fig3's bars blend to the same lighter grey as fig2's
+# histograms (0.35 over white at alpha 0.7 ≈ 0.55).
+_BAR_ALPHA = 0.7
+
+# Scatter marker area (points^2); small enough to keep the dense minimization
+# panel readable without losing the sparse maximization panel.
+_SCATTER_MARKER_SIZE = 14.0
+
+# The average Pareto fronts saturate well before the 90-mutation expansion limit,
+# so the display is cropped to the informative range (saturation stays visible)
+# instead of wasting most of the panel on a flat tail.
+_PARETO_X_MAX = 45.0
+
+
+def _load_stats(stats_json_path: str) -> Dict[str, Dict[str, Any]]:
+    """Load a precomputed per-gene stats JSON produced by ``get_stats_per_gene``.
+
+    Args:
+        stats_json_path: Path to a ``stats_<name>.json`` file.
+
+    Returns:
+        The parsed stats dictionary keyed by gene.
+    """
+    with open(stats_json_path, "r") as stats_file:
+        return json.load(stats_file)
+
+
+def _populate_fig2(fig: plt.Figure) -> None:
+    """Draw all six panels of figure 2 onto ``fig``.
+
+    Split out from :func:`fig2` so the figure can be built once and then either
+    saved as the publication SVG or previewed as a raster during development.
+    Must be called inside a :func:`publication_style` context so the panels
+    inherit the shared typography.
+
+    Args:
+        fig: An (empty) figure to populate with a 2x3 grid of panels.
+    """
+    runs = [
+        {
+            "row_label": "maximization",
+            "results_folder": (
+                "/home/gernot/ARCitect/ARCs/dream/assays/Evolution_runs/dataset/"
+                "paper_runs/single_mutation/"
+                "arabidopsis_toolkit_msr_max_single_260224_155640_550482"
+            ),
+            "stats_json": (
+                "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+                "paper_runs/single_mutation/ara_msr_max_single/"
+                "stats_ara_msr_max_single.json"
+            ),
+        },
+        {
+            "row_label": "minimization",
+            "results_folder": (
+                "/home/gernot/ARCitect/ARCs/dream/assays/Evolution_runs/dataset/"
+                "paper_runs/single_mutation/"
+                "arabidopsis_toolkit_msr_min_single_260224_115131_937839"
+            ),
+            "stats_json": (
+                "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+                "paper_runs/single_mutation/ara_msr_min_single/"
+                "stats_ara_msr_min_single.json"
+            ),
+        },
+    ]
+
+    panel_letters = [["A", "C", "E"], ["B", "D", "F"]]
+
+    # Pre-load stats so the scatter panels can share one colour normalisation.
+    stats_per_run = [_load_stats(run["stats_json"]) for run in runs]
+    global_max_mutations = max(
+        stat["num_mutations_half_max_effect"]
+        for stats in stats_per_run
+        for stat in stats.values()
+        if "num_mutations_half_max_effect" in stat
+    )
+
+    # Columns: scatter | shared colorbar | pareto | histogram. The thin colorbar
+    # column keeps the three data columns equal width (a per-panel colorbar would
+    # otherwise shrink only the scatter cell). Spacing is managed by the figure's
+    # constrained layout.
+    grid = fig.add_gridspec(nrows=2, ncols=4, width_ratios=[1.0, 0.05, 1.0, 1.0])
+    colorbar_ax = fig.add_subplot(grid[:, 1])
+
+    scatter_axes = []
+    pareto_axes = []
+    hist_axes = []
+    scatter_mappable = None
+
+    for row_index, (run, stats) in enumerate(zip(runs, stats_per_run)):
+        scatter_ax = fig.add_subplot(grid[row_index, 0])
+        pareto_ax = fig.add_subplot(grid[row_index, 2])
+        hist_ax = fig.add_subplot(grid[row_index, 3])
+
+        scatter_mappable = draw_visualize_start_vs_max_fitness_by_mutations(
+            stats,
+            _UNUSED_NAME,
+            _UNUSED_FORMAT,
+            relative=False,
+            titles=False,
+            ax=scatter_ax,
+            add_colorbar=False,
+            vmin=0.0,
+            vmax=global_max_mutations,
+        )
+        # Small, edgeless markers keep the dense minimisation panel legible.
+        scatter_mappable.set_sizes([_SCATTER_MARKER_SIZE])
+
+        show_average_pareto_front(
+            run["results_folder"],
+            _UNUSED_FORMAT,
+            titles=False,
+            ax=pareto_ax,
+            color=_NEUTRAL_COLOR,
+            error_style="band",
+        )
+        hist_half_max_mutations(
+            stats,
+            _UNUSED_NAME,
+            _UNUSED_FORMAT,
+            titles=False,
+            ax=hist_ax,
+            color=_NEUTRAL_COLOR,
+        )
+        # Thin white separators between histogram bars for print crispness.
+        for bar in hist_ax.patches:
+            bar.set_edgecolor("white")
+            bar.set_linewidth(0.4)
+
+        for column_index, ax in enumerate((scatter_ax, pareto_ax, hist_ax)):
+            panel_label(ax, panel_letters[row_index][column_index])
+
+        # Row identifier in the left margin (which optimisation objective).
+        scatter_ax.text(
+            -0.42,
+            0.5,
+            run["row_label"],
+            transform=scatter_ax.transAxes,
+            rotation=90,
+            ha="center",
+            va="center",
+            fontweight="bold",
+        )
+
+        # Keep the tick numbers on every panel, but show the x-axis label only on
+        # the bottom row (the top row's x-axis is identical to the one below it).
+        if row_index == 0:
+            for ax in (scatter_ax, pareto_ax, hist_ax):
+                ax.set_xlabel("")
+
+        scatter_axes.append(scatter_ax)
+        pareto_axes.append(pareto_ax)
+        hist_axes.append(hist_ax)
+
+    # One shared colorbar for both scatter panels (they use a common norm).
+    fig.colorbar(
+        scatter_mappable, cax=colorbar_ax, label="Mutations at Half Max Effect"
+    )
+
+    # Panel B's tick labels carry one more decimal place than panel A's,
+    # which otherwise pushes B's y-axis label further from the axis than
+    # A's. Pull B's label in to match A's (tighter) distance.
+    scatter_axes[1].yaxis.labelpad = 1.0
+    scatter_axes[0].yaxis.labelpad = 5.0
+
+
+    # Make the two runs comparable within the Pareto and histogram columns.
+    sync_axis_limits(pareto_axes)
+    sync_axis_limits(hist_axes)
+
+    # Crop the flat, uninformative tail of the Pareto fronts (fills the panels).
+    for ax in pareto_axes:
+        ax.set_xlim(right=_PARETO_X_MAX)
+
+
+def fig2() -> None:
+    """Compose figure 2: two single-mutation runs (max top, min bottom).
+
+    Data columns are scatter (start vs. final fitness coloured by mutations at
+    half max, magma), average Pareto front, and histogram of mutations at half
+    max, separated by a thin column holding one colorbar shared by both scatter
+    panels. The Pareto and histogram columns each share x/y limits across the two
+    runs so the runs are directly comparable; scatter y is left independent
+    (maximisation saturates near 1, minimisation near 0 by objective).
+    """
+    with publication_style():
+        fig = plt.figure(
+            figsize=figure_size_inches(DOUBLE_COLUMN_MM, 100.0), layout="constrained"
+        )
+        _populate_fig2(fig)
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        save_publication_figure(fig, os.path.join(OUTPUT_DIR, "fig2_composed.svg"))
+        plt.close(fig)
+
+
+# --- Figure 3: mutation signatures (net change, distances) + TF contrast -----
+
+# The two maximization runs compared in the left 2x2 grid (net nucleotide change
+# and mutation-distance difference), top row then bottom row.
+_FIG3_RUNS = [
+    {
+        "species_label": "A. thaliana",
+        "mutated_sequences_json": (
+            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+            "paper_runs/single_mutation/ara_msr_max_single/"
+            "all_mutated_sequences_ara_msr_max_single_gen1999.json"
+        ),
+    },
+    {
+        "species_label": "Z. mays",
+        "mutated_sequences_json": (
+            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+            "paper_runs/single_mutation/zea_msr_max_single/"
+            "all_mutated_sequences_zea_msr_max_single_gen1999.json"
+        ),
+    },
+]
+
+# Panel E — the four-run TF-comparison directories (display order: the two
+# maximization runs then the two minimization runs). These mirror
+# ``minmax_comparison.py`` so panel E matches that standalone figure's data,
+# ordering and cell-significance stars.
+_ARA_MAX_DIR = (
+    "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+    "paper_runs/single_mutation/ara_msr_max_single"
+)
+_GOF_DIR = (
+    "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+    "GOF_LOF/GOF/GOF_single"
+)
+_ARA_MIN_DIR = (
+    "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+    "paper_runs/single_mutation/ara_msr_min_single"
+)
+_LOF_DIR = (
+    "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+    "GOF_LOF/LOF/LOF_single"
+)
+_FIG3_TF_RUNS: List[Tuple[str, str]] = [
+    (_ARA_MAX_DIR, "ara max"),
+    (_GOF_DIR, "GOF"),
+    (_ARA_MIN_DIR, "ara min"),
+    (_LOF_DIR, "LOF"),
+]
+# Left group = maximization runs, right group = minimization runs. Ordering
+# (order_tfs_by_group_contrast) and the vertical divider both use this split.
+_FIG3_TF_LEFT_COLUMNS = ["ara max", "GOF"]
+_FIG3_TF_RIGHT_COLUMNS = ["ara min", "LOF"]
+# The single runs (no paired partner) that get an independent intra-run test for
+# their cell stars; the ara pair reuses the q_a / q_b from the paired analysis.
+_FIG3_TF_SINGLE_RUNS: List[Tuple[str, str]] = [(_GOF_DIR, "GOF"), (_LOF_DIR, "LOF")]
+
+# Crop the mutation-distance difference panels to short distances: the signal is
+# concentrated near zero and the long tail is flat and uninformative.
+_DISTANCE_MAX = 30
+# Random-baseline replicates per gene and RNG seed for the distance null.
+_DISTANCE_REPLICATES_PER_GENE = 10
+_DISTANCE_SEED = 42
+# Keep only TFs whose paired ara max-vs-min contrast reaches the *** tier; the
+# cutoff matches ``q_to_stars`` (q < 0.001). Every selected TF then carries three
+# stars, so the redundant row-label stars are dropped.
+_THREE_STAR_ALPHA = 0.001
+# Panel E group/run dividers: soft grey, thin (the default black/2.0 reads harsh).
+_SEPARATOR_COLOR = "0.45"
+_SEPARATOR_WIDTH = 1.0
+# Downward shift (in cell-height units) to centre the high-sitting asterisks.
+_STAR_VERTICAL_NUDGE = 0.12
+
+
+def _distance_difference_proportions(
+    mutated_sequences_json: str,
+) -> Tuple[Dict[int, float], Dict[int, float]]:
+    """Compute real and random inter-mutation distance proportions for one run.
+
+    Builds a :class:`MutationPool` in memory from the run's summarized-mutations
+    JSON (no cached pool file is needed), then returns the normalized real and
+    random-baseline distance distributions ready for :func:`plot_difference`.
+
+    Args:
+        mutated_sequences_json: Path to an ``all_mutated_sequences_*.json`` file.
+
+    Returns:
+        ``(real_proportions, random_proportions)`` as ``{distance: proportion}``
+        mappings.
+    """
+    pool = MutationPool.from_summarized_json(mutated_sequences_json)
+    real_distances = compute_real_distances(pool)
+    rng = np.random.default_rng(_DISTANCE_SEED)
+    random_distances = compute_random_distances(
+        pool, _DISTANCE_REPLICATES_PER_GENE, rng
+    )
+    return _to_proportions(real_distances), _to_proportions(random_distances)
+
+
+def _significant_tf_cell_stars(
+    significance: "Any",
+) -> Dict[str, Dict[str, str]]:
+    """Build the intra-run cell-significance stars for panel E's four runs.
+
+    Mirrors ``minmax_comparison.py``: the ara pair reuses the ``q_a`` / ``q_b``
+    columns already produced by the paired analysis, while the single runs
+    (GOF, LOF) are each tested independently via
+    :func:`single_run_tf_significance`.
+
+    Args:
+        significance: The paired ara max-vs-min significance frame (with the
+            default ``q_a`` / ``q_b`` per-run columns).
+
+    Returns:
+        Mapping of run label to ``{tf: stars}`` for the numeric cell annotations.
+    """
+    cell_stars: Dict[str, Dict[str, str]] = {
+        "ara max": dict(zip(significance[TF_COLUMN], significance["q_a"].map(q_to_stars))),
+        "ara min": dict(zip(significance[TF_COLUMN], significance["q_b"].map(q_to_stars))),
+    }
+    for run_dir, label in _FIG3_TF_SINGLE_RUNS:
+        intra = single_run_tf_significance(run_dir)
+        cell_stars[label] = dict(zip(intra[TF_COLUMN], intra["q_intra"].map(q_to_stars)))
+    return cell_stars
+
+
+def _draw_significant_tf_heatmap(ax: plt.Axes, colorbar_ax: plt.Axes) -> None:
+    """Draw panel E: the three-star ara max-vs-min TFs across all four runs.
+
+    Runs the paired ara max/min contrast and keeps only the TFs reaching the
+    *** significance tier (:data:`_THREE_STAR_ALPHA`). The four-run per-gene diff
+    matrix is ordered exactly as in ``minmax_comparison.py``
+    (:func:`order_tfs_by_group_contrast`), which places the max-favoured TFs
+    above the min-favoured ones. Subtle grey dividers separate the maximization
+    from the minimization runs (vertical) and the two TF blocks (horizontal,
+    where the ordering score changes sign). Intra-run significance stars annotate
+    the cells; row labels carry no stars — every selected TF is *** by
+    construction. The heatmap's colour bar is drawn into ``colorbar_ax`` so it
+    can sit in a dedicated thin column next to the (narrow) heatmap.
+
+    Args:
+        ax: Axes to draw the heatmap onto.
+        colorbar_ax: Thin axes to hold the shared colour bar.
+    """
+    significance = paired_tf_significance(_ARA_MAX_DIR, _ARA_MIN_DIR)
+    three_star_tfs = set(
+        significance.loc[
+            significance["q_contrast"] < _THREE_STAR_ALPHA, TF_COLUMN
+        ]
+    )
+
+    matrix = order_tfs_by_group_contrast(
+        build_matrix(_FIG3_TF_RUNS, normalization="per_gene"),
+        _FIG3_TF_LEFT_COLUMNS,
+        _FIG3_TF_RIGHT_COLUMNS,
+    )
+    matrix = matrix.loc[[tf for tf in matrix.index if tf in three_star_tfs]]
+
+    plot_heatmap(
+        matrix,
+        annotate=True,
+        cell_stars=_significant_tf_cell_stars(significance),
+        separator_after_column=None,
+        annotate_values=False,
+        add_colorbar=False,
+        ax=ax,
+    )
+    ax.figure.colorbar(
+        ax.collections[0], cax=colorbar_ax, label="Δ binding peaks / gene"
+    )
+
+    # Force every TF label to show: in this shorter axes seaborn's default "auto"
+    # y-ticks would otherwise thin the labels to every other TF.
+    n_rows, n_columns = matrix.shape
+    ax.set_yticks(np.arange(n_rows) + 0.5)
+    tf_names = [tf.split("_", 1)[0] for tf in matrix.index]
+    ax.set_yticklabels(tf_names, rotation=0)
+
+    # Asterisk glyphs sit high in their text box, so seaborn's va="center" leaves
+    # them above the cell centre; nudge each annotation down to centre it.
+    for annotation in ax.texts:
+        text_x, text_y = annotation.get_position()
+        annotation.set_position((text_x, text_y + _STAR_VERTICAL_NUDGE))
+
+    # Subtle grey dividers: vertical between the max and min run groups,
+    # horizontal where the ordering score (max-group minus min-group mean)
+    # changes sign (max-favoured TFs above, min-favoured below).
+    ax.axvline(
+        len(_FIG3_TF_LEFT_COLUMNS),
+        color=_SEPARATOR_COLOR,
+        linewidth=_SEPARATOR_WIDTH,
+    )
+    left_mean = matrix[_FIG3_TF_LEFT_COLUMNS].mean(axis=1).fillna(0.0)
+    right_mean = matrix[_FIG3_TF_RIGHT_COLUMNS].mean(axis=1).fillna(0.0)
+    n_more_in_max = int(((left_mean - right_mean) > 0).sum())
+    if 0 < n_more_in_max < n_rows:
+        ax.axhline(
+            n_more_in_max,
+            color=_SEPARATOR_COLOR,
+            linewidth=_SEPARATOR_WIDTH,
+        )
+
+
+def _color_bars_neutral(ax: plt.Axes) -> None:
+    """Paint all of an axes' bars a single neutral grey.
+
+    The bar panels carry no colour meaning (sign is already read from the zero
+    line), so a uniform grey keeps colour reserved for the heatmap (panel G).
+
+    Args:
+        ax: Axes whose bar patches should be recoloured.
+    """
+    for bar in ax.patches:
+        bar.set_color(_NEUTRAL_COLOR)
+        bar.set_alpha(_BAR_ALPHA)
+
+
+def _populate_fig3(fig: plt.Figure) -> None:
+    """Draw all seven panels of figure 3 onto ``fig``.
+
+    Layout is one flat 4-column x 5-row grid (no nested outer halves). Row 0
+    holds the two net-nucleotide-change bar plots (A: ara, B: zea) one-per-column
+    in the left two columns, plus the ara rolling-mean line panel (C) spanning
+    the right two columns; row 1 is a short strip holding the shared A/C/G/T
+    legend; rows 2-4 have equal height. The zea rolling-mean line panel (D) spans
+    the left two columns of row 2; the two mutation-distance difference panels
+    (E: ara, F: zea) each span the left two columns on rows 3 and 4; the
+    significant-TF heatmap (G) spans the right two columns across rows 2-4, with
+    a dedicated thin colour-bar column split off inside it. The line and bar
+    plots share one A/C/G/T nucleotide colour scheme, explained by the single
+    legend in row 1. Must be called inside a :func:`publication_style` context.
+
+    Args:
+        fig: An (empty) figure to populate.
+    """
+    # Flat grid: row 0 the bar panels (left) and the ara line panel (right), row 1
+    # the (short) shared legend spanning all columns, rows 2-4 equal height.
+    # Columns are equal width; C, D and E/F span two columns each.
+    grid = fig.add_gridspec(
+        nrows=5, ncols=4, height_ratios=[1.0, 0.2, 1.0, 1.0, 1.0]
+    )
+
+    legend_ax = fig.add_subplot(grid[1, :])
+    legend_ax.axis("off")
+
+    # Heatmap spans the right two columns of rows 2-4; split off a thin colour-bar
+    # column beside its (label-narrowed) body.
+    heatmap_cells = grid[2:5, 2:4].subgridspec(
+        nrows=1, ncols=2, width_ratios=[1.0, 0.045], wspace=0.05
+    )
+
+    # --- A, B: net-nucleotide-change bar plots (row 0, one per left column) ---
+    bar_axes = []
+    bar_cells = [grid[0, 0], grid[0, 1]]
+    for column_index, (run, letter) in enumerate(zip(_FIG3_RUNS, ["A", "B"])):
+        bar_ax = fig.add_subplot(bar_cells[column_index])
+        net_change = calculate_net_nucleotide_change(run["mutated_sequences_json"])
+        # plot_net_nucleotide_change already colours the bars by A/C/G/T, matching
+        # the line plots, so no neutral recolouring here.
+        plot_net_nucleotide_change(
+            net_change,
+            _UNUSED_NAME,
+            _UNUSED_FORMAT,
+            titles=False,
+            ax=bar_ax,
+        )
+        bar_ax.axhline(0, color="black", linewidth=0.8)
+        bar_ax.set_title(run["species_label"], fontstyle="italic")
+        # A and B sit side by side and share the y-axis label: keep it on A only.
+        if column_index == 1:
+            bar_ax.set_ylabel("")
+        panel_label(bar_ax, letter)
+        bar_axes.append(bar_ax)
+
+    # --- C, D: net-change rolling-mean line plots (row 0 right, row 2 left) ---
+    # The two line panels are no longer side by side, so each keeps its own
+    # y-axis label.
+    line_axes = []
+    line_cells = [grid[0, 2:4], grid[2, 0:2]]
+    for panel_index, (run, letter) in enumerate(zip(_FIG3_RUNS, ["C", "D"])):
+        line_ax = fig.add_subplot(line_cells[panel_index])
+        _, _, net_change_by_position = calculate_positional_nucleotide_change(
+            run["mutated_sequences_json"]
+        )
+        make_line_plot_rolling_window(
+            net_change_by_position,
+            f"{_UNUSED_NAME}_diff",
+            _UNUSED_FORMAT,
+            titles=False,
+            ax=line_ax,
+            plot_sum=False,
+        )
+        # The shared figure legend replaces the per-panel one.
+        panel_legend = line_ax.get_legend()
+        if panel_legend is not None:
+            panel_legend.remove()
+        line_ax.set_title(run["species_label"], fontstyle="italic")
+        panel_label(line_ax, letter)
+        line_axes.append(line_ax)
+
+    # --- E, F: mutation-distance difference panels (rows 3-4, left columns) ---
+    distance_axes = []
+    distance_cells = [grid[3, 0:2], grid[4, 0:2]]
+    for row_index, (run, letter) in enumerate(zip(_FIG3_RUNS, ["E", "F"])):
+        distance_ax = fig.add_subplot(distance_cells[row_index])
+        real_proportions, random_proportions = _distance_difference_proportions(
+            run["mutated_sequences_json"]
+        )
+        plot_difference(
+            real_proportions,
+            random_proportions,
+            _UNUSED_NAME,
+            OUTPUT_DIR,
+            max_distance=_DISTANCE_MAX,
+            ax=distance_ax,
+        )
+        distance_ax.set_title(run["species_label"], fontstyle="italic")
+        _color_bars_neutral(distance_ax)
+        # No colour meaning left to explain, so drop the legend entirely.
+        existing_legend = distance_ax.get_legend()
+        if existing_legend is not None:
+            existing_legend.remove()
+        # E and F share the x-axis label: keep it on F (the bottom panel) only.
+        if row_index == 0:
+            distance_ax.set_xlabel("")
+        panel_label(distance_ax, letter)
+        distance_axes.append(distance_ax)
+
+    # --- G: significant-TF heatmap (right two columns, spans rows 2-4) --------
+    heatmap_ax = fig.add_subplot(heatmap_cells[0, 0])
+    colorbar_ax = fig.add_subplot(heatmap_cells[0, 1])
+    _draw_significant_tf_heatmap(heatmap_ax, colorbar_ax)
+    heatmap_label = panel_label(heatmap_ax, "G")
+
+    # Make the two runs directly comparable within each panel type.
+    sync_axis_limits(line_axes, sync_x=False, sync_y=True)
+    sync_axis_limits(bar_axes, sync_x=False, sync_y=True)
+    sync_axis_limits(distance_axes)
+
+    # One shared legend for the A/C/G/T nucleotide colours (line and bar plots),
+    # drawn in the reserved top row so no panel carries its own.
+    nucleotide_handles = [
+        Line2D([0], [0], color=COLORS[nucleotide], label=nucleotide)
+        for nucleotide in ["A", "C", "G", "T"]
+    ]
+    legend_ax.legend(
+        handles=nucleotide_handles,
+        loc="center",
+        ncol=4,
+        frameon=False,
+    )
+
+    # G's long TF row labels shrink the heatmap axes far to the right, so its
+    # panel letter (anchored in axes fraction) lands right of C's. Re-anchor it in
+    # figure coordinates to C's letter x (C is the panel directly above G, in the
+    # same right two columns), just above G's own top, so the two right-column
+    # letters line up. Requires a draw so the constrained layout has resolved the
+    # final axes positions.
+    fig.canvas.draw()
+    c_axes_position = line_axes[0].get_position()
+    # -0.08 and +0.02 mirror panel_label's default x and (y - 1) offsets.
+    c_label_x = c_axes_position.x0 - 0.08 * c_axes_position.width
+    heatmap_position = heatmap_ax.get_position()
+    heatmap_label.set_transform(fig.transFigure)
+    heatmap_label.set_position(
+        (c_label_x, heatmap_position.y1 + 0.02 * heatmap_position.height)
+    )
+
+
+def fig3() -> None:
+    """Compose figure 3: mutation signatures plus the significant-TF contrast.
+
+    Panels A/B are the total net nucleotide change (A, C, G, T bar plots) for the
+    ara and zea maximization runs; panels C/D are the rolling-mean net nucleotide
+    change along the sequence for the same runs (C: ara, D: zea); panels E/F are
+    the per-distance difference between the real and random-baseline inter-mutation
+    distance distributions (shared limits). A/B and C/D share one A/C/G/T
+    nucleotide colour scheme with a single figure legend. Panel G is the four-run
+    per-gene TF diff heatmap restricted to the TFs whose ara max-vs-min paired
+    contrast reaches the *** tier, ordered by group contrast so the max-favoured
+    TFs sit above the min-favoured ones.
+    """
+    with publication_style():
+        fig = plt.figure(
+            figsize=figure_size_inches(DOUBLE_COLUMN_MM, 250.0), layout="constrained"
+        )
+        _populate_fig3(fig)
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        save_publication_figure(fig, os.path.join(OUTPUT_DIR, "fig3_composed.svg"))
+        plt.close(fig)
+
+
+# --- Figure 4: GOF/LOF single-mutation runs (fitness + half-max + regions) ---
+
+# The four runs shown one per row: the two unconstrained ("single") runs on top
+# (GOF then LOF), the two natural (constrained) runs below in the same order.
+# ``objective`` groups the scatter y-limit sharing (both maximization panels share
+# one y-range, both minimization panels another).
+_FIG4_RUNS: List[Dict[str, str]] = [
+    {
+        "row_label": "GOF",
+        "objective": "max",
+        "stats_json": (
+            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+            "GOF_LOF/GOF/GOF_single/stats_GOF_single.json"
+        ),
+    },
+    {
+        "row_label": "LOF",
+        "objective": "min",
+        "stats_json": (
+            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+            "GOF_LOF/LOF/LOF_single/stats_LOF_single.json"
+        ),
+    },
+    {
+        "row_label": "GOF (natural)",
+        "objective": "max",
+        "stats_json": (
+            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+            "GOF_LOF/GOF/GOF_single_natural/stats_GOF_single_natural.json"
+        ),
+    },
+    {
+        "row_label": "LOF (natural)",
+        "objective": "min",
+        "stats_json": (
+            "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/"
+            "GOF_LOF/LOF/LOF_single_natural/stats_LOF_single_natural.json"
+        ),
+    },
+]
+
+# Scatter-panel overlays: a dashed medium-grey vertical line marking the mean
+# start fitness (drawn behind the points) and a black logit-linear best-fit curve
+# of final vs start fitness (bounded to (0, 1); see ``fit_logit_linear``).
+_MEAN_START_LINE_COLOR = "0.5"
+_FIT_LINE_COLOR = "black"
+
+# Panel letters: two per run row (scatter, histogram), then the two region panels
+# (possible-mutation breakdown, natural-allowance breakdown), then the full-width
+# example-gene deepCIS track.
+_FIG4_RUN_LETTERS = [["A", "B"], ["C", "D"], ["E", "F"], ["G", "H"]]
+
+# Distance in points from the left spine of a scatter panel to its rotated run
+# label, chosen to clear the y-tick labels and the y-axis label.
+_FIG4_ROW_LABEL_OFFSET_POINTS = 42.0
+
+# Histogram panels (B/D/F/H): both axes are cropped, because a handful of extreme
+# genes otherwise leave the panels nearly empty.
+#
+# x: only 4 of the 345 genes need more than 30 mutations to reach half max (1 in
+# panel F, 3 in panel H). They are pooled into a ">=30" overflow bin rather than
+# dropped, so the bulk of the distribution gets the whole axis and no gene
+# disappears.
+#
+# y: the four panels must share one count axis to stay comparable, and panel B's
+# spike of 60 genes at 2 mutations set that axis on its own -- the tallest bar
+# anywhere else is 27. The axis is therefore broken: continuous over the range
+# every panel uses, then a gap over the empty stretch, resuming around panel B's
+# spike. Nothing falls into the gap (no bar in any panel has a count between 28
+# and 54), so the break hides no data.
+_FIG4_HIST_MAX_MUTATIONS = 30
+_FIG4_HIST_LOWER_YLIM = (0.0, 29.0)
+_FIG4_HIST_UPPER_YLIM = (55.0, 63.0)
+_FIG4_HIST_UPPER_YTICKS = (60,)
+_FIG4_HIST_HEIGHT_RATIOS = (0.7, 4.0)
+# The break should read as a cut in one axis, so the two halves sit as close as
+# the tick decorations allow. ``hspace=0`` removes the extra gridspec spacing,
+# but under ``layout="constrained"`` the two halves are still held apart by the
+# layout engine's ``h_pad`` (default ~0.042 in on each axes, i.e. ~2 mm of
+# whitespace across the cut), which made the split bar in panel B read as two
+# separate values. The pad is a figure-wide setting, so it is reduced on the
+# figure itself; the run rows keep their separation from their tick labels and
+# axis labels.
+_FIG4_HIST_BREAK_HSPACE = 0.0
+_FIG4_LAYOUT_H_PAD_INCHES = 0.01
+_FIG4_REGION_LETTER = "I"
+_FIG4_ALLOWANCE_LETTER = "J"
+_FIG4_DEEPCIS_LETTER = "K"
+
+# --- Panel K: deepCIS binding track of one example gene ----------------------
+#
+# The gene is one member of the constrained GOF run (``GENE_RUN_DIR``, the same
+# run and gene the mutation-location report covers); the track below is the
+# deepCIS window scan of its 5-mutation Pareto-front member, produced by
+# ``analysis_scripts/run_deepcis_peak_pipeline.sh`` with
+# ``--genes AT3G60640 --mutation-count 5``. Peaks are deliberately NOT shaded:
+# the panel's point is where the introduced mutations sit relative to the binding
+# signal, not which regions were peak-called.
+_FIG4_DEEPCIS_SCAN_CSV = (
+    "/home/gernot/ARCitect/ARCs/dream/assays/Evo_run_analysis/dataset/GOF_LOF/GOF/"
+    "deepdive_simons_gene/deepcis_scan/"
+    "deepcis_window_scan_deepdive_simons_gene_mut5.csv"
+)
+_FIG4_DEEPCIS_GENE = "3_AT3G60640_gene:22415750-22417548_260312_000750_357934"
+_FIG4_DEEPCIS_TF = "LOBAS2_tnt"
+
+# Mutation count of the Pareto-front member the scan above was run on. Must match
+# the ``--mutation-count`` used for the pipeline, since the positions marked in
+# the panel are read from that same front member.
+_FIG4_DEEPCIS_MUTATION_COUNT = 5
+
+# Line weights for the track. The standalone plot draws every curve solid at
+# linewidth 2, which is both too heavy for a compact panel and hides the
+# reference wherever the two sequences predict the same signal (the optimized
+# curve is drawn last). A thinner dashed optimized curve on top of a solid
+# reference keeps both readable where they coincide.
+_FIG4_DEEPCIS_REFERENCE_WIDTH = 1.8
+_FIG4_DEEPCIS_OPTIMIZED_WIDTH = 1.4
+_FIG4_DEEPCIS_OPTIMIZED_DASHES = (3, 2)
+
+_FIG4_DEEPCIS_MAGMA = colormaps["magma"]
+
+# Optimized curve and mutation markers are recoloured from the standalone
+# plot's blue/"#d62728" onto the same magma map the rest of the figure's
+# colours are sampled from (see _FIG4_CONDITION_COLORS below). Reference and
+# the TSS/TTS markers keep their standalone colours (black, "#2f4f4f"). The
+# optimized colour sits at a middle magma sample: dark enough to stay visible
+# against the white background, light enough to read against the black
+# reference line, and far enough from the mutation markers' sample (0.65) to
+# stay a distinct magenta rather than red.
+_FIG4_DEEPCIS_OPTIMIZED_COLOR = _FIG4_DEEPCIS_MAGMA(0.75)
+_FIG4_DEEPCIS_MUTATION_COLOR = _FIG4_DEEPCIS_MAGMA(0.55)  # keeps a red look
+
+# Bottom-row hue colours, sampled from the same magma map as the scatter
+# colorbar so the whole figure stays in one colour family. Panel I takes the two
+# far-apart samples (dark purple vs orange) because its two boxes are read against
+# each other; panel J takes the intermediate pair, so the two hue meanings
+# (condition vs gene set) stay distinguishable despite sitting side by side.
+# Unchanged from the bar version of these panels, so the colour code of the whole
+# figure is untouched by the switch to boxes and dots.
+_FIG4_CONDITION_COLORS = {"Constrained": "#3b0f70", "Unconstrained": "#f9795d"}
+_FIG4_GROUP_COLORS = {"GOF": "#ca3e72", "LOF": "#fec68a"}
+
+# Legends of the two bottom-row panels are drawn below their axes (just under the
+# x-label) instead of inside, where the data would overlap them.
+_FIG4_LEGEND_BELOW_ANCHOR = (0.5, -0.24)
+
+
+def _gof_region_dataframe() -> pd.DataFrame:
+    """Build the GOF-only tidy region-count frame for the breakdown panel.
+
+    Reuses the source-of-truth GOF directories (``GOF_VCF_DIR`` for the
+    constrained natural mutations, ``GOF_RUN_DIR`` for the unconstrained
+    reference positions) from the region-breakdown workflow. The LOF slots of
+    :func:`build_region_dataframe` are filled with empty frames because
+    :func:`plot_region_breakdown_boxes` keeps only the ``group == "GOF"`` rows,
+    so LOF is scanned and drawn nowhere in figure 4.
+
+    Returns:
+        Tidy DataFrame with columns ``gene``, ``group``, ``condition``,
+        ``region``, ``count`` holding only the GOF constrained and unconstrained
+        counts.
+    """
+    gof_vcf = collect_vcf_region_counts(GOF_VCF_DIR)
+    gof_unconstrained = collect_unconstrained_region_counts(GOF_RUN_DIR)
+    empty = pd.DataFrame(columns=["gene", "region", "count"])
+    return build_region_dataframe(gof_vcf, empty, gof_unconstrained, empty)
+
+
+def _actual_mutation_allowance_dataframe() -> pd.DataFrame:
+    """Build the per-gene percent-allowed frame for the allowance panel.
+
+    Diffs the most-mutated final individual of every gene in the two
+    *unconstrained* runs against its reference and checks each introduced
+    mutation's position against that gene's natural-variation VCF, binned by
+    genomic region. Both gene sets (GOF and LOF) are included, since the panel
+    contrasts them as hues.
+
+    Returns:
+        Tidy DataFrame from :func:`build_group_dataframe` with one row per gene
+        and region, including the ``percent_allowed`` column.
+    """
+    gof_counts = collect_actual_mutation_region_counts(
+        GOF_UNCONSTRAINED_RUN_DIR, load_vcf_positions_by_gene(GOF_VCF_DIR)
+    )
+    lof_counts = collect_actual_mutation_region_counts(
+        LOF_UNCONSTRAINED_RUN_DIR, load_vcf_positions_by_gene(LOF_VCF_DIR)
+    )
+    return build_group_dataframe(gof_counts, lof_counts)
+
+
+def _fig4_introduced_mutation_positions() -> List[float]:
+    """Read the marked mutation positions from the example gene's Pareto front.
+
+    The positions are taken from the front member the deepCIS scan was run on
+    (``_FIG4_DEEPCIS_MUTATION_COUNT`` mutations), so the panel can never drift
+    from the sequence it plots. ``MutatedSequence.mutations`` is 0-based while
+    the scan's window centers are 1-based (see ``deepcis_visualize.get_centers``),
+    so every position is shifted by one.
+
+    Returns:
+        Sorted 1-based positions of the introduced mutations.
+    """
+    gene = MutationsGene(
+        str(GENE_RUN_DIR),
+        final_generation=FINAL_GENERATION,
+        generation=FINAL_GENERATION,
+    )
+    member = find_front_member(
+        gene, _FIG4_DEEPCIS_MUTATION_COUNT, FINAL_GENERATION
+    )
+    return sorted(float(position + 1) for position, _, _ in member.mutations)
+
+
+def _restyle_fig4_deepcis_lines(ax: plt.Axes) -> None:
+    """Thin the track's curves, dash the optimized one, and recolour it to magma.
+
+    Both sequences predict an identical signal over most of the window, and the
+    optimized curve is drawn last, so at the standalone line weight it hides the
+    reference entirely outside the few windows the mutations touch. Dashing it
+    lets the reference show through wherever the two coincide. The optimized
+    curve and the mutation markers are also recoloured from the standalone
+    plot's blue/"#d62728" onto the figure's magma palette (reference and the
+    TSS/TTS markers are left at their standalone colours). The mutation
+    markers' legend proxy (an off-axes handle already sitting on the legend
+    built by ``_plot_gene_tf``) is recoloured too, since it carries no artist on
+    ``ax`` for the vertical-marker loop below to reach.
+
+    Args:
+        ax: Axes holding the track. Curves are matched by their legend label,
+            and mutation markers by their standalone colour, so the TSS/TTS
+            markers (a different colour) are left untouched.
+    """
+    for line in ax.get_lines():
+        if line.get_label() == "Reference":
+            line.set_linewidth(_FIG4_DEEPCIS_REFERENCE_WIDTH)
+        elif line.get_label() == "Optimized":
+            line.set_linewidth(_FIG4_DEEPCIS_OPTIMIZED_WIDTH)
+            line.set_dashes(_FIG4_DEEPCIS_OPTIMIZED_DASHES)
+            line.set_color(_FIG4_DEEPCIS_OPTIMIZED_COLOR)
+        elif line.get_color() == MUTATION_MARKER_COLOR:
+            line.set_color(_FIG4_DEEPCIS_MUTATION_COLOR)
+
+    legend = ax.get_legend()
+    if legend is not None:
+        for handle in legend.legend_handles:  # type: ignore
+            if handle.get_color() == MUTATION_MARKER_COLOR:
+                handle.set_color(_FIG4_DEEPCIS_MUTATION_COLOR)
+
+
+def _legend_below_keeping_entries(ax: plt.Axes) -> None:
+    """Redraw an axes' existing legend as one row below the axes.
+
+    Calling ``ax.legend(...)`` afresh would rebuild the legend from the automatic
+    handles only and silently drop the proxy entries the plotting function added
+    for its vertical markers, so the handles already collected are reused.
+    Unlike :func:`_move_legend_below`, this keeps proxy entries; the two differ
+    only in where the handles come from.
+
+    Handles of curves still present on the axes are re-taken from the live
+    artists, so a curve restyled after the legend was first built (see
+    :func:`_restyle_fig4_deepcis_lines`) gets a matching swatch. Proxy entries,
+    which have no artist on the axes, are carried over unchanged.
+
+    Args:
+        ax: Axes whose legend should be moved. Does nothing if it has no legend.
+    """
+    existing_legend = ax.get_legend()
+    if existing_legend is None:
+        return
+    labels = [text.get_text() for text in existing_legend.get_texts()]
+    live_artists_by_label = {
+        line.get_label(): line
+        for line in ax.get_lines()
+        if not str(line.get_label()).startswith("_")
+    }
+    handles = [
+        live_artists_by_label.get(label, handle)
+        for handle, label in zip(existing_legend.legend_handles, labels)  # type: ignore
+    ]
+    existing_legend.remove()
+    ax.legend(
+        handles=handles,
+        labels=labels,
+        loc="upper center",
+        bbox_to_anchor=_FIG4_LEGEND_BELOW_ANCHOR,
+        ncol=len(labels),
+        frameon=False,
+    )
+
+
+def _draw_fig4_deepcis_track(ax: plt.Axes) -> None:
+    """Draw the example gene's reference-vs-optimized deepCIS track on ``ax``.
+
+    Reference and optimized binding predictions for one TF family are drawn over
+    the 3020 bp deepCRE extraction window, with the positions of the introduced
+    mutations marked. The difference curve is dropped: it would force the y-range
+    to (-1, 1) and halve the vertical resolution of a short full-width panel,
+    while the two curves already show the change.
+
+    Args:
+        ax: Axes to draw on.
+    """
+    scan_data = pd.read_csv(_FIG4_DEEPCIS_SCAN_CSV)
+    gene_data = scan_data[scan_data["gene"] == _FIG4_DEEPCIS_GENE]
+    if gene_data.empty:
+        raise ValueError(
+            f"Gene {_FIG4_DEEPCIS_GENE!r} not found in {_FIG4_DEEPCIS_SCAN_CSV}."
+        )
+
+    _plot_gene_tf(
+        gene_data,
+        _FIG4_DEEPCIS_GENE,
+        _FIG4_DEEPCIS_TF,
+        ax,
+        include_title=False,
+        highlight_peaks=False,
+        show_difference=False,
+        mutation_positions=_fig4_introduced_mutation_positions(),
+        mutation_marker_label=(
+            f"Introduced mutations (n={_FIG4_DEEPCIS_MUTATION_COUNT})"
+        ),
+    )
+    _restyle_fig4_deepcis_lines(ax)
+    ax.set_ylabel(f"{_FIG4_DEEPCIS_TF} binding score")
+    ax.set_xlabel("Position in extraction window (bp)")
+    # No grid, matching every other panel of this figure.
+    ax.grid(False)
+    _legend_below_keeping_entries(ax)
+
+
+def _move_legend_below(ax: plt.Axes) -> None:
+    """Redraw an axes' existing legend as a horizontal legend below the axes.
+
+    The plotting functions place their legend inside the axes, where it overlaps
+    the bars in a compact panel. This re-creates it from the existing handles as
+    a single frameless, untitled row just under the x-label; the entry labels are
+    self-explanatory, so a legend title would only add clutter.
+
+    Args:
+        ax: Axes whose legend should be moved. Does nothing if it has no legend.
+    """
+    existing_legend = ax.get_legend()
+    if existing_legend is None:
+        return
+    handles, labels = ax.get_legend_handles_labels()
+    existing_legend.remove()
+    ax.legend(
+        handles=handles,
+        labels=labels,
+        loc="upper center",
+        bbox_to_anchor=_FIG4_LEGEND_BELOW_ANCHOR,
+        ncol=len(labels),
+        frameon=False,
+        fontsize=8,
+    )
+
+
+def _populate_fig4(fig: plt.Figure) -> None:
+    """Draw figure 4 onto ``fig``: run rows, region panels, example-gene track.
+
+    The figure splits top/bottom first, and each half owns its own grid so their
+    column geometry and spacing are independent. The top half is the four runs,
+    one row each, as a start-vs-final-fitness scatter (coloured by mutations at
+    half max, magma, sharing one colorbar in a thin middle column) next to a
+    histogram of mutations at half max. The bottom half is two rows of two
+    columns: the GOF possible-mutation breakdown as per-gene boxes (I) beside the
+    per-region share of mutations actually introduced by the unconstrained runs
+    that sit at natural-variation positions, as a pooled dot with its bootstrap
+    interval over the individual genes (J), then one panel spanning both columns (K),
+    the deepCIS binding track of a single example gene, reference vs its
+    5-mutation optimized variant, with the introduced mutation positions marked.
+    Must be called inside a :func:`publication_style` context.
+
+    Shared limits make the panels comparable: all four scatters share the x-axis
+    (start fitness); the two maximization (GOF) scatters share one y-range and the
+    two minimization (LOF) scatters another (fitness saturates near 1 for
+    maximization, near 0 for minimization); all four histograms share both x and y
+    limits.
+
+    Args:
+        fig: An (empty) figure to populate.
+    """
+    # Tighten the vertical padding the layout engine keeps between axes, so the
+    # broken-y histogram halves read as one cut axis (see
+    # ``_FIG4_LAYOUT_H_PAD_INCHES``).
+    layout_engine = fig.get_layout_engine()
+    if layout_engine is not None:
+        layout_engine.set(h_pad=_FIG4_LAYOUT_H_PAD_INCHES)
+
+    stats_per_run = [_load_stats(run["stats_json"]) for run in _FIG4_RUNS]
+    global_max_mutations = max(
+        stat["num_mutations_half_max_effect"]
+        for stats in stats_per_run
+        for stat in stats.values()
+        if "num_mutations_half_max_effect" in stat
+    )
+
+    # Top half (four run rows) and bottom half (region panels + track) get their
+    # own sub-grid, so the thin colorbar column of the runs does not narrow the
+    # bottom panels and the two halves can be spaced independently.
+    outer_grid = fig.add_gridspec(nrows=2, ncols=1, height_ratios=[4.0, 2.4])
+    # Columns: scatter | thin shared-colorbar column | histogram. The colorbar
+    # column keeps the two data columns equal width. ``wspace`` is extra padding
+    # on top of what tick and axis labels need, so a small value collapses the
+    # empty gap between a scatter and the colorbar while still leaving room for
+    # the colorbar label and the histogram's y-label.
+    run_grid = outer_grid[0].subgridspec(
+        nrows=4, ncols=3, width_ratios=[1.0, 0.05, 1.0], wspace=0.03
+    )
+    # Row 0: the two half-width region panels; row 1: the full-width track. The
+    # extra vertical room in row 0 carries the legends drawn below those axes.
+    bottom_grid = outer_grid[1].subgridspec(
+        nrows=2, ncols=2, height_ratios=[1.3, 1.0], wspace=0.03
+    )
+    colorbar_ax = fig.add_subplot(run_grid[0:4, 1])
+
+    scatter_axes_by_objective: Dict[str, List[plt.Axes]] = {"max": [], "min": []}
+    all_scatter_axes = []
+    hist_axes = []
+    scatter_mappable = None
+    last_run_index = len(_FIG4_RUNS) - 1
+
+    for row_index, (run, stats) in enumerate(zip(_FIG4_RUNS, stats_per_run)):
+        scatter_ax = fig.add_subplot(run_grid[row_index, 0])
+
+        scatter_mappable = draw_visualize_start_vs_max_fitness_by_mutations(
+            stats,
+            _UNUSED_NAME,
+            _UNUSED_FORMAT,
+            relative=False,
+            titles=False,
+            ax=scatter_ax,
+            add_colorbar=False,
+            vmin=0.0,
+            vmax=global_max_mutations,
+            mean_start_line=True,
+            fit_line=True,
+            mean_start_line_color=_MEAN_START_LINE_COLOR,
+            fit_line_color=_FIT_LINE_COLOR,
+        )
+        scatter_mappable.set_sizes([_SCATTER_MARKER_SIZE])
+
+        # The histogram cell is split into a broken-y pair: the same histogram is
+        # drawn on both, each showing only its own slice of the count range.
+        hist_upper_ax, hist_lower_ax = broken_y_axes(
+            fig,
+            run_grid[row_index, 2],
+            lower_ylim=_FIG4_HIST_LOWER_YLIM,
+            upper_ylim=_FIG4_HIST_UPPER_YLIM,
+            height_ratios=_FIG4_HIST_HEIGHT_RATIOS,
+            hspace=_FIG4_HIST_BREAK_HSPACE,
+        )
+        for hist_ax in (hist_upper_ax, hist_lower_ax):
+            hist_half_max_mutations(
+                stats,
+                _UNUSED_NAME,
+                _UNUSED_FORMAT,
+                titles=False,
+                ax=hist_ax,
+                color=_NEUTRAL_COLOR,
+                max_mutations_shown=_FIG4_HIST_MAX_MUTATIONS,
+            )
+            # Thin white separators between histogram bars for print crispness.
+            for bar in hist_ax.patches:
+                bar.set_edgecolor("white")
+                bar.set_linewidth(0.4)
+        # Axis labels belong to the pair, not to each half: the upper strip only
+        # carries the outlier bar, so it keeps ticks but no labels.
+        hist_upper_ax.set_xlabel("")
+        hist_upper_ax.set_ylabel("")
+        hist_upper_ax.set_yticks(list(_FIG4_HIST_UPPER_YTICKS))
+
+        for column_index, ax in enumerate((scatter_ax, hist_upper_ax)):
+            panel_label(ax, _FIG4_RUN_LETTERS[row_index][column_index])
+
+        # Row identifier (which run) in the left margin. Offset in points, not in
+        # axes fractions, so it stays just left of the y-label however wide the
+        # panel ends up.
+        scatter_ax.annotate(
+            run["row_label"],
+            xy=(0.0, 0.5),
+            xycoords="axes fraction",
+            xytext=(-_FIG4_ROW_LABEL_OFFSET_POINTS, 0.0),
+            textcoords="offset points",
+            rotation=90,
+            ha="center",
+            va="center",
+            fontweight="bold",
+        )
+
+        # Keep tick numbers on every panel, but show the x-axis label only on the
+        # bottom run row (all run rows share the same x-axes).
+        if row_index != last_run_index:
+            scatter_ax.set_xlabel("")
+            hist_lower_ax.set_xlabel("")
+
+        all_scatter_axes.append(scatter_ax)
+        scatter_axes_by_objective[run["objective"]].append(scatter_ax)
+        hist_axes.append(hist_lower_ax)
+
+    # One shared colorbar for all four scatter panels (common normalisation).
+    fig.colorbar(
+        scatter_mappable, cax=colorbar_ax, label="Mutations at Half Max Effect"
+    )
+
+    # Shared limits: all scatters share x; each objective shares its scatter y.
+    # The histograms share x by construction (same overflow bin) and their y is
+    # set explicitly by the break, so only x is harmonised here.
+    sync_axis_limits(all_scatter_axes, sync_x=True, sync_y=False)
+    for objective_axes in scatter_axes_by_objective.values():
+        sync_axis_limits(objective_axes, sync_x=False, sync_y=True)
+    sync_axis_limits(hist_axes, sync_x=True, sync_y=False)
+
+    # --- Region panels (row 4, one half-width panel each) --------------------
+    region_ax = fig.add_subplot(bottom_grid[0, 0])
+    plot_region_breakdown_boxes(
+        _gof_region_dataframe(),
+        "GOF",
+        show_legend=True,
+        show_title=False,
+        palette=_FIG4_CONDITION_COLORS,
+        ax=region_ax,
+    )
+    # The log scale is evident from the tick labels, so drop it from the label.
+    region_ax.set_ylabel("Possible mutations per gene")
+    panel_label(region_ax, _FIG4_REGION_LETTER)
+    _move_legend_below(region_ax)
+
+    allowance_ax = fig.add_subplot(bottom_grid[0, 1])
+    plot_pooled_allowance_points(
+        _actual_mutation_allowance_dataframe(),
+        show_legend=True,
+        show_title=False,
+        palette=_FIG4_GROUP_COLORS,
+        ax=allowance_ax,
+    )
+    # The standalone y-label is far too long for a half-width panel.
+    allowance_ax.set_ylabel("Mutations at natural positions (%)")
+    panel_label(allowance_ax, _FIG4_ALLOWANCE_LETTER)
+    _move_legend_below(allowance_ax)
+
+    # --- Example-gene deepCIS track (bottom row, full width) -----------------
+    deepcis_ax = fig.add_subplot(bottom_grid[1, :])
+    _draw_fig4_deepcis_track(deepcis_ax)
+    # The full-width track leaves only a narrow left margin, all of it taken by
+    # the tall y-label, so its letter goes above the left spine instead of beside
+    # the label.
+    panel_label(deepcis_ax, _FIG4_DEEPCIS_LETTER, x=0.0, y=1.04)
+
+
+def fig4() -> None:
+    """Compose figure 4: GOF/LOF single-mutation fitness, half-max, regions.
+
+    Four runs one per row -- the two unconstrained runs (GOF, LOF) then the two
+    natural (constrained) runs (GOF, LOF) -- each showing a start-vs-
+    final-fitness scatter coloured by mutations at half max (shared magma colorbar)
+    and a histogram of mutations at half max. All scatters share the start-fitness
+    x-axis; the two GOF scatters share one y-range and the two LOF scatters another;
+    all four histograms share x and y limits. Below the runs, the GOF possible-
+    mutation region breakdown (constrained vs unconstrained, per genomic region) is
+    drawn as a half-width panel of per-gene boxes, next to
+    the per-region percentage of actually introduced mutations that fall on
+    natural-variation (VCF) positions, pooled per region with gene-level bootstrap
+    confidence intervals, for the GOF and LOF gene sets -- drawn there as a dot per
+    cell with its interval as a whisker, over the individual genes' percentages.
+    The bottom row is one full-width deepCIS binding track
+    of a single example gene from the constrained GOF run, contrasting the reference
+    sequence with its 5-mutation Pareto-front variant and marking where those
+    mutations sit.
+    """
+    with publication_style():
+        fig = plt.figure(
+            figsize=figure_size_inches(DOUBLE_COLUMN_MM, 280.0), layout="constrained"
+        )
+        _populate_fig4(fig)
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        save_publication_figure(fig, os.path.join(OUTPUT_DIR, "fig4_composed.svg"))
+        plt.close(fig)
+
+
+# --- Figure 6: STARR-seq x deepCRE positional correlation --------------------
+
+# Publication marker/line weights for the position-series panels (A, B). The
+# standalone plots use s=30 / linewidth=3, far too heavy for a compact panel.
+_POSITION_SCATTER_SIZE = 4.0
+_POSITION_SCATTER_ALPHA = 0.12
+_POSITION_LINE_WIDTH = 1.4
+# Overlay-scatter marker areas for panel C (standalone uses 35 / 55).
+_OVERLAY_ALL_SIZE = 6.0
+_OVERLAY_HIGHLIGHT_SIZE = 12.0
+# Highlight-window connector drawn on A and B: a thin dashed vertical line at the
+# fixed-window center that panel C zooms into (the peak-correlation window). Kept
+# black (not the panel-C highlight red) so the figure is not overloaded with
+# colour.
+_HIGHLIGHT_MARKER_COLOR = "black"
+_HIGHLIGHT_MARKER_WIDTH = 1.0
+# fig6 grid geometry: four equal-width columns and three rows -- the A/B panels,
+# a thin full-width strip for their legend, and the full-width panel C.
+_FIG6_HEIGHT_RATIOS = [1.0, 0.15, 1.4]
+_FIG6_WIDTH_RATIOS = [1.0, 1.0, 1.0, 1.0]
+# Legend labels for panel C's two fit lines (drawn unlabelled by the overlay
+# plot): the fit through all points and the fit through the highlight window.
+_FIT_ALL_LABEL = "fit all data"
+_FIT_HIGHLIGHT_LABEL = "fit best fit data"
+# Panel C's highlight-window fit line is recoloured to black in the composition
+# (the standalone overlay plot draws it in a dark red) and pushed behind every
+# scatter point (all grey and highlight points sit at zorder >= 1) so it never
+# occludes the data.
+_HIGHLIGHT_FIT_COLOR = "black"
+_HIGHLIGHT_FIT_ZORDER = 0.5
+
+
+def _build_fig6_dataframes() -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Run the WRKY + bHLH deepCRE prediction pipelines once and pool the results.
+
+    Mirrors ``starrseq_deepcre_correlation_combined.py``: each TF's analysis-ready
+    dataframe is built independently (own reference windows and mapping, so genes
+    shared between the two TF sets are never double-counted). Panels A/B use the
+    row-concatenated pool of both TFs; panels C/D use the WRKY-only dataframe.
+    Both TF dataframes come out of the identical downstream pipeline with the same
+    columns.
+
+    This runs the full deepCRE prediction pipeline (loads the TF model and scans
+    the reference windows) for both TFs, so it is the slow part of :func:`fig6`;
+    there is no cached point-level dataframe to load instead. The WRKY pipeline is
+    run only once and reused for both the pool and the WRKY-only panels.
+
+    Returns:
+        ``(combined_df, wrky_df)`` where ``combined_df`` is the pooled
+        WRKY + bHLH dataframe for panels A/B and ``wrky_df`` is the WRKY-only
+        dataframe for panels C/D.
+    """
+    wrky_df = prepare_wrky_enrichment_df()
+    bhlh_df = prepare_bhlh_enrichment_df()
+    combined_df = pd.concat([wrky_df, bhlh_df], ignore_index=True)
+    return combined_df, wrky_df
+
+
+def _fig6_position_series(
+    combined_df: pd.DataFrame,
+) -> List[Tuple[pd.DataFrame, str, str]]:
+    """Split the pooled dataframe into the all/light/dark position-series inputs.
+
+    Matches ``run_correlation_analysis``: the pooled dataframe plus its light and
+    dark ``condition`` subsets, each with its :data:`POSITION_SERIES_COLORS`
+    colour, ready for :func:`compute_correlation_by_position`.
+
+    Args:
+        combined_df: The pooled analysis-ready dataframe.
+
+    Returns:
+        ``[(all, "all", grey), (light, "light", gold), (dark, "dark", blue)]``.
+    """
+    condition = combined_df["condition"].str.lower()
+    return [
+        (combined_df, "all", POSITION_SERIES_COLORS["all"]),
+        (combined_df[condition == "light"].copy(), "light", POSITION_SERIES_COLORS["light"]),
+        (combined_df[condition == "dark"].copy(), "dark", POSITION_SERIES_COLORS["dark"]),
+    ]
+
+
+def _populate_fig6(
+    fig: plt.Figure, combined_df: pd.DataFrame, wrky_df: pd.DataFrame
+) -> None:
+    """Draw all three panels of figure 6 onto ``fig``.
+
+    Layout is a 4-column x 3-row grid. Row 0: panel A (Spearman correlation by
+    overlap position) and panel B (p-value of that correlation, log y) over the
+    pooled WRKY + bHLH dataset, two columns each. Row 1: a thin full-width strip
+    holding their all/light/dark condition legend. Row 2: panel C (the WRKY
+    deepCRE-vs-STARR-seq scatter with the peak-correlation window highlighted),
+    spanning the full width. A and B each mark the highlighted window's center
+    with a thin dashed vertical line so the reader sees which window panel C
+    zooms into. Must be called inside a :func:`publication_style` context.
+
+    Args:
+        fig: An (empty) figure to populate.
+        combined_df: The pooled WRKY + bHLH analysis-ready dataframe (panels A/B)
+            from :func:`_build_fig6_dataframes`.
+        wrky_df: The WRKY-only analysis-ready dataframe (panel C) from
+            :func:`_build_fig6_dataframes`.
+    """
+    # Four equal-width columns: A and B take two columns each on the top row;
+    # panel C spans the full width on the row below. The panel row is followed by
+    # a thin full-width strip that holds its legend.
+    grid = fig.add_gridspec(
+        nrows=3,
+        ncols=4,
+        height_ratios=_FIG6_HEIGHT_RATIOS,
+        width_ratios=_FIG6_WIDTH_RATIOS,
+    )
+    correlation_ax = fig.add_subplot(grid[0, 0:2])
+    pvalue_ax = fig.add_subplot(grid[0, 2:4])
+    top_legend_ax = fig.add_subplot(grid[1, :])
+    top_legend_ax.axis("off")
+    overlay_ax = fig.add_subplot(grid[2, :])
+
+    named_dfs = _fig6_position_series(combined_df)
+    corr_series, _, pval_series, _ = compute_correlation_by_position(named_dfs)
+
+    simply_plot_multi(
+        corr_series,
+        "Overlap start position",
+        "Spearman correlation",
+        _UNUSED_NAME,
+        _UNUSED_NAME,
+        _UNUSED_NAME,
+        ax=correlation_ax,
+        scatter_size=_POSITION_SCATTER_SIZE,
+        scatter_alpha=_POSITION_SCATTER_ALPHA,
+        line_width=_POSITION_LINE_WIDTH,
+    )
+    simply_plot_multi(
+        pval_series,
+        "Overlap start position",
+        "P-value (Spearman)",
+        _UNUSED_NAME,
+        _UNUSED_NAME,
+        _UNUSED_NAME,
+        log=True,
+        ax=pvalue_ax,
+        scatter_size=_POSITION_SCATTER_SIZE,
+        scatter_alpha=_POSITION_SCATTER_ALPHA,
+        line_width=_POSITION_LINE_WIDTH,
+    )
+
+    # Capture the shared all/light/dark handles from A and drop the per-panel
+    # legends both A and B auto-created; the combined strip legend is built below.
+    shared_handles, shared_labels = correlation_ax.get_legend_handles_labels()
+    for ax in (correlation_ax, pvalue_ax):
+        panel_legend = ax.get_legend()
+        if panel_legend is not None:
+            panel_legend.remove()
+
+    # Panel C: WRKY-only overlay, highlight-window points drawn in a single
+    # colour (the binding vs non-binding distinction is no longer shown).
+    plot_overlay_highlight_correlation(wrky_df, color_by_binding=False, ax=overlay_ax)
+    overlay_scatters = overlay_ax.collections
+    # Collection 0 is the grey full-dataset background; collection 1 is the
+    # highlight-window group, drawn larger.
+    for scatter_index, scatter in enumerate(overlay_scatters):
+        size = _OVERLAY_ALL_SIZE if scatter_index == 0 else _OVERLAY_HIGHLIGHT_SIZE
+        scatter.set_sizes([size])
+    # Recolour panel C's highlight-window fit line black (the overlay plot draws
+    # it in a dark red) and push it behind every scatter point so it no longer
+    # occludes the data; the all-data fit line stays grey. Done before reading the
+    # line handles so the legend proxy picks up the black colour. Line order is
+    # [all-data fit, highlight-window fit].
+    overlay_fit_lines = list(overlay_ax.get_lines())
+    if len(overlay_fit_lines) >= 2:
+        overlay_fit_lines[1].set_color(_HIGHLIGHT_FIT_COLOR)
+        overlay_fit_lines[1].set_zorder(_HIGHLIGHT_FIT_ZORDER)
+
+    # Extract panel C's all/highlight-window scatter key, append its two fit
+    # lines, and rebuild the in-panel legend (the overlay plot's auto-created one
+    # is missing the fit-line entries).
+    overlay_handles, overlay_labels = overlay_ax.get_legend_handles_labels()
+    overlay_legend = overlay_ax.get_legend()
+    if overlay_legend is not None:
+        overlay_legend.remove()
+    fit_labels = [_FIT_ALL_LABEL, _FIT_HIGHLIGHT_LABEL]
+    overlay_handles = list(overlay_handles) + overlay_fit_lines[:2]
+    overlay_labels = list(overlay_labels) + fit_labels[: len(overlay_fit_lines[:2])]
+    overlay_ax.legend(overlay_handles, overlay_labels, loc="best", frameon=False)
+
+    # The A/B legend sits in the thin full-width strip below them; panel C keeps
+    # its own in-panel legend (set above).
+    top_legend_ax.legend(
+        shared_handles,
+        shared_labels,
+        loc="center",
+        ncol=len(shared_labels),
+        frameon=False,
+        title="STARR-seq condition",
+    )
+
+    # Strip the long standalone titles; the axis labels and panel letters carry
+    # the meaning in a multi-panel figure.
+    for ax in (correlation_ax, pvalue_ax, overlay_ax):
+        ax.set_title("")
+
+    # Connect the top panels to panel C: the peak-correlation window C highlights
+    # is the fixed window plotted at x = HIGHLIGHT_WINDOW_CENTER on A and B.
+    for ax in (correlation_ax, pvalue_ax):
+        ax.axvline(
+            HIGHLIGHT_WINDOW_CENTER,
+            color=_HIGHLIGHT_MARKER_COLOR,
+            linewidth=_HIGHLIGHT_MARKER_WIDTH,
+            linestyle="--",
+            zorder=0,
+        )
+
+    # Both top panels share the same overlap-position x-axis; harmonise it.
+    sync_axis_limits([correlation_ax, pvalue_ax], sync_y=False)
+
+    for ax, letter in (
+        (correlation_ax, "A"),
+        (pvalue_ax, "B"),
+        (overlay_ax, "C"),
+    ):
+        panel_label(ax, letter)
+
+
+def fig6() -> None:
+    """Compose figure 6: STARR-seq x deepCRE positional correlation.
+
+    Panels A and B summarise the fixed-window positional analysis of the pooled
+    WRKY + bHLH dataset: the Spearman correlation between deepCRE predictions and
+    STARR-seq enrichment as a function of overlap start position (A) and the
+    p-value of that correlation on a log axis (B), each overlaying the ``all``,
+    ``light`` and ``dark`` STARR-seq conditions. Panel C is the WRKY-only
+    point-level deepCRE-vs-STARR-seq scatter with the peak-correlation window
+    (marked by the dashed line on A/B) highlighted on top of the full WRKY
+    dataset, spanning the full figure width.
+
+    The dataframes are rebuilt from scratch on every call (both deepCRE
+    prediction pipelines run); there is no cached point-level dataframe.
+    """
+    with publication_style():
+        fig = plt.figure(
+            figsize=figure_size_inches(DOUBLE_COLUMN_MM, 170.0), layout="constrained"
+        )
+        combined_df, wrky_df = _build_fig6_dataframes()
+        _populate_fig6(fig, combined_df, wrky_df)
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        save_publication_figure(fig, os.path.join(OUTPUT_DIR, "fig6_composed.svg"))
+        plt.close(fig)
+
+
+if __name__ == "__main__":
+    # fig2()
+    # fig3()
+    fig4()
+    # fig6()

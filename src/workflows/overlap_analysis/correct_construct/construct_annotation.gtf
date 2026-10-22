@@ -1,0 +1,6 @@
+#!genome-build TAIR10
+#!genome-version TAIR10
+#!genome-date 2008-04
+#!genome-build-accession GCA_000001735.1
+#!genebuild-last-updated 2010-09
+1	araport11	gene	1333	2348	.	+	.	gene_id "EGFP"; gene_source "araport11"; gene_biotype "protein_coding";

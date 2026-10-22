@@ -1,0 +1,414 @@
+"""Mutation-distance random baseline analysis.
+
+Compares the inter-mutation distance distribution of the EA's *real*
+mutations against a null distribution drawn from the EA's own positional
+pool (no wildtype filtering).
+
+The null uses the maximum-entropy (conditional Bernoulli) design of
+:mod:`workflows.mutation_distribution_analysis.conditional_poisson`, under
+which a position's probability of appearing in a drawn set of size ``k`` is
+exactly ``k`` times its share of the pool. The earlier
+uniform-over-rows-with-position-blocking draw did **not** have that property —
+it is successive sampling, which flattens the null relative to the positional
+usage it was calibrated against; see
+``mutation_distribution_analysis/plans/sampler_inclusion_probability_fix.md``.
+
+Public API:
+
+* :func:`compute_real_distances` -- per-gene ``np.diff`` aggregated into a
+  global :class:`~collections.Counter`.
+* :func:`compute_random_distances` -- for each gene, draw ``n_per_gene``
+  position-sets of size ``k = gene_stats.n_mutations`` from the full pool,
+  diff each, sum into one ``Counter``.
+* :func:`counter_to_array` -- expand a ``{distance: count}`` mapping into
+  a flat array suitable for KS / Wasserstein tests.
+* :func:`plot_overlay` -- one figure overlaying the real histogram (bars)
+  with a rescaled random distribution (line).
+* :func:`run_distance_analysis` -- end-to-end driver: load pool, compute
+  both Counters, write two overlay plots and a stats file.
+* :func:`main` -- CLI entry point.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+from collections import Counter
+from datetime import datetime
+from typing import Optional
+
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.stats import ks_2samp, wasserstein_distance
+from tqdm import tqdm
+
+from analysis.mutations.analyze_mutations import (
+    calculate_mutation_distances_single_gene,
+)
+from workflows.mutation_distribution_analysis.conditional_poisson import (
+    PositionSampler,
+)
+from workflows.mutation_distribution_analysis.mutation_pool import MutationPool
+
+
+def compute_real_distances(pool: MutationPool) -> Counter:
+    """Aggregate inter-mutation distances of the real EA mutations.
+
+    For each gene in ``pool.mutations``, sorts the mutation positions and
+    computes consecutive differences (``np.diff``) via
+    :func:`calculate_mutation_distances_single_gene`, then sums the
+    per-gene counters into a single global one. Genes with fewer than two
+    mutations contribute nothing.
+
+    Args:
+        pool: Mutation pool whose ``mutations`` DataFrame holds the real
+            per-gene mutation positions.
+
+    Returns:
+        A ``Counter`` mapping each observed distance to its total
+        occurrence count across all genes.
+    """
+    distances: Counter = Counter()
+    for _, group in pool.mutations.groupby("gene_id"):
+        positions = group["position"].tolist()
+        if len(positions) < 2:
+            continue
+        distances += calculate_mutation_distances_single_gene(positions)
+    return distances
+
+
+def compute_random_distances(
+    pool: MutationPool,
+    n_per_gene: int,
+    rng: np.random.Generator,
+) -> Counter:
+    """Aggregate inter-mutation distances of random draws from the pool.
+
+    For every gene in ``pool.references``, ``k`` is read from
+    ``pool.gene_stats`` (``n_mutations`` column). ``n_per_gene`` independent
+    position-sets of size ``k`` are then drawn from the *full* unfiltered pool
+    of positions under the maximum-entropy design of
+    :class:`~workflows.mutation_distribution_analysis.conditional_poisson.PositionSampler`,
+    so that each position's probability of *ending up in* a drawn set is
+    exactly ``k`` times its share of the pool. The per-replicate ``np.diff`` of
+    the sorted draws is accumulated and collapsed into a single ``Counter`` at
+    the end. Genes with ``k < 2`` contribute nothing.
+
+    The sampler is calibrated per distinct ``k`` — the calibration depends on
+    the sample size, not only on the pool — and cached, since the same
+    unfiltered pool is shared by every gene. Across roughly 1000 genes there
+    are about 40 distinct values of ``k``, so this costs a few seconds in
+    total rather than one calibration per gene.
+
+    Args:
+        pool: Mutation pool providing both the sample space
+            (``pool.mutations``) and the per-gene draw size
+            (``pool.gene_stats``).
+        n_per_gene: Number of independent replicates per gene.
+        rng: NumPy ``Generator`` used for sampling. Driven sequentially
+            across genes and replicates, so a fixed seed yields a fixed
+            global distribution.
+
+    Returns:
+        A ``Counter`` mapping each observed distance to its total
+        occurrence count across all genes and replicates.
+    """
+    pos_arr = pool.mutations["position"].to_numpy()
+    unique_positions, counts = np.unique(pos_arr, return_counts=True)
+
+    gene_stats_by_id = pool.gene_stats.set_index("gene_id")
+    samplers_by_k: dict[int, PositionSampler] = {}
+    all_distances: list[np.ndarray] = []
+    for gene_id in tqdm(pool.references.keys(), desc="Random per-gene draws"):
+        k = int(gene_stats_by_id.loc[gene_id, "n_mutations"])
+        if k < 2:
+            continue
+        if k not in samplers_by_k:
+            samplers_by_k[k] = PositionSampler(counts.astype(float), k)
+        sampler = samplers_by_k[k]
+        for _ in range(n_per_gene):
+            positions = unique_positions[sampler.draw(rng)]
+            all_distances.append(np.diff(positions))
+
+    if not all_distances:
+        return Counter()
+    flat = np.concatenate(all_distances)
+    vals, cnts = np.unique(flat, return_counts=True)
+    return Counter(dict(zip(vals.tolist(), cnts.tolist())))
+
+
+def counter_to_array(counter: Counter) -> np.ndarray:
+    """Expand a distance ``Counter`` into a flat 1-D numpy array.
+
+    Each distance ``d`` is repeated ``counter[d]`` times. Order of the
+    repeats is not meaningful for KS / Wasserstein, but distances are
+    returned in ascending order to keep output deterministic.
+
+    Args:
+        counter: ``{distance: count}`` mapping.
+
+    Returns:
+        Flat array of length ``sum(counter.values())``. Empty input
+        yields an empty ``int`` array.
+    """
+    if not counter:
+        return np.array([], dtype=int)
+    distances = np.array(sorted(counter.keys()))
+    counts = np.array([counter[d] for d in distances])
+    return np.repeat(distances, counts)
+
+
+def _to_proportions(counter: Counter) -> dict[int, float]:
+    """Convert a distance Counter to a probability distribution.
+
+    Each value is divided by the total count so that all values sum to 1.
+
+    Args:
+        counter: ``{distance: count}`` mapping.
+
+    Returns:
+        ``{distance: proportion}`` mapping, or an empty dict for empty input.
+    """
+    total = sum(counter.values())
+    if total == 0:
+        return {}
+    return {d: c / total for d, c in counter.items()}
+
+
+def plot_overlay(
+    real: dict[int, float],
+    random_dist: dict[int, float],
+    name: str,
+    output_dir: str,
+    output_format: str = "png",
+    max_distance: Optional[int] = None,
+    ax: Optional[plt.Axes] = None,
+) -> None:
+    """Plot real distances as bars overlaid with the random proportion line.
+
+    Both inputs are expected to already be normalised probability
+    distributions (see :func:`_to_proportions`).  When ``max_distance`` is
+    given, both series are restricted to distances ``<= max_distance`` and
+    ``"_smaller"`` is appended to the output filename.
+
+    Args:
+        real: Normalised real-mutation distance proportions.
+        random_dist: Normalised random-draw distance proportions.
+        name: Identifier used in the output filename
+            (``mutation_distances_{name}_overlay[_smaller].{format}``).
+        output_dir: Destination directory.
+        output_format: File extension (e.g. ``"png"``, ``"pdf"``).
+        max_distance: Optional upper cutoff on the plotted distance axis.
+        ax: Axes to draw onto. When None (default), a standalone figure is
+            created and saved (unchanged behaviour); when given, the plot is
+            drawn onto ``ax`` and nothing is saved.
+    """
+    if max_distance is not None:
+        real = {d: p for d, p in real.items() if d <= max_distance}
+        random_dist = {d: p for d, p in random_dist.items() if d <= max_distance}
+
+    distances = sorted(real.keys())
+    proportions = [real[d] for d in distances]
+
+    own_figure = ax is None
+    if own_figure:
+        fig, ax = plt.subplots(figsize=(12, 6))
+    if proportions:
+        ax.bar(distances, proportions, width=1.0, edgecolor="none", alpha=0.75, label="Real")
+
+    if random_dist:
+        random_x = sorted(random_dist.keys())
+        random_y = [random_dist[d] for d in random_x]
+        ax.plot(random_x, random_y, color="darkorange", linewidth=2, label="Random")
+
+    ax.set_xlabel("Mutation Distance")
+    ax.set_ylabel("Proportion")
+    ax.set_title(name)
+    ax.legend()
+    if distances and proportions:
+        threshold = max(proportions) * 0.01
+        last_meaningful = max(
+            (d for d, p in zip(distances, proportions) if p > threshold),
+            default=distances[-1],
+        )
+        ax.set_xlim(0, last_meaningful * 1.05)
+
+    if own_figure:
+        suffix = "_smaller" if max_distance is not None else ""
+        out_path = os.path.join(
+            output_dir,
+            f"mutation_distances_{name}_overlay{suffix}.{output_format}",
+        )
+        fig.savefig(out_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+
+def plot_difference(
+    real: dict[int, float],
+    random_dist: dict[int, float],
+    name: str,
+    output_dir: str,
+    output_format: str = "png",
+    max_distance: Optional[int] = None,
+    ax: Optional[plt.Axes] = None,
+) -> None:
+    """Plot the per-distance difference between real and random proportions.
+
+    Both inputs are expected to already be normalised probability
+    distributions (see :func:`_to_proportions`).  The per-distance
+    difference ``P(real) - P(random)`` is plotted as a bar chart.  Positive
+    bars indicate distances more frequent in the real EA mutations; negative
+    bars indicate distances the random baseline favours.  An ``axhline`` at
+    zero is drawn for reference.
+
+    Args:
+        real: Normalised real-mutation distance proportions.
+        random_dist: Normalised random-draw distance proportions.
+        name: Identifier used in the output filename
+            (``mutation_distances_{name}_difference[_smaller].{format}``).
+        output_dir: Destination directory.
+        output_format: File extension (e.g. ``"png"``, ``"pdf"``).
+        max_distance: Optional upper cutoff on the plotted distance axis.
+        ax: Axes to draw onto. When None (default), a standalone figure is
+            created and saved (unchanged behaviour); when given, the plot is
+            drawn onto ``ax`` and nothing is saved.
+    """
+    if max_distance is not None:
+        real = {d: p for d, p in real.items() if d <= max_distance}
+        random_dist = {d: p for d, p in random_dist.items() if d <= max_distance}
+
+    all_distances = sorted(set(real.keys()) | set(random_dist.keys()))
+    if not all_distances:
+        return
+
+    diff = np.array([real.get(d, 0.0) - random_dist.get(d, 0.0) for d in all_distances])
+    colors = ["steelblue" if v >= 0 else "tomato" for v in diff]
+
+    from matplotlib.patches import Patch
+
+    own_figure = ax is None
+    if own_figure:
+        plt.clf()
+        fig, ax = plt.subplots(figsize=(12, 6))
+    ax.bar(all_distances, diff, width=1.0, color=colors, edgecolor="none")
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_xlabel("Mutation Distance")
+    ax.set_ylabel("P(real) − P(random)")
+    ax.set_title(f"Distance distribution difference: {name}")
+    ax.set_xlim(0, max(all_distances) + 1)
+    ax.legend(
+        handles=[
+            Patch(color="steelblue", label="Real > Random"),
+            Patch(color="tomato", label="Random > Real"),
+        ]
+    )
+
+    if own_figure:
+        suffix = "_smaller" if max_distance is not None else ""
+        out_path = os.path.join(
+            output_dir,
+            f"mutation_distances_{name}_difference{suffix}.{output_format}",
+        )
+        fig.savefig(out_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+
+def run_distance_analysis(
+    pool_path: str,
+    output_dir: str,
+    name: str,
+    n_per_gene: int = 10,
+    seed: int = 42,
+    output_format: str = "png",
+) -> None:
+    """Run the full distance-vs-random analysis for one mutation pool.
+
+    Loads the pool, computes both distance distributions, writes two
+    overlay plots (full range and ``<= 200`` zoom) and a stats file
+    containing the KS statistic, KS p-value and Wasserstein distance.
+
+    Args:
+        pool_path: Path to a ``MutationPool`` JSON.
+        output_dir: Destination directory; created if missing.
+        name: Identifier used in all output filenames.
+        n_per_gene: Random replicates per gene. Defaults to ``10``.
+        seed: Seed for ``np.random.default_rng``. Defaults to ``42``.
+        output_format: File extension for plots. Defaults to ``"png"``.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    pool = MutationPool.load(pool_path)
+
+    real_distances = compute_real_distances(pool)
+    rng = np.random.default_rng(seed)
+    random_distances = compute_random_distances(pool, n_per_gene, rng)
+
+    real_props = _to_proportions(real_distances)
+    random_props = _to_proportions(random_distances)
+
+    plot_overlay(real_props, random_props, name, output_dir, output_format)
+    plot_overlay(real_props, random_props, name, output_dir, output_format, max_distance=50)
+    plot_difference(real_props, random_props, name, output_dir, output_format)
+    plot_difference(real_props, random_props, name, output_dir, output_format, max_distance=50)
+
+    real_arr = counter_to_array(real_distances)
+    random_arr = counter_to_array(random_distances)
+    ks_result = ks_2samp(real_arr, random_arr)
+    w_dist = wasserstein_distance(real_arr, random_arr)
+
+    stats_path = os.path.join(
+        output_dir, f"mutation_distances_{name}_stats.txt"
+    )
+    with open(stats_path, "w") as f:
+        f.write(f"ks_statistic={float(ks_result.statistic)}\n")     #type:ignore
+        f.write(f"ks_pvalue={float(ks_result.pvalue)}\n")           #type:ignore
+        f.write(f"wasserstein_distance={float(w_dist)}\n")
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for the distance-analysis entry point.
+
+    Returns:
+        Parsed ``argparse.Namespace`` with: ``pool``, ``output_dir``,
+        ``name``, ``n_per_gene``, ``seed``, ``format``.
+
+    Raises:
+        ValueError: If ``--pool`` does not point to an existing file or
+            ``--format`` is not a supported image extension.
+    """
+    parser = argparse.ArgumentParser(description=( "Compare EA mutation-distance distributions against a random baseline drawn from the same positional pool."))
+    parser.add_argument("--pool", type=str, required=True, help="Path to a MutationPool JSON (output of mutation_pool.py).",)
+    parser.add_argument("--output-dir", type=str, required=True, help="Directory for output plots and the stats file.",)
+    parser.add_argument("--name", type=str, required=True, help="Identifier used in all output filenames.",)
+    parser.add_argument("--n-per-gene", type=int, default=10, help="Random replicates per gene (default: 10).",)
+    parser.add_argument("--seed", type=int, default=42, help="Seed for np.random.default_rng (default: 42).",)
+    parser.add_argument("--format", type=str, default="png", help="Output format for plots (default: png).",)
+
+    args = parser.parse_args()
+    if not os.path.isfile(args.pool):
+        raise ValueError(
+            f"Pool file '{args.pool}' does not exist or is not a file."
+        )
+    args.format = args.format.lower().strip(".").strip()
+    if args.format not in {"png", "pdf", "jpg", "jpeg", "svg", "tiff"}:
+        raise ValueError(
+            f"Unsupported output format: {args.format}."
+        )
+    return args
+
+
+def main() -> None:
+    """CLI entry point: run the distance analysis for one pool."""
+    args = parse_args()
+    run_distance_analysis(
+        pool_path=args.pool,
+        output_dir=args.output_dir,
+        name=args.name,
+        n_per_gene=args.n_per_gene,
+        seed=args.seed,
+        output_format=args.format,
+    )
+
+
+if __name__ == "__main__":
+    main()
