@@ -242,8 +242,8 @@ class TestWriteOutputs(SheetTestCase):
 
         self.assertTrue(pd.read_csv(os.path.join(out_dir, "removed_first.csv")).empty)
         self.assertEqual(list(pd.read_csv(os.path.join(out_dir, "removed_second.csv"))["id"]), ["site"])
-        self.assertEqual(len(pd.read_csv(os.path.join(out_dir, "library_full_table.csv"))), 3)
-        with open(os.path.join(out_dir, "library.fasta")) as f:
+        self.assertEqual(len(pd.read_csv(os.path.join(out_dir, "metadata.csv"))), 3)
+        with open(os.path.join(out_dir, "candidates.fa")) as f:
             self.assertEqual(f.read(), f">ref\n{padded('AAAA')}\n")
 
     def test_write_fasta(self) -> None:

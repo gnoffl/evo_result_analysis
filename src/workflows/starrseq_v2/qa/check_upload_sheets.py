@@ -158,13 +158,13 @@ def write_fasta(table: pd.DataFrame, path: str) -> None:
 
 def write_outputs(full_table: pd.DataFrame, out_dir: str) -> None:
     """Write the full table, one removed-rows CSV per source file and the representatives' FASTA."""
-    full_table.to_csv(os.path.join(out_dir, "library_full_table.csv"), index=False)
+    full_table.to_csv(os.path.join(out_dir, "metadata.csv"), index=False)
     removed = full_table.loc[full_table["drop_reasons"] != ""]
     for source_file in full_table["source_file"].unique():
         rows = removed.loc[removed["source_file"] == source_file]
         rows.to_csv(os.path.join(out_dir, f"removed_{source_file}.csv"), index=False)
     representatives = full_table.loc[full_table["id"] == full_table["representative_id"]]
-    write_fasta(representatives, os.path.join(out_dir, "library.fasta"))
+    write_fasta(representatives, os.path.join(out_dir, "candidates.fa"))
 
 
 def parse_args() -> argparse.Namespace:

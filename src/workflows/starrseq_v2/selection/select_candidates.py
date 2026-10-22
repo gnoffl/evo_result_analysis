@@ -26,9 +26,9 @@ import pandas as pd
 OUTPUT = os.path.join(os.path.dirname(__file__), "output")
 # entries to select in total; the three anchors per run are always taken, so this
 # cannot go below their count (9764 runs x anchors at the measured scale)
-TARGET = 57_000
+TARGET = 64_000
 # of those, the globally ranked best picks, split evenly over the two rankings
-TARGET_BEST = 5_600
+TARGET_BEST = 6_400
 SEED = 0
 
 ANCHOR_FLAGS = {"reference": "is_reference", "half_max": "is_half_max", "max": "is_max_mutations"}

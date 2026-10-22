@@ -109,7 +109,7 @@ Step 3: fetches the sequences of the selected entries, numbers them and gives th
 - `build_library(selected: pd.DataFrame, front_table: pd.DataFrame, runs_root: str) -> pd.DataFrame` — the whole step 3, from merge through reference pointers and `path_to_config`.
 
 ## qa/check_upload_sheets.py  [script]
-Step 4: cleans the pooled upload sheets of all contributors, .csv or .ods (CLI: `<configs_root> <out_dir> <sheet>...`). Drops failing rows with their reasons, cascades the drops along `reference`, and deduplicates the survivors on `product`. Duplicates stay in the table but are not ordered. Writes `library_full_table.csv` (`FULL_TABLE_COLUMNS`), `removed_<sheet>.csv` per input sheet and `library.fasta` (representatives only). Prints drop counts per sheet and the oligo count against `BUDGET`.
+Step 4: cleans the pooled upload sheets of all contributors, .csv or .ods (CLI: `<configs_root> <out_dir> <sheet>...`). Drops failing rows with their reasons, cascades the drops along `reference`, and deduplicates the survivors on `product`. Duplicates stay in the table but are not ordered. Writes `metadata.csv` (`FULL_TABLE_COLUMNS`), `removed_<sheet>.csv` per input sheet and `candidates.fa` (representatives only). Prints drop counts per sheet and the oligo count against `BUDGET`.
 
 - `UPLOAD_COLUMNS` — the five template column names. `FULL_TABLE_COLUMNS` — those plus `source_file`, `drop_reasons`, `representative_id`.
 - `SEQUENCE_LENGTH=170`. `RESTRICTION_SITE` — regex for BsaI `GGTCTC` and its reverse complement `GAGACC`, which also matches `GGTCT`/`GAGAC` at the end of the sequence (the cloning suffix supplies the final C). `BUDGET=100_000` (only reported).

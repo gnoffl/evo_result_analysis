@@ -665,9 +665,9 @@ Into `<out_dir>`:
 
 | file | content |
 | --- | --- |
-| `library_full_table.csv` | every input row: the five template columns, `source_file`, `drop_reasons` (empty = kept), `representative_id` (empty = dropped) |
+| `metadata.csv` | every input row: the five template columns, `source_file`, `drop_reasons` (empty = kept), `representative_id` (empty = dropped) |
 | `removed_<sheet>.csv` | per input sheet, its dropped rows with their reasons — to hand back to the author. Written even when empty. Duplicates are not listed. |
-| `library.fasta` | the representatives only, `id` → 170 bp — what is ordered |
+| `candidates.fa` | the representatives only, `id` → 170 bp — what is ordered |
 
 There is no separate representatives-only sheet: the FASTA headers are ids, and
 joining on `id` against the full table gives everything else. The run prints
